@@ -6,7 +6,7 @@ zhttpd includes a comprehensive, thread-safe logging system with the following f
 
 - **General-Purpose Logger**: Thread-safe, efficient logging core that can be used for any application logging needs
 - **Structured Logging**: Multi-level logging (debug, info, warn, error)
-- **Human-Readable Timestamps**: Timestamps in YYYY-MM-DD HH:MM:SS format for easy reading
+- **High-Precision Timestamps**: Timestamps in YYYY-MM-DD HH:MM:SS.microseconds format with microsecond precision
 - **Automatic Rotation**: Log files automatically rotate when reaching size limits
 - **HTTP Access Logs**: Specialized logger built on the general logger for HTTP request tracking
 - **Security**: Log injection prevention through input sanitization
@@ -51,12 +51,12 @@ log_file: "zhttpd.log"  # Path to application log file
 
 Example log output:
 ```
-[2025-11-26 07:35:36] [INFO] Lua handler initialized with scripts from: ./examples/lua
-[2025-11-26 07:35:36] [INFO] GraphQL handler initialized
-[2025-11-26 07:35:36] [INFO] Starting zhttpd v0.1.0 on 0.0.0.0:8080
+[2025-11-26 07:53:49.729882] [INFO] Lua handler initialized with scripts from: ./examples/lua
+[2025-11-26 07:53:49.730236] [INFO] GraphQL handler initialized
+[2025-11-26 07:53:49.730401] [INFO] Starting zhttpd v0.1.0 on 0.0.0.0:8080
 ```
 
-Format: `[YYYY-MM-DD HH:MM:SS] [LEVEL] MESSAGE`
+Format: `[YYYY-MM-DD HH:MM:SS.microseconds] [LEVEL] MESSAGE`
 
 ### HTTP Access Log File
 
@@ -68,11 +68,11 @@ access_log_file: "access.log"  # Path to access log file
 
 Example access log output:
 ```
-127.0.0.1:54321 - - [2025-11-26 07:36:40] "GET / HTTP/1.1" 200 3771 "curl/8.5.0" 0.05ms
-127.0.0.1:54321 - - [2025-11-26 07:36:40] "POST /api/test HTTP/1.1" 200 122 "curl/8.5.0" 3.37ms
+127.0.0.1:54321 - - [2025-11-26 07:55:08.073563] "GET / HTTP/1.1" 200 3771 "curl/8.5.0" 0.04ms
+127.0.0.1:54321 - - [2025-11-26 07:55:08.082773] "POST /api/test HTTP/1.1" 200 122 "curl/8.5.0" 3.16ms
 ```
 
-Format: `REMOTE_ADDR - - [YYYY-MM-DD HH:MM:SS] "METHOD PATH PROTOCOL" STATUS BYTES "USER_AGENT" DURATIONms`
+Format: `REMOTE_ADDR - - [YYYY-MM-DD HH:MM:SS.microseconds] "METHOD PATH PROTOCOL" STATUS BYTES "USER_AGENT" DURATIONms`
 
 ## Log Rotation
 
@@ -81,25 +81,28 @@ Both application logs and access logs support automatic rotation:
 - **Maximum Size**: 10 MB per log file
 - **Backup Files**: 5 backup files are kept
 - **Rotation Pattern**: `file.log` → `file.log.1` → `file.log.2` → ... → `file.log.5`
+- **Error Recovery**: If rotation fails, attempts to reopen backup file
 
 When a log file reaches 10 MB:
 1. The oldest backup (`file.log.5`) is deleted
 2. All backups are rotated (`file.log.4` → `file.log.5`, etc.)
 3. Current log is renamed to `file.log.1`
 4. A new `file.log` is created
+5. If creation fails, backup file is reopened to prevent log loss
 
 ## Timestamp Format
 
-Timestamps use human-readable format for easy reading and parsing:
+Timestamps use human-readable format with high precision for performance analysis:
 
 ```
-YYYY-MM-DD HH:MM:SS
+YYYY-MM-DD HH:MM:SS.microseconds
 ```
 
-Example: `2025-11-26 07:35:36`
+Example: `2025-11-26 07:53:49.729882`
 
 - **Date**: YYYY-MM-DD (ISO 8601 format)
-- **Time**: HH:MM:SS (24-hour format)
+- **Time**: HH:MM:SS.microseconds (24-hour format with 6-digit microsecond precision)
+- **Precision**: Microsecond-level precision for accurate performance analysis
 - **Timezone**: UTC (server local time)
 
 ### Duration in Access Logs
@@ -114,17 +117,26 @@ Request durations are shown in milliseconds with 2 decimal places:
 
 ### Log Injection Prevention
 
-The logging system automatically sanitizes user-controlled input (user-agent, etc.) to prevent log injection attacks:
+The logging system automatically sanitizes user-controlled input to prevent log injection attacks:
 
+- **Path sanitization**: Request paths are sanitized before logging
+- **User-Agent sanitization**: User-Agent headers are sanitized
 - Newline characters (`\n`, `\r`) are replaced with spaces
 - Control characters (ASCII < 32 or 127) are replaced with spaces
-- This prevents attackers from injecting false log entries
+- Truncation warnings are logged when fields exceed buffer limits
+- This prevents attackers from injecting false log entries or breaking log parsing
 
 Example:
 ```
 Malicious input: "curl/1.0\n[ERROR] Fake log entry"
 Sanitized output: "curl/1.0 [ERROR] Fake log entry"
 ```
+
+**Security measures:**
+- 512-byte buffer for path sanitization
+- 256-byte buffer for user-agent sanitization  
+- 128-byte buffer for IPv6 address formatting
+- Truncation detection with warning logs
 
 ## Performance Analysis
 
