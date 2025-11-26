@@ -90,6 +90,7 @@ pub const FileCache = struct {
             .never => {
                 // Use cache if available, otherwise read and cache
                 if (self.getCached(path)) |cached| {
+                    // Note: We duplicate to give caller owned memory while keeping cached copy
                     return try self.allocator.dupe(u8, cached.content);
                 }
 
@@ -126,6 +127,7 @@ pub const FileCache = struct {
                 if (self.getCached(path)) |cached| {
                     if (cached.mtime == current_mtime) {
                         // File hasn't changed, use cache
+                        // Note: We duplicate to give caller owned memory while keeping cached copy
                         return try self.allocator.dupe(u8, cached.content);
                     }
                 }
