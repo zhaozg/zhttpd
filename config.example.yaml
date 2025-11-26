@@ -13,3 +13,4 @@ log_level: "info"
 log_file: "zhttpd.log"
 access_log_file: "access.log"
 reload: "auto"  # Script reload mode: never, auto, or force
+max_cache_file_size: 1048576  # Maximum file size to cache (1MB)

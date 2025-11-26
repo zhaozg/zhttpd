@@ -13,5 +13,6 @@
   "log_level": "info",
   "log_file": "zhttpd.log",
   "access_log_file": "access.log",
-  "reload": "auto"
+  "reload": "auto",
+  "max_cache_file_size": 1048576
 }

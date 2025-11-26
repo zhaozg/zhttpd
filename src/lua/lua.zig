@@ -83,9 +83,9 @@ pub const LuaHandler = struct {
     allocator: std.mem.Allocator,
     scripts_dir: []const u8,
     pool: LuaStatePool,
-    file_cache: FileCache,
+    file_cache: *FileCache, // Shared global file cache
 
-    pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8, reload_mode: @import("../config/config.zig").ReloadMode) !LuaHandler {
+    pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8, file_cache: *FileCache) !LuaHandler {
         // Initialize pool with 4 Lua states
         const pool = try LuaStatePool.init(allocator, 4);
 
@@ -93,13 +93,13 @@ pub const LuaHandler = struct {
             .allocator = allocator,
             .scripts_dir = scripts_dir,
             .pool = pool,
-            .file_cache = FileCache.init(allocator, reload_mode),
+            .file_cache = file_cache,
         };
     }
 
     pub fn deinit(self: *LuaHandler) void {
         self.pool.deinit();
-        self.file_cache.deinit();
+        // Don't deinit file_cache - it's shared and owned by AppContext
     }
 
     /// Execute a Lua script with request data
@@ -339,7 +339,10 @@ test "lua handler init" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var handler = try LuaHandler.init(allocator, "./examples/lua", .auto);
+    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer cache.deinit();
+
+    var handler = try LuaHandler.init(allocator, "./examples/lua", &cache);
     defer handler.deinit();
 
     try testing.expect(handler.scripts_dir.len > 0);

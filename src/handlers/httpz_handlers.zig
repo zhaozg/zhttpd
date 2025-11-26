@@ -7,6 +7,7 @@ const GraphQLHandler = @import("../graphql/graphql.zig").GraphQLHandler;
 const logger_mod = @import("../logger/logger.zig");
 const Logger = logger_mod.Logger;
 const LogLevel = logger_mod.LogLevel;
+const FileCache = @import("../cache/file_cache.zig").FileCache;
 
 // Constants
 const BUFFER_SIZE = 64 * 1024; // 64KB for request/response buffers
@@ -17,6 +18,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
 pub const AppContext = struct {
     allocator: std.mem.Allocator,
     config: Config,
+    file_cache: *FileCache, // Global file cache shared by all handlers
     lua_handler: ?LuaHandler = null,
     graphql_handler: ?GraphQLHandler = null,
     logger: Logger,
@@ -44,18 +46,25 @@ pub const AppContext = struct {
         }
         errdefer if (access_logger) |*al| al.deinit();
 
+        // Initialize global file cache
+        const file_cache = try allocator.create(FileCache);
+        errdefer allocator.destroy(file_cache);
+        file_cache.* = FileCache.init(allocator, config.reload, config.max_cache_file_size);
+        errdefer file_cache.deinit();
+
         var ctx = AppContext{
             .allocator = allocator,
             .config = config,
+            .file_cache = file_cache,
             .logger = logger,
             .access_logger = access_logger,
         };
 
         // Initialize Lua handler if enabled
         if (config.enable_lua) {
-            ctx.lua_handler = try LuaHandler.init(allocator, config.lua_scripts_dir, config.reload);
+            ctx.lua_handler = try LuaHandler.init(allocator, config.lua_scripts_dir, file_cache);
             errdefer if (ctx.lua_handler) |*lua| lua.deinit();
-            ctx.logger.info("Lua handler initialized with scripts from: {s} (reload: {s})", .{ config.lua_scripts_dir, @tagName(config.reload) });
+            ctx.logger.info("Lua handler initialized with scripts from: {s} (reload: {s}, max_cache_file_size: {})", .{ config.lua_scripts_dir, @tagName(config.reload), config.max_cache_file_size });
         }
 
         // Initialize GraphQL handler if enabled
@@ -80,6 +89,8 @@ pub const AppContext = struct {
         if (self.graphql_handler) |*graphql| {
             graphql.deinit();
         }
+        self.file_cache.deinit();
+        self.allocator.destroy(self.file_cache);
         self.logger.deinit();
         if (self.access_logger) |*al| {
             al.deinit();

@@ -28,6 +28,7 @@ pub const Config = struct {
     log_file: ?[]const u8,
     access_log_file: ?[]const u8,
     reload: ReloadMode,
+    max_cache_file_size: usize, // Maximum file size to cache in bytes
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -98,6 +99,7 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .log_file = if (root.get("log_file")) |lf| try allocator.dupe(u8, lf.string) else null,
         .access_log_file = if (root.get("access_log_file")) |alf| try allocator.dupe(u8, alf.string) else null,
         .reload = if (root.get("reload")) |r| ReloadMode.fromString(r.string) else .auto,
+        .max_cache_file_size = if (root.get("max_cache_file_size")) |mcfs| @intCast(mcfs.integer) else 1024 * 1024, // Default 1MB
         .allocator = allocator,
     };
 }
@@ -119,6 +121,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .log_file = null,
         .access_log_file = null,
         .reload = .auto, // Default to auto reload mode
+        .max_cache_file_size = 1024 * 1024, // Default 1MB
         .allocator = allocator,
     };
 }
@@ -202,6 +205,8 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
             config.access_log_file = if (value.len > 0) try allocator.dupe(u8, value) else null;
         } else if (std.mem.eql(u8, key, "reload")) {
             config.reload = ReloadMode.fromString(value);
+        } else if (std.mem.eql(u8, key, "max_cache_file_size")) {
+            config.max_cache_file_size = try std.fmt.parseInt(usize, value, 10);
         }
     }
 
