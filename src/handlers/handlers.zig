@@ -1,22 +1,49 @@
 const std = @import("std");
 const Config = @import("../config/config.zig").Config;
 const security = @import("../security/security.zig");
+const LuaHandler = @import("../lua/lua.zig").LuaHandler;
+const GraphQLHandler = @import("../graphql/graphql.zig").GraphQLHandler;
 
 pub const Server = struct {
     allocator: std.mem.Allocator,
     config: Config,
     thread_pool: ?std.Thread.Pool = null,
+    lua_handler: ?LuaHandler = null,
+    graphql_handler: ?GraphQLHandler = null,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !Server {
-        return Server{
+        var server = Server{
             .allocator = allocator,
             .config = config,
         };
+
+        // Initialize Lua handler if enabled
+        if (config.enable_lua) {
+            server.lua_handler = try LuaHandler.init(allocator, config.lua_scripts_dir);
+        }
+
+        // Initialize GraphQL handler if enabled
+        if (config.enable_graphql) {
+            var graphql = try GraphQLHandler.init(allocator);
+            // Try to load schema if it exists
+            graphql.loadSchema("examples/graphql/schema.graphql") catch |err| {
+                std.debug.print("Warning: Could not load GraphQL schema: {}\n", .{err});
+            };
+            server.graphql_handler = graphql;
+        }
+
+        return server;
     }
 
     pub fn deinit(self: *Server) void {
         if (self.thread_pool) |*pool| {
             pool.deinit();
+        }
+        if (self.lua_handler) |*lua| {
+            lua.deinit();
+        }
+        if (self.graphql_handler) |*graphql| {
+            graphql.deinit();
         }
     }
 
@@ -71,7 +98,7 @@ pub const Server = struct {
         if (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD")) {
             try self.handleGet(connection.stream, path);
         } else if (std.mem.eql(u8, method, "POST")) {
-            try self.handlePost(connection.stream, path);
+            try self.handlePost(connection.stream, path, request);
         } else {
             try self.sendResponse(connection.stream, "405 Method Not Allowed", "text/plain", "Method Not Allowed");
         }
@@ -90,22 +117,80 @@ pub const Server = struct {
         try self.serveStaticFile(stream, path);
     }
 
-    fn handlePost(self: *Server, stream: std.net.Stream, path: []const u8) !void {
+    fn handlePost(self: *Server, stream: std.net.Stream, path: []const u8, request: []const u8) !void {
+        // Extract body from request
+        const body = blk: {
+            var lines = std.mem.splitSequence(u8, request, "\r\n\r\n");
+            _ = lines.next(); // Skip headers
+            break :blk lines.rest();
+        };
+
         // Check if this is a GraphQL endpoint
         if (self.config.enable_graphql and std.mem.eql(u8, path, self.config.graphql_endpoint)) {
-            try self.sendResponse(stream, "200 OK", "application/json",
-                \\{"data":{"message":"GraphQL query executed"}}
-            );
+            if (self.graphql_handler) |*handler| {
+                // Parse GraphQL query from JSON body
+                var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, body, .{}) catch {
+                    try self.sendResponse(stream, "400 Bad Request", "application/json",
+                        \\{"errors":[{"message":"Invalid JSON"}]}
+                    );
+                    return;
+                };
+                defer parsed.deinit();
+
+                const query = if (parsed.value.object.get("query")) |q| q.string else "";
+
+                const result = handler.executeQuery(query) catch {
+                    try self.sendResponse(stream, "500 Internal Server Error", "application/json",
+                        \\{"errors":[{"message":"Query execution failed"}]}
+                    );
+                    return;
+                };
+                defer self.allocator.free(result);
+
+                try self.sendResponse(stream, "200 OK", "application/json", result);
+            } else {
+                try self.sendResponse(stream, "503 Service Unavailable", "application/json",
+                    \\{"errors":[{"message":"GraphQL handler not initialized"}]}
+                );
+            }
             return;
         }
 
-        // Check if this is a Lua handler
+        // Check if this is a Lua API handler
         if (self.config.enable_lua and std.mem.startsWith(u8, path, "/api/")) {
-            try self.handleLuaApi(stream, path);
+            try self.handleLuaApi(stream, path, body);
             return;
         }
 
         try self.sendResponse(stream, "404 Not Found", "text/plain", "Not Found");
+    }
+
+    fn handleLuaApi(self: *Server, stream: std.net.Stream, path: []const u8, body: []const u8) !void {
+        if (self.lua_handler) |*handler| {
+            // Extract script name from path (/api/test -> test)
+            const script_name = blk: {
+                if (std.mem.startsWith(u8, path, "/api/")) {
+                    const remaining = path[5..]; // Skip "/api/"
+                    break :blk remaining;
+                }
+                break :blk "test";
+            };
+
+            const result = handler.executeScript(script_name, body) catch |err| {
+                std.debug.print("Lua execution error: {}\n", .{err});
+                try self.sendResponse(stream, "500 Internal Server Error", "application/json",
+                    \\{"status":"error","message":"Script execution failed"}
+                );
+                return;
+            };
+            defer self.allocator.free(result);
+
+            try self.sendResponse(stream, "200 OK", "application/json", result);
+        } else {
+            try self.sendResponse(stream, "503 Service Unavailable", "application/json",
+                \\{"status":"error","message":"Lua handler not initialized"}
+            );
+        }
     }
 
     fn serveStaticFile(self: *Server, stream: std.net.Stream, path: []const u8) !void {
@@ -130,15 +215,6 @@ pub const Server = struct {
         const content_type = getContentType(file_path);
 
         try self.sendResponse(stream, "200 OK", content_type, content);
-    }
-
-    fn handleLuaApi(self: *Server, stream: std.net.Stream, path: []const u8) !void {
-        _ = path;
-
-        // Lua integration would go here
-        try self.sendResponse(stream, "200 OK", "application/json",
-            \\{"message":"Lua API handler","status":"placeholder"}
-        );
     }
 
     fn sendResponse(self: *Server, stream: std.net.Stream, status: []const u8, content_type: []const u8, body: []const u8) !void {

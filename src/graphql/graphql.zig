@@ -30,28 +30,23 @@ pub const GraphQLHandler = struct {
     }
 
     pub fn executeQuery(self: *GraphQLHandler, query: []const u8) ![]const u8 {
-        _ = self;
-        _ = query;
+        if (self.schema == null) {
+            return try self.allocator.dupe(u8,
+                \\{"errors":[{"message":"Schema not loaded"}]}
+            );
+        }
 
-        // TODO: Integrate with grapzig when dependency is available
-        // This is a placeholder for GraphQL query execution
-        // 1. Parse the query
-        // 2. Validate against schema
-        // 3. Execute resolvers
-        // 4. Return JSON response
-
-        return try self.allocator.dupe(u8,
-            \\{"data":{"message":"GraphQL handler placeholder","status":"ok"}}
-        );
+        // TODO: Full grapzig integration requires defining resolvers and types
+        // For now, return a simple response that shows the query was received
+        const response = try std.fmt.allocPrint(self.allocator,
+            \\{{"data":{{"message":"GraphQL query received","query":"{s}"}}}}
+        , .{query});
+        return response;
     }
 
     pub fn executeMutation(self: *GraphQLHandler, mutation: []const u8) ![]const u8 {
-        _ = self;
-        _ = mutation;
-
-        return try self.allocator.dupe(u8,
-            \\{"data":{"success":true,"message":"Mutation executed"}}
-        );
+        // Mutations are just queries in GraphQL, use the same execution path
+        return try self.executeQuery(mutation);
     }
 };
 
@@ -62,6 +57,7 @@ test "graphql handler init" {
     var handler = try GraphQLHandler.init(allocator);
     defer handler.deinit();
 
+    // Test basic query execution without schema (should return error)
     const result = try handler.executeQuery("{ hello }");
     defer allocator.free(result);
 

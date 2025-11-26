@@ -1,4 +1,5 @@
 const std = @import("std");
+const ziglua = @import("ziglua");
 
 // Lua integration module
 // This module provides integration with Lua for dynamic content handling
@@ -7,32 +8,47 @@ const std = @import("std");
 pub const LuaHandler = struct {
     allocator: std.mem.Allocator,
     scripts_dir: []const u8,
+    lua: *ziglua.Lua,
 
     pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8) !LuaHandler {
+        // Create Lua state
+        var lua = try ziglua.Lua.init(allocator);
+        errdefer lua.deinit();
+
+        // Open standard libraries
+        lua.openLibs();
+
         return LuaHandler{
             .allocator = allocator,
             .scripts_dir = scripts_dir,
+            .lua = lua,
         };
     }
 
     pub fn deinit(self: *LuaHandler) void {
-        _ = self;
+        self.lua.deinit();
     }
 
     pub fn executeScript(self: *LuaHandler, script_name: []const u8, request_data: []const u8) ![]const u8 {
-        _ = self;
-        _ = script_name;
-        _ = request_data;
+        _ = request_data; // TODO: Pass request data to Lua
 
-        // TODO: Integrate with ziglua when dependency is available
-        // This is a placeholder for Lua script execution
-        // 1. Create Lua state
-        // 2. Load script from scripts_dir
-        // 3. Pass request_data to script
-        // 4. Execute script
-        // 5. Return result
+        // Load script file
+        const script_content = try self.loadScript(script_name);
+        defer self.allocator.free(script_content);
 
-        return try self.allocator.dupe(u8, "{\"status\":\"ok\",\"message\":\"Lua handler placeholder\"}");
+        // Convert to null-terminated string for Lua
+        const script_z = try self.allocator.dupeZ(u8, script_content);
+        defer self.allocator.free(script_z);
+
+        // Execute Lua script
+        self.lua.doString(script_z) catch |err| {
+            std.debug.print("Error executing Lua script: {}\n", .{err});
+            return try self.allocator.dupe(u8, "{\"status\":\"error\",\"message\":\"Lua execution failed\"}");
+        };
+
+        // For now, return a success message
+        // TODO: Capture Lua return value and convert to JSON
+        return try self.allocator.dupe(u8, "{\"status\":\"ok\",\"message\":\"Lua script executed\"}");
     }
 
     pub fn loadScript(self: *LuaHandler, script_name: []const u8) ![]const u8 {
