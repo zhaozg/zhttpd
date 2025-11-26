@@ -48,6 +48,13 @@ reload: "auto"
 #   - Set to 0 to disable caching for all files
 max_cache_file_size: 1048576
 
+# enable_etag: Enable ETag support for static files
+#   - true: Generates weak ETags based on file size and modification time
+#   - ETags enable efficient HTTP caching with 304 Not Modified responses
+#   - Reduces bandwidth usage for unchanged files
+#   - Recommended for production deployments
+enable_etag: true
+
 # GraphQL Configuration
 # ---------------------
 # enable_graphql: Enable or disable GraphQL endpoint
