@@ -48,10 +48,14 @@ pub const AppContext = struct {
 
 pub const HttpzServer = struct {
     server: httpz.Server(*AppContext),
-    context: AppContext,
+    context: *AppContext,
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !HttpzServer {
-        var context = try AppContext.init(allocator, config);
+        const context = try allocator.create(AppContext);
+        errdefer allocator.destroy(context);
+
+        context.* = try AppContext.init(allocator, config);
         errdefer context.deinit();
 
         const server = try httpz.Server(*AppContext).init(allocator, .{
@@ -60,6 +64,7 @@ pub const HttpzServer = struct {
             .request = .{
                 .max_body_size = config.max_body_size,
                 .max_form_count = 20,
+                .buffer_size = 65536, // 64KB for request/response buffers
             },
             .timeout = .{
                 .request = config.timeout_seconds * 1000, // convert to ms
@@ -67,17 +72,22 @@ pub const HttpzServer = struct {
             .thread_pool = .{
                 .count = @intCast(config.thread_pool_size),
             },
-        }, &context);
+            .workers = .{
+                .max_conn = 512,
+            },
+        }, context);
 
         return HttpzServer{
             .server = server,
             .context = context,
+            .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *HttpzServer) void {
         self.server.deinit();
         self.context.deinit();
+        self.allocator.destroy(self.context);
     }
 
     pub fn setupRoutes(self: *HttpzServer) !void {
@@ -129,7 +139,21 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
     };
     defer file.close();
 
-    const content = try file.readToEndAlloc(res.arena, 1024 * 1024 * 10);
+    // Get file size
+    const stat = try file.stat();
+    const file_size = stat.size;
+
+    if (file_size > 1024 * 1024 * 10) {
+        res.status = 413;
+        res.body = "File too large";
+        return;
+    }
+
+    // Use the context allocator for larger files instead of arena
+    const content = try ctx.allocator.alloc(u8, file_size);
+    errdefer ctx.allocator.free(content);
+
+    const bytes_read = try file.readAll(content);
 
     // Set content type
     res.content_type = getContentType(file_path);
@@ -139,7 +163,9 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         addSecurityHeaders(res);
     }
 
-    res.body = content;
+    // Copy to response - httpz will handle the memory
+    res.body = try res.arena.dupe(u8, content[0..bytes_read]);
+    ctx.allocator.free(content);
 }
 
 fn graphqlGet(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
@@ -191,6 +217,11 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
             return;
         };
 
+        // Use res.arena for the response
+        const original_alloc = handler.allocator;
+        handler.allocator = res.arena;
+        defer handler.allocator = original_alloc;
+
         const result = handler.executeQuery(query) catch {
             res.status = 500;
             res.body =
@@ -198,7 +229,6 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
             ;
             return;
         };
-        defer ctx.allocator.free(result);
 
         res.body = result;
     } else {
@@ -227,6 +257,11 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
         // Get request body
         const body = req.body() orelse "";
 
+        // Use res.arena for the response
+        const original_alloc = handler.allocator;
+        handler.allocator = res.arena;
+        defer handler.allocator = original_alloc;
+
         const result = handler.executeScript(script_name, body) catch |err| {
             std.debug.print("Lua execution error: {}\n", .{err});
             res.status = 500;
@@ -235,7 +270,6 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
             ;
             return;
         };
-        defer ctx.allocator.free(result);
 
         res.body = result;
     } else {
