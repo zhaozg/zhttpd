@@ -1,7 +1,6 @@
 const std = @import("std");
 const config = @import("config/config.zig");
-const handlers = @import("handlers/handlers.zig");
-const security = @import("security/security.zig");
+const httpz_handlers = @import("handlers/httpz_handlers.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -16,12 +15,16 @@ pub fn main() !void {
     std.debug.print("Static files: {s}\n", .{cfg.static_dir});
     std.debug.print("Security headers: {s}\n", .{if (cfg.security_headers) "enabled" else "disabled"});
 
-    // Initialize the HTTP server
-    var server = try handlers.Server.init(allocator, cfg);
+    // Initialize the HTTP server with httpz
+    var server = try httpz_handlers.HttpzServer.init(allocator, cfg);
     defer server.deinit();
+    defer server.stop();
 
-    // Start the server
-    try server.start();
+    // Setup routes
+    try server.setupRoutes();
+
+    // Start the server (blocking)
+    try server.listen();
 }
 
 test "main module" {
