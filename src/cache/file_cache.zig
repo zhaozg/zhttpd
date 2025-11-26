@@ -170,7 +170,8 @@ pub const FileCache = struct {
     }
 
     /// Get file info with ETag support (for zero-copy serving)
-    pub fn getFileInfo(_: *FileCache, path: []const u8, allocator: std.mem.Allocator) !struct { size: u64, mtime: i128, etag: []const u8 } {
+    pub fn getFileInfo(cache: *FileCache, path: []const u8, allocator: std.mem.Allocator) !struct { size: u64, mtime: i128, etag: []const u8 } {
+        _ = cache; // unused but kept for API consistency
         const file = try std.fs.cwd().openFile(path, .{});
         defer file.close();
         const stat = try file.stat();
