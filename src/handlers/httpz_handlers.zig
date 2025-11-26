@@ -10,8 +10,6 @@ const LogLevel = logger_mod.LogLevel;
 const FileCache = @import("../cache/file_cache.zig").FileCache;
 
 // Constants
-const BUFFER_SIZE = 64 * 1024; // 64KB for request/response buffers
-const MAX_CONNECTIONS = 512;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
 
 // Application context that holds our handlers
@@ -116,7 +114,7 @@ pub const HttpzServer = struct {
             .request = .{
                 .max_body_size = config.max_body_size,
                 .max_form_count = 20,
-                .buffer_size = BUFFER_SIZE,
+                .buffer_size = config.request_buffer_size,
             },
             .timeout = .{
                 .request = config.timeout_seconds * 1000, // convert to ms
@@ -125,7 +123,7 @@ pub const HttpzServer = struct {
                 .count = @intCast(config.thread_pool_size),
             },
             .workers = .{
-                .max_conn = MAX_CONNECTIONS,
+                .max_conn = @intCast(config.max_connections),
             },
         }, context);
 

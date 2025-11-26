@@ -103,6 +103,22 @@ timeout_seconds: 30
 #   - 4 is a good starting point for most servers
 thread_pool_size: 4
 
+# max_connections: Maximum number of concurrent connections
+#   - Controls how many simultaneous client connections the server accepts
+#   - Higher values support more concurrent users but use more memory
+#   - 512 is a balanced default for most deployments
+#   - Increase for high-traffic sites (1024, 2048, etc.)
+#   - Decrease for resource-constrained environments (256, 128)
+max_connections: 512
+
+# request_buffer_size: Buffer size for request/response processing in bytes
+#   - Memory allocated per request for buffering data
+#   - 65536 bytes = 64KB (default, good for most use cases)
+#   - Larger buffers (128KB, 256KB) improve performance for large requests
+#   - Smaller buffers (32KB, 16KB) reduce memory usage
+#   - Trade-off between performance and memory consumption
+request_buffer_size: 65536
+
 # Logging Configuration
 # ---------------------
 # log_level: Verbosity of log output
