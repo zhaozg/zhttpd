@@ -52,6 +52,14 @@ pub const LuaHandler = struct {
     }
 
     pub fn loadScript(self: *LuaHandler, script_name: []const u8) ![]const u8 {
+        // Security: Prevent path traversal attacks
+        if (std.mem.indexOf(u8, script_name, "..") != null or
+            std.mem.indexOf(u8, script_name, "/") != null or
+            std.mem.indexOf(u8, script_name, "\\") != null)
+        {
+            return error.InvalidScriptName;
+        }
+
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}.lua", .{ self.scripts_dir, script_name });
 

@@ -70,10 +70,11 @@ jobs:
     - name: Build release binary
       run: zig build -Doptimize=ReleaseFast
     
-    - name: Create test static files
+    - name: Create test directories and files
       run: |
-        mkdir -p examples/static
+        mkdir -p examples/static examples/lua examples/graphql
         echo "<html><body>Hello World</body></html>" > examples/static/index.html
+        cp config.example.json config.json
     
     - name: Run benchmark
       run: |
@@ -81,14 +82,21 @@ jobs:
         ./zig-out/bin/zhttpd &
         SERVER_PID=$!
         
-        # Wait for server to start
-        sleep 5
+        # Wait for server to start with health check
+        for i in {1..30}; do
+          if curl -s http://127.0.0.1:8080/ > /dev/null 2>&1; then
+            echo "Server started successfully"
+            break
+          fi
+          sleep 1
+        done
         
         # Run benchmark with Apache Bench
         ab -n 1000 -c 10 http://127.0.0.1:8080/ > benchmark_results.txt || true
         
         # Stop server
-        kill $SERVER_PID
+        kill $SERVER_PID 2>/dev/null || true
+        wait $SERVER_PID 2>/dev/null || true
         
         # Display results
         cat benchmark_results.txt

@@ -25,9 +25,9 @@ fi
 echo -e "\n${YELLOW}Building server in ReleaseFast mode...${NC}"
 zig build -Doptimize=ReleaseFast
 
-# Ensure example files exist
+# Ensure example directories exist
 echo -e "\n${YELLOW}Setting up test files...${NC}"
-mkdir -p examples/static
+mkdir -p examples/static examples/lua examples/graphql
 if [ ! -f "examples/static/index.html" ]; then
     echo "<html><head><title>Benchmark Test</title></head><body><h1>Hello from zhttpd!</h1><p>This is a test page for benchmarking.</p></body></html>" > examples/static/index.html
 fi
@@ -42,17 +42,26 @@ echo -e "\n${YELLOW}Starting server...${NC}"
 ./zig-out/bin/zhttpd &
 SERVER_PID=$!
 
-# Wait for server to start
+# Wait for server to start with retry logic
 echo "Waiting for server to start (PID: $SERVER_PID)..."
-sleep 3
+for i in {1..30}; do
+    if curl -s http://127.0.0.1:8080/ > /dev/null 2>&1; then
+        echo -e "${GREEN}Server started successfully${NC}"
+        break
+    fi
+    if ! kill -0 $SERVER_PID 2>/dev/null; then
+        echo -e "${RED}Error: Server process died${NC}"
+        exit 1
+    fi
+    sleep 1
+done
 
-# Check if server is running
-if ! kill -0 $SERVER_PID 2>/dev/null; then
-    echo -e "${RED}Error: Server failed to start${NC}"
+# Final check
+if ! curl -s http://127.0.0.1:8080/ > /dev/null 2>&1; then
+    echo -e "${RED}Error: Server failed to respond after 30 seconds${NC}"
+    kill $SERVER_PID 2>/dev/null || true
     exit 1
 fi
-
-echo -e "${GREEN}Server started successfully${NC}"
 
 # Run benchmarks with different configurations
 echo -e "\n${YELLOW}=== Running Benchmarks ===${NC}"
@@ -69,12 +78,25 @@ ab -n 5000 -c 50 http://127.0.0.1:8080/ || true
 echo -e "\n${GREEN}Test 3: High concurrency (10,000 requests, 100 connections)${NC}"
 ab -n 10000 -c 100 http://127.0.0.1:8080/ || true
 
-# Stop the server
+# Stop the server gracefully
 echo -e "\n${YELLOW}Stopping server...${NC}"
 kill -TERM $SERVER_PID 2>/dev/null || true
-sleep 2
+
+# Give server time to shutdown gracefully
+for i in {1..5}; do
+    if ! kill -0 $SERVER_PID 2>/dev/null; then
+        echo -e "${GREEN}Server stopped gracefully${NC}"
+        break
+    fi
+    sleep 1
+done
+
 # Force kill if still running
-kill -KILL $SERVER_PID 2>/dev/null || true
+if kill -0 $SERVER_PID 2>/dev/null; then
+    echo -e "${YELLOW}Force killing server${NC}"
+    kill -KILL $SERVER_PID 2>/dev/null || true
+fi
+
 wait $SERVER_PID 2>/dev/null || true
 
 echo -e "\n${GREEN}=== Benchmark Complete ===${NC}"
