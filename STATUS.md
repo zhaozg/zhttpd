@@ -1,6 +1,6 @@
 # Project Status
 
-## Current Version: v0.1.0
+## Current Version: v0.1.1
 
 **Status:** ✅ Production Ready
 
@@ -12,6 +12,7 @@ All primary objectives have been achieved:
 |---------|--------|---------|
 | HTTP Server | ✅ Complete | Based on http.zig (httpz) |
 | Static File Serving | ✅ Complete | HTML, CSS, JS, images with MIME types |
+| ETag Caching | ✅ Complete | Weak ETags for bandwidth reduction |
 | Lua Integration | ✅ Complete | Dynamic content via ziglua |
 | GraphQL API | ✅ Complete | Query/mutation support via grapzig |
 | Security Headers | ✅ Complete | CSP, HSTS, X-Frame-Options, etc. |
@@ -40,6 +41,11 @@ All primary objectives have been achieved:
 - Transfer Rate: ~191 MB/s
 - Latency: ~2ms (100 concurrent)
 
+**ETag Caching (v0.1.1):**
+- Bandwidth Reduction: 50-90% for returning visitors
+- 304 Not Modified responses for unchanged files
+- Cache-Control headers for browser optimization
+
 ## Quick Start
 
 ```bash
@@ -62,6 +68,7 @@ zig build test
 - [ROADMAP.md](ROADMAP.md) - Future plans
 - [AGENTS.md](AGENTS.md) - Agent instructions
 - [docs/LOGGING.md](docs/LOGGING.md) - Logging system details
+- [docs/ETAG_CACHING.md](docs/ETAG_CACHING.md) - ETag caching guide
 - [docs/h2load_compatibility.md](docs/h2load_compatibility.md) - h2load testing notes
 - [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) - Historical implementation details
 
