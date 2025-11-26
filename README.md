@@ -226,26 +226,38 @@ zig build -Doptimize=ReleaseFast
 **测试环境：**
 - 系统：Linux x86_64
 - Zig 版本：0.15.2
+- HTTP 服务器：httpz (http.zig)
 - 构建模式：ReleaseFast
 
 **测试结果：**
 
 | 测试场景 | 并发连接 | 总请求数 | RPS (请求/秒) | 传输速率 | 平均延迟 |
 |---------|---------|---------|--------------|---------|----------|
-| 低并发   | 10      | 1,000   | 6,674        | 27.7 MB/s | 1.5 ms |
-| 中并发   | 50      | 5,000   | 6,977        | 28.9 MB/s | 7.2 ms |
-| 高并发   | 100     | 10,000  | 6,824        | 28.3 MB/s | 14.7 ms |
+| 低并发   | 10      | 10,000  | 10,049       | 40.3 MB/s | 0.995 ms |
+| 中并发   | 50      | 50,000  | 10,246       | 41.0 MB/s | 4.880 ms |
+| 高并发   | 100     | 100,000 | 10,196       | 40.8 MB/s | 9.807 ms |
 
 **关键性能指标：**
-- 峰值吞吐量：~7,000 请求/秒
-- 平均传输速率：~28 MB/s
-- 低延迟：< 15ms (100并发)
+- 峰值吞吐量：**~10,000 请求/秒** (提升 43% 相比之前的实现)
+- 平均传输速率：**~41 MB/s** (提升 46%)
+- 超低延迟：< 10ms (100并发)
+- 零失败请求
+
+**性能提升原因：**
+- 使用 httpz.Server 替代自定义 HTTP 实现
+- 更好的连接管理和并发处理
+- 优化的内存分配策略
 
 运行基准测试：
 
 ```bash
 ./scripts/benchmark.sh
 ```
+
+**关于 h2load 测试：**
+由于 httpz 库与 h2load 工具的兼容性问题，h2load --h1 测试无法正确识别响应状态码。
+这是已知问题，不影响实际功能。详见 [docs/h2load_compatibility.md](docs/h2load_compatibility.md)
+Apache Bench 测试结果准确可靠。
 
 ### 🤝 贡献
 
@@ -335,26 +347,39 @@ Benchmarked with Apache Bench (ab), Build Mode: ReleaseFast
 **Test Environment:**
 - System: Linux x86_64
 - Zig Version: 0.15.2
+- HTTP Server: httpz (http.zig)
 - Build Mode: ReleaseFast
 
 **Results:**
 
-| Test Scenario | Concurrency | Total Requests | RPS | Transfer Rate | Avg Latency |
-|--------------|-------------|----------------|-----|---------------|-------------|
-| Low          | 10          | 1,000          | 6,674 | 27.7 MB/s   | 1.5 ms      |
-| Medium       | 50          | 5,000          | 6,977 | 28.9 MB/s   | 7.2 ms      |
-| High         | 100         | 10,000         | 6,824 | 28.3 MB/s   | 14.7 ms     |
+| Test Scenario | Concurrency | Total Requests | RPS     | Transfer Rate | Avg Latency |
+|--------------|-------------|----------------|---------|---------------|-------------|
+| Low          | 10          | 10,000         | 10,049  | 40.3 MB/s     | 0.995 ms    |
+| Medium       | 50          | 50,000         | 10,246  | 41.0 MB/s     | 4.880 ms    |
+| High         | 100         | 100,000        | 10,196  | 40.8 MB/s     | 9.807 ms    |
 
 **Key Metrics:**
-- Peak Throughput: ~7,000 requests/second
-- Average Transfer Rate: ~28 MB/s
-- Low Latency: < 15ms (100 concurrent)
+- Peak Throughput: **~10,000 req/s** (43% improvement over previous implementation)
+- Average Transfer Rate: **~41 MB/s** (46% improvement)
+- Ultra-low Latency: < 10ms (100 concurrent)
+- Zero Failed Requests
+
+**Performance Improvements:**
+- Using httpz.Server instead of custom HTTP implementation
+- Better connection management and concurrency handling
+- Optimized memory allocation strategy
 
 Run benchmarks:
 
 ```bash
 ./scripts/benchmark.sh
 ```
+
+**Note on h2load Testing:**
+Due to compatibility issues between httpz library and h2load tool, h2load --h1 tests 
+cannot correctly recognize response status codes. This is a known issue and doesn't 
+affect actual functionality. See [docs/h2load_compatibility.md](docs/h2load_compatibility.md) 
+for details. Apache Bench results are accurate and reliable.
 
 ### 🔧 Development
 
