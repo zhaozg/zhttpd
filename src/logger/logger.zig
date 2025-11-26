@@ -38,11 +38,13 @@ pub const Logger = struct {
         if (log_file_path) |path| {
             // Duplicate the path so we own it for rotation
             owned_path = try allocator.dupe(u8, path);
+            errdefer if (owned_path) |p| allocator.free(p);
 
             file = try std.fs.cwd().createFile(path, .{
                 .read = false,
                 .truncate = false,
             });
+            errdefer if (file) |f| f.close();
 
             // Get current file size
             const stat = try file.?.stat();
@@ -89,7 +91,7 @@ pub const Logger = struct {
             break :blk "Log formatting error";
         };
 
-        // Format human-readable timestamp (YYYY-MM-DD HH:MM:SS)
+        // Format human-readable timestamp with microsecond precision (YYYY-MM-DD HH:MM:SS.microseconds)
         const timestamp_str = formatTimestamp();
 
         // Write to console
@@ -97,12 +99,13 @@ pub const Logger = struct {
 
         // Write to file if configured
         if (self.file) |file| {
-            const log_line = std.fmt.allocPrint(self.allocator, "[{s}] [{s}] {s}\n", .{
+            // Use stack buffer instead of allocation for better performance
+            var log_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+            const log_line = std.fmt.bufPrint(&log_buf, "[{s}] [{s}] {s}\n", .{
                 timestamp_str,
                 level.toString(),
                 message,
             }) catch return;
-            defer self.allocator.free(log_line);
 
             _ = file.write(log_line) catch |write_err| {
                 std.debug.print("Failed to write to log file: {}\n", .{write_err});
@@ -119,10 +122,13 @@ pub const Logger = struct {
         }
     }
 
-    /// Format current timestamp as human-readable string (YYYY-MM-DD HH:MM:SS)
-    fn formatTimestamp() [19]u8 {
-        const timestamp = std.time.timestamp();
-        const epoch_seconds: u64 = @intCast(timestamp);
+    /// Format current timestamp as human-readable string with microsecond precision
+    /// Format: YYYY-MM-DD HH:MM:SS.microseconds
+    fn formatTimestamp() [26]u8 {
+        const now = std.time.microTimestamp();
+        const epoch_seconds: u64 = @intCast(@divFloor(now, std.time.us_per_s));
+        // Handle negative timestamps gracefully (though unlikely in production)
+        const microseconds: u64 = @intCast(@mod(@mod(now, std.time.us_per_s) + std.time.us_per_s, std.time.us_per_s));
 
         // Calculate date and time components from Unix timestamp
         const seconds_per_day = 86400;
@@ -161,15 +167,16 @@ pub const Logger = struct {
         const minutes = (seconds_today % 3600) / 60;
         const seconds = seconds_today % 60;
 
-        // Format as "YYYY-MM-DD HH:MM:SS"
-        var buf: [19]u8 = undefined;
-        _ = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+        // Format as "YYYY-MM-DD HH:MM:SS.microseconds"
+        var buf: [26]u8 = undefined;
+        _ = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}.{d:0>6}", .{
             year,
             month,
             day,
             hours,
             minutes,
             seconds,
+            microseconds,
         }) catch unreachable;
         return buf;
     }
@@ -292,11 +299,18 @@ pub const Logger = struct {
         defer self.allocator.free(backup_name);
         std.fs.cwd().rename(path, backup_name) catch {};
 
-        // Create new log file
-        self.file = try std.fs.cwd().createFile(path, .{
+        // Create new log file with error recovery
+        self.file = std.fs.cwd().createFile(path, .{
             .read = false,
             .truncate = false,
-        });
+        }) catch |create_err| {
+            // Try to reopen the backup file as fallback
+            self.file = std.fs.cwd().openFile(backup_name, .{ .mode = .write_only }) catch null;
+            if (self.file) |f| {
+                _ = f.seekFromEnd(0) catch {};
+            }
+            return create_err;
+        };
         self.current_size = 0;
     }
 };
