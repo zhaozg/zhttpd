@@ -54,12 +54,14 @@ pub const AppContext = struct {
         // Initialize Lua handler if enabled
         if (config.enable_lua) {
             ctx.lua_handler = try LuaHandler.init(allocator, config.lua_scripts_dir);
+            errdefer if (ctx.lua_handler) |*lua| lua.deinit();
             ctx.logger.info("Lua handler initialized with scripts from: {s}", .{config.lua_scripts_dir});
         }
 
         // Initialize GraphQL handler if enabled
         if (config.enable_graphql) {
             var graphql = try GraphQLHandler.init(allocator);
+            errdefer graphql.deinit();
             // Try to load schema if it exists
             graphql.loadSchema("examples/graphql/schema.graphql") catch |err| {
                 ctx.logger.warn("Could not load GraphQL schema: {}", .{err});
@@ -172,7 +174,10 @@ fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, durati
         const remote_addr = std.fmt.bufPrint(&addr_buf, "{any}", .{req.address}) catch "unknown";
 
         const method = @tagName(req.method);
-        const path = req.url.path;
+
+        // Sanitize path to prevent log injection
+        var path_buf: [512]u8 = undefined;
+        const path = sanitizeLogField(&path_buf, req.url.path);
 
         // Sanitize user-agent to prevent log injection
         const raw_user_agent = req.headers.get("user-agent") orelse "-";
@@ -195,6 +200,7 @@ fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, durati
 }
 
 /// Sanitize log field by removing newlines and control characters
+/// Returns the sanitized string. If input is longer than buffer, it will be truncated.
 fn sanitizeLogField(buf: []u8, input: []const u8) []const u8 {
     var i: usize = 0;
     var j: usize = 0;
@@ -207,6 +213,10 @@ fn sanitizeLogField(buf: []u8, input: []const u8) []const u8 {
             buf[j] = c;
         }
         j += 1;
+    }
+    // Log warning if truncation occurred (security consideration)
+    if (i < input.len) {
+        std.debug.print("Warning: Log field truncated from {} to {} bytes\n", .{ input.len, j });
     }
     return buf[0..j];
 }
@@ -439,4 +449,53 @@ fn addSecurityHeaders(res: *httpz.Response) void {
     res.headers.add("Strict-Transport-Security", headers.hsts);
     res.headers.add("Referrer-Policy", headers.referrer_policy);
     res.headers.add("Permissions-Policy", headers.permissions_policy);
+}
+
+// Tests
+test "sanitizeLogField removes newlines and control characters" {
+    const testing = std.testing;
+
+    var buf: [256]u8 = undefined;
+
+    // Test newline removal
+    const input1 = "test\nvalue";
+    const result1 = sanitizeLogField(&buf, input1);
+    try testing.expectEqualStrings("test value", result1);
+
+    // Test carriage return removal
+    const input2 = "test\rvalue";
+    const result2 = sanitizeLogField(&buf, input2);
+    try testing.expectEqualStrings("test value", result2);
+
+    // Test control character removal
+    const input3 = "test\x00value";
+    const result3 = sanitizeLogField(&buf, input3);
+    try testing.expectEqualStrings("test value", result3);
+
+    // Test normal string passes through
+    const input4 = "normal string";
+    const result4 = sanitizeLogField(&buf, input4);
+    try testing.expectEqualStrings("normal string", result4);
+}
+
+test "sanitizeLogField handles buffer overflow" {
+    const testing = std.testing;
+
+    var small_buf: [10]u8 = undefined;
+
+    // Input longer than buffer
+    const long_input = "this is a very long string";
+    const result = sanitizeLogField(&small_buf, long_input);
+
+    // Should be truncated to buffer size
+    try testing.expect(result.len == 10);
+    try testing.expectEqualStrings("this is a ", result);
+}
+
+test "sanitizeLogField handles empty input" {
+    const testing = std.testing;
+
+    var buf: [256]u8 = undefined;
+    const result = sanitizeLogField(&buf, "");
+    try testing.expect(result.len == 0);
 }
