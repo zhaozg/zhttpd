@@ -98,20 +98,21 @@ pub const HttpzServer = struct {
     pub fn setupRoutes(self: *HttpzServer) !void {
         var router = try self.server.router(.{});
 
-        // Static file routes
-        router.get("/*", serveStatic, .{});
-
-        // GraphQL endpoint
+        // Register more specific routes before wildcard routes
+        // GraphQL endpoint (must come before wildcard)
         if (self.context.config.enable_graphql) {
             const endpoint = self.context.config.graphql_endpoint;
             router.get(endpoint, graphqlGet, .{});
             router.post(endpoint, graphqlPost, .{});
         }
 
-        // Lua API endpoints
+        // Lua API endpoints (must come before wildcard)
         if (self.context.config.enable_lua) {
             router.post("/api/*", luaApi, .{});
         }
+
+        // Static file routes (wildcard must come last)
+        router.get("/*", serveStatic, .{});
     }
 
     pub fn listen(self: *HttpzServer) !void {
@@ -132,6 +133,13 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
 
     // Normalize path
     const clean_path = if (std.mem.eql(u8, path, "/")) "/index.html" else path;
+
+    // Security: Prevent path traversal attacks
+    if (std.mem.indexOf(u8, clean_path, "..") != null) {
+        res.status = 400;
+        res.body = "Bad Request";
+        return;
+    }
 
     var file_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const file_path = try std.fmt.bufPrint(&file_path_buf, "{s}{s}", .{ ctx.config.static_dir, clean_path });
@@ -154,10 +162,8 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         return;
     }
 
-    // Use the context allocator for larger files instead of arena
-    const content = try ctx.allocator.alloc(u8, file_size);
-    errdefer ctx.allocator.free(content);
-
+    // Use the response arena allocator directly - more efficient
+    const content = try res.arena.alloc(u8, file_size);
     const bytes_read = try file.readAll(content);
 
     // Set content type
@@ -168,9 +174,8 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         addSecurityHeaders(res);
     }
 
-    // Copy to response - httpz will handle the memory
-    res.body = try res.arena.dupe(u8, content[0..bytes_read]);
-    ctx.allocator.free(content);
+    // Set response body
+    res.body = content[0..bytes_read];
 }
 
 fn graphqlGet(_: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
