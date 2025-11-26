@@ -9,5 +9,7 @@
   "thread_pool_size": 4,
   "enable_lua": true,
   "enable_graphql": true,
-  "graphql_endpoint": "/graphql"
+  "graphql_endpoint": "/graphql",
+  "log_level": "info",
+  "log_file": "zhttpd.log"
 }

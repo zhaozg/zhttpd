@@ -4,6 +4,22 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Dependencies
+    const httpz = b.dependency("httpz", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    
+    const ziglua = b.dependency("ziglua", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    
+    const grapzig = b.dependency("grapzig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Main executable
     const exe = b.addExecutable(.{
         .name = "zhttpd",
@@ -13,6 +29,11 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    
+    // Add dependencies to executable
+    exe.root_module.addImport("httpz", httpz.module("httpz"));
+    exe.root_module.addImport("ziglua", ziglua.module("zlua"));
+    exe.root_module.addImport("grapzig", grapzig.module("grapzig"));
 
     b.installArtifact(exe);
 
