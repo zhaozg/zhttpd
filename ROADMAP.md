@@ -77,10 +77,10 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 5: Observability
 
-**Priority:** Low  
+**Priority:** Medium  
 **Effort:** Low-Medium
 
-- [ ] Integrate logger throughout codebase (currently uses std.debug.print in places)
+- [ ] Integrate logger throughout codebase (currently has 23 std.debug.print instances that should use the logger)
 - [ ] Metrics endpoint (Prometheus format)
 - [ ] Health check endpoint
 - [ ] Distributed tracing support (OpenTelemetry)
@@ -102,10 +102,12 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 7: Security Enhancements
 
-**Priority:** Medium  
-**Effort:** Low-Medium
+**Priority:** High  
+**Effort:** Medium
 
-- [ ] HTTPS/TLS support
+**Note:** HTTPS/TLS support is essential for production deployments handling sensitive data.
+
+- [ ] HTTPS/TLS support (HIGH PRIORITY)
 - [ ] Certificate management (Let's Encrypt integration)
 - [ ] Request size limits per route
 - [ ] IP-based rate limiting and blacklisting
