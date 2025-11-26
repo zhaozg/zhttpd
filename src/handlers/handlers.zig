@@ -143,22 +143,22 @@ pub const Server = struct {
 
     fn sendResponse(self: *Server, stream: std.net.Stream, status: []const u8, content_type: []const u8, body: []const u8) !void {
         var response_buf: [8192]u8 = undefined;
+        var pos: usize = 0;
 
-        // Build HTTP response with security headers
-        const response = try std.fmt.bufPrint(&response_buf,
+        // Build HTTP response header
+        const header_part1 = try std.fmt.bufPrint(response_buf[pos..],
             \\HTTP/1.1 {s}
             \\Content-Type: {s}
             \\Content-Length: {d}
             \\Connection: close
             \\
         , .{ status, content_type, body.len });
-
-        var total_len = response.len;
+        pos += header_part1.len;
 
         // Add security headers if enabled
         if (self.config.security_headers) {
             const headers = security.default_headers;
-            const additional = try std.fmt.bufPrint(response_buf[total_len..],
+            const security_headers = try std.fmt.bufPrint(response_buf[pos..],
                 \\Content-Security-Policy: {s}
                 \\X-Frame-Options: {s}
                 \\X-Content-Type-Options: {s}
@@ -176,13 +176,20 @@ pub const Server = struct {
                 headers.referrer_policy,
                 headers.permissions_policy,
             });
-            total_len += additional.len;
+            pos += security_headers.len;
         }
 
-        // Add blank line and body
-        const final_response = try std.fmt.bufPrint(response_buf[0 .. total_len + 2 + body.len], "{s}\r\n{s}", .{ response_buf[0..total_len], body });
+        // Add blank line
+        response_buf[pos] = '\r';
+        pos += 1;
+        response_buf[pos] = '\n';
+        pos += 1;
 
-        _ = try stream.write(final_response);
+        // Send headers
+        _ = try stream.write(response_buf[0..pos]);
+
+        // Send body
+        _ = try stream.write(body);
     }
 };
 
