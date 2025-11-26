@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: 0.15.2
+    
+    - name: Verify Zig installation
+      run: zig version
+    
+    - name: Check code formatting
+      run: zig fmt --check src
+    
+    - name: Build project
+      run: zig build
+    
+    - name: Run tests
+      run: zig build test
+    
+    - name: Build release
+      run: zig build -Doptimize=ReleaseFast
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: zhttpd-linux-x86_64
+        path: zig-out/bin/zhttpd
+
+  benchmark:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: 0.15.2
+    
+    - name: Install h2load
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y nghttp2-client
+    
+    - name: Build release binary
+      run: zig build -Doptimize=ReleaseFast
+    
+    - name: Create test static files
+      run: |
+        mkdir -p examples/static
+        echo "<html><body>Hello World</body></html>" > examples/static/index.html
+    
+    - name: Run benchmark
+      run: |
+        # Start server in background
+        ./zig-out/bin/zhttpd &
+        SERVER_PID=$!
+        
+        # Wait for server to start
+        sleep 5
+        
+        # Run benchmark
+        h2load -n 10000 -c 100 -t 4 http://127.0.0.1:8080/ > benchmark_results.txt
+        
+        # Stop server
+        kill $SERVER_PID
+        
+        # Display results
+        cat benchmark_results.txt
+    
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark_results.txt

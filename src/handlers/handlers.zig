@@ -68,7 +68,7 @@ pub const Server = struct {
         std.debug.print("{s} {s}\n", .{ method, path });
 
         // Route the request
-        if (std.mem.eql(u8, method, "GET")) {
+        if (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD")) {
             try self.handleGet(connection.stream, path);
         } else if (std.mem.eql(u8, method, "POST")) {
             try self.handlePost(connection.stream, path);

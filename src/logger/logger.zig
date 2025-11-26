@@ -24,7 +24,7 @@ pub const Logger = struct {
 
     pub fn init(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8) !Logger {
         var file: ?std.fs.File = null;
-        
+
         if (log_file_path) |path| {
             file = try std.fs.cwd().createFile(path, .{
                 .read = false,
@@ -58,7 +58,7 @@ pub const Logger = struct {
         defer self.mutex.unlock();
 
         const timestamp = std.time.timestamp();
-        
+
         // Format the log message
         var buf: [4096]u8 = undefined;
         const message = std.fmt.bufPrint(&buf, fmt, args) catch |err| blk: {
@@ -71,13 +71,13 @@ pub const Logger = struct {
         const day_seconds = 86400;
         const hour_seconds = 3600;
         const minute_seconds = 60;
-        
+
         const days_since_epoch = epoch_seconds / day_seconds;
         const seconds_today = epoch_seconds % day_seconds;
         const hours = seconds_today / hour_seconds;
         const minutes = (seconds_today % hour_seconds) / minute_seconds;
         const seconds = seconds_today % minute_seconds;
-        
+
         // Simple date calculation (approximate)
         const year = @as(u32, @intCast(1970 + days_since_epoch / 365));
         const month = @as(u32, @intCast((days_since_epoch % 365) / 30 + 1));
@@ -94,7 +94,7 @@ pub const Logger = struct {
                 year, month, day, hours, minutes, seconds, level.toString(), message,
             }) catch return;
             defer self.allocator.free(log_line);
-            
+
             _ = file.write(log_line) catch |err| {
                 std.debug.print("Failed to write to log file: {}\n", .{err});
             };
@@ -134,15 +134,15 @@ test "logger with file" {
     const allocator = testing.allocator;
 
     const log_path = "/tmp/test_log.txt";
-    
+
     // Clean up any existing log file
     std.fs.cwd().deleteFile(log_path) catch {};
-    
+
     var logger = try Logger.init(allocator, .debug, log_path);
     defer logger.deinit();
 
     logger.info("Test file logging", .{});
-    
+
     // Clean up
     std.fs.cwd().deleteFile(log_path) catch {};
 }
