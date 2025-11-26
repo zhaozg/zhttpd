@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Benchmark script for zhttpd using h2load
+# Benchmark script for zhttpd using Apache Bench (ab)
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR/.."
@@ -14,10 +14,10 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}=== zhttpd Benchmark Script ===${NC}"
 
-# Check if h2load is installed
-if ! command -v h2load &> /dev/null; then
-    echo -e "${RED}Error: h2load is not installed${NC}"
-    echo "Install with: sudo apt-get install nghttp2-client"
+# Check if Apache Bench (ab) is installed
+if ! command -v ab &> /dev/null; then
+    echo -e "${RED}Error: Apache Bench (ab) is not installed${NC}"
+    echo "Install with: sudo apt-get install apache2-utils"
     exit 1
 fi
 
@@ -57,17 +57,17 @@ echo -e "${GREEN}Server started successfully${NC}"
 # Run benchmarks with different configurations
 echo -e "\n${YELLOW}=== Running Benchmarks ===${NC}"
 
-# Test 1: Simple GET request
-echo -e "\n${GREEN}Test 1: Simple GET request (10,000 requests, 100 connections)${NC}"
-h2load -n 10000 -c 100 -t 4 http://127.0.0.1:8080/ || true
+# Test 1: Low concurrency
+echo -e "\n${GREEN}Test 1: Low concurrency (1,000 requests, 10 connections)${NC}"
+ab -n 1000 -c 10 http://127.0.0.1:8080/ || true
 
-# Test 2: Higher concurrency
-echo -e "\n${GREEN}Test 2: Higher concurrency (50,000 requests, 500 connections)${NC}"
-h2load -n 50000 -c 500 -t 8 http://127.0.0.1:8080/ || true
+# Test 2: Medium concurrency
+echo -e "\n${GREEN}Test 2: Medium concurrency (5,000 requests, 50 connections)${NC}"
+ab -n 5000 -c 50 http://127.0.0.1:8080/ || true
 
-# Test 3: Keep-alive connections
-echo -e "\n${GREEN}Test 3: Keep-alive (100,000 requests, 100 connections, 10 max concurrent streams)${NC}"
-h2load -n 100000 -c 100 -t 4 -m 10 http://127.0.0.1:8080/ || true
+# Test 3: High concurrency
+echo -e "\n${GREEN}Test 3: High concurrency (10,000 requests, 100 connections)${NC}"
+ab -n 10000 -c 100 http://127.0.0.1:8080/ || true
 
 # Stop the server
 echo -e "\n${YELLOW}Stopping server...${NC}"
