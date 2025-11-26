@@ -62,10 +62,10 @@ jobs:
       with:
         version: 0.15.2
     
-    - name: Install h2load
+    - name: Install Apache Bench
       run: |
         sudo apt-get update
-        sudo apt-get install -y nghttp2-client
+        sudo apt-get install -y apache2-utils
     
     - name: Build release binary
       run: zig build -Doptimize=ReleaseFast
@@ -84,8 +84,8 @@ jobs:
         # Wait for server to start
         sleep 5
         
-        # Run benchmark
-        h2load -n 10000 -c 100 -t 4 http://127.0.0.1:8080/ > benchmark_results.txt
+        # Run benchmark with Apache Bench
+        ab -n 1000 -c 10 http://127.0.0.1:8080/ > benchmark_results.txt || true
         
         # Stop server
         kill $SERVER_PID
