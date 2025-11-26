@@ -29,9 +29,9 @@ pub const GraphQLHandler = struct {
         self.schema = schema;
     }
 
-    pub fn executeQuery(self: *GraphQLHandler, query: []const u8) ![]const u8 {
+    pub fn executeQuery(self: *GraphQLHandler, arena: std.mem.Allocator, query: []const u8) ![]const u8 {
         if (self.schema == null) {
-            return try self.allocator.dupe(u8,
+            return try arena.dupe(u8,
                 \\{"errors":[{"message":"Schema not loaded"}]}
             );
         }
@@ -40,14 +40,14 @@ pub const GraphQLHandler = struct {
         // For now, return a simple response that shows the query was received
         // Simplified to avoid ArrayList issues
         _ = query; // Suppress unused warning
-        return try self.allocator.dupe(u8,
+        return try arena.dupe(u8,
             \\{"data":{"message":"GraphQL query received","status":"ok"}}
         );
     }
 
-    pub fn executeMutation(self: *GraphQLHandler, mutation: []const u8) ![]const u8 {
+    pub fn executeMutation(self: *GraphQLHandler, arena: std.mem.Allocator, mutation: []const u8) ![]const u8 {
         // Mutations are just queries in GraphQL, use the same execution path
-        return try self.executeQuery(mutation);
+        return try self.executeQuery(arena, mutation);
     }
 };
 
@@ -59,7 +59,8 @@ test "graphql handler init" {
     defer handler.deinit();
 
     // Test basic query execution without schema (should return error)
-    const result = try handler.executeQuery("{ hello }");
+    const result = try handler.executeQuery(allocator, "{ hello }");
+    // Arena allocator would normally clean this up, but in tests we use testing.allocator
     defer allocator.free(result);
 
     try testing.expect(result.len > 0);

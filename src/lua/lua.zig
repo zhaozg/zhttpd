@@ -103,7 +103,7 @@ pub const LuaHandler = struct {
     ///   "body": {...},  // For POST requests
     ///   "query": {...}  // For GET requests
     /// }
-    pub fn executeScript(self: *LuaHandler, script_name: []const u8, method: []const u8, path: []const u8, request_data: []const u8) ![]const u8 {
+    pub fn executeScript(self: *LuaHandler, arena: std.mem.Allocator, script_name: []const u8, method: []const u8, path: []const u8, request_data: []const u8) ![]const u8 {
         // Get a Lua state from the pool
         var lua = try self.pool.acquire();
         defer self.pool.release(lua);
@@ -112,14 +112,14 @@ pub const LuaHandler = struct {
         const script_content = try self.loadScript(script_name);
         defer self.allocator.free(script_content);
 
-        // Convert to null-terminated string for Lua
-        const script_z = try self.allocator.dupeZ(u8, script_content);
-        defer self.allocator.free(script_z);
+        // Convert to null-terminated string for Lua using arena allocator
+        const script_z = try arena.dupeZ(u8, script_content);
+        // No defer needed for arena-allocated memory
 
         // Load the script (doesn't execute yet)
         lua.doString(script_z) catch |err| {
             std.debug.print("Error loading Lua script: {}\n", .{err});
-            return try self.allocator.dupe(u8,
+            return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua script load failed"}
             );
         };
@@ -127,7 +127,7 @@ pub const LuaHandler = struct {
         // The script should return a table with a 'handle' function
         // Get the module table from the stack
         if (lua.getTop() != 1) {
-            return try self.allocator.dupe(u8,
+            return try arena.dupe(u8,
                 \\{"status":"error","message":"Script must return a table"}
             );
         }
@@ -135,7 +135,7 @@ pub const LuaHandler = struct {
         // Get the handle function from the table
         _ = lua.getField(1, "handle");
         if (lua.typeOf(-1) != .function) {
-            return try self.allocator.dupe(u8,
+            return try arena.dupe(u8,
                 \\{"status":"error","message":"Script must export a 'handle' function"}
             );
         }
@@ -153,19 +153,19 @@ pub const LuaHandler = struct {
 
         // Parse and add request body/query if present
         if (request_data.len > 0) {
-            var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, request_data, .{}) catch |err| {
+            const parsed = std.json.parseFromSlice(std.json.Value, arena, request_data, .{}) catch |err| {
                 std.debug.print("JSON parse error: {}\n", .{err});
                 lua.pop(2); // Pop function and table
-                return try self.allocator.dupe(u8,
+                return try arena.dupe(u8,
                     \\{"status":"error","message":"Invalid JSON in request body"}
                 );
             };
-            defer parsed.deinit();
+            // No defer for arena-allocated memory
 
             // Add body field
             self.pushJsonValue(lua, parsed.value) catch {
                 lua.pop(2);
-                return try self.allocator.dupe(u8,
+                return try arena.dupe(u8,
                     \\{"status":"error","message":"Failed to convert JSON to Lua"}
                 );
             };
@@ -175,13 +175,13 @@ pub const LuaHandler = struct {
         // Call the handle function with request table
         lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
             std.debug.print("Error calling Lua handler: {}\n", .{err});
-            return try self.allocator.dupe(u8,
+            return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua handler execution failed"}
             );
         };
 
-        // Convert return value to JSON
-        const response_json = try self.luaValueToJson(lua, -1);
+        // Convert return value to JSON using arena allocator
+        const response_json = try self.luaValueToJson(arena, lua, -1);
         lua.pop(1); // Pop the return value
 
         return response_json;
@@ -238,42 +238,42 @@ pub const LuaHandler = struct {
         }
     }
 
-    fn luaValueToJson(self: *LuaHandler, lua: *ziglua.Lua, index: i32) ![]const u8 {
+    fn luaValueToJson(self: *LuaHandler, allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32) ![]const u8 {
         const lua_type = lua.typeOf(index);
 
         switch (lua_type) {
-            .nil => return try self.allocator.dupe(u8, "null"),
+            .nil => return try allocator.dupe(u8, "null"),
             .boolean => {
                 const b = lua.toBoolean(index);
-                return try self.allocator.dupe(u8, if (b) "true" else "false");
+                return try allocator.dupe(u8, if (b) "true" else "false");
             },
             .number => {
                 if (lua.isInteger(index)) {
                     const i = lua.toInteger(index) catch 0;
-                    return try std.fmt.allocPrint(self.allocator, "{d}", .{i});
+                    return try std.fmt.allocPrint(allocator, "{d}", .{i});
                 } else {
                     const n = lua.toNumber(index) catch 0.0;
-                    return try std.fmt.allocPrint(self.allocator, "{d}", .{n});
+                    return try std.fmt.allocPrint(allocator, "{d}", .{n});
                 }
             },
             .string => {
                 const s = lua.toString(index) catch "";
                 // Escape JSON string
                 var buf = std.ArrayListUnmanaged(u8){};
-                defer buf.deinit(self.allocator);
-                try buf.append(self.allocator, '"');
+                defer buf.deinit(allocator);
+                try buf.append(allocator, '"');
                 for (s) |c| {
                     switch (c) {
-                        '"' => try buf.appendSlice(self.allocator, "\\\""),
-                        '\\' => try buf.appendSlice(self.allocator, "\\\\"),
-                        '\n' => try buf.appendSlice(self.allocator, "\\n"),
-                        '\r' => try buf.appendSlice(self.allocator, "\\r"),
-                        '\t' => try buf.appendSlice(self.allocator, "\\t"),
-                        else => try buf.append(self.allocator, c),
+                        '"' => try buf.appendSlice(allocator, "\\\""),
+                        '\\' => try buf.appendSlice(allocator, "\\\\"),
+                        '\n' => try buf.appendSlice(allocator, "\\n"),
+                        '\r' => try buf.appendSlice(allocator, "\\r"),
+                        '\t' => try buf.appendSlice(allocator, "\\t"),
+                        else => try buf.append(allocator, c),
                     }
                 }
-                try buf.append(self.allocator, '"');
-                return try buf.toOwnedSlice(self.allocator);
+                try buf.append(allocator, '"');
+                return try buf.toOwnedSlice(allocator);
             },
             .table => {
                 // Check if it's an array or object
@@ -281,48 +281,48 @@ pub const LuaHandler = struct {
                 const is_array = len > 0;
 
                 var buf = std.ArrayListUnmanaged(u8){};
-                defer buf.deinit(self.allocator);
+                defer buf.deinit(allocator);
 
                 if (is_array) {
-                    try buf.append(self.allocator, '[');
+                    try buf.append(allocator, '[');
                     var i: i32 = 1;
                     while (i <= len) : (i += 1) {
-                        if (i > 1) try buf.append(self.allocator, ',');
+                        if (i > 1) try buf.append(allocator, ',');
                         _ = lua.rawGetIndex(index, i);
-                        const value_json = try self.luaValueToJson(lua, -1);
-                        defer self.allocator.free(value_json);
-                        try buf.appendSlice(self.allocator, value_json);
+                        const value_json = try self.luaValueToJson(allocator, lua, -1);
+                        defer allocator.free(value_json);
+                        try buf.appendSlice(allocator, value_json);
                         lua.pop(1);
                     }
-                    try buf.append(self.allocator, ']');
+                    try buf.append(allocator, ']');
                 } else {
-                    try buf.append(self.allocator, '{');
+                    try buf.append(allocator, '{');
                     lua.pushNil();
                     var first = true;
                     while (lua.next(index - 1)) {
-                        if (!first) try buf.append(self.allocator, ',');
+                        if (!first) try buf.append(allocator, ',');
                         first = false;
 
                         // Get key as string
                         const key = lua.toString(-2) catch "unknown";
-                        try buf.append(self.allocator, '"');
-                        try buf.appendSlice(self.allocator, key);
-                        try buf.appendSlice(self.allocator, "\":");
+                        try buf.append(allocator, '"');
+                        try buf.appendSlice(allocator, key);
+                        try buf.appendSlice(allocator, "\":");
 
                         // Get value
-                        const value_json = try self.luaValueToJson(lua, -1);
-                        defer self.allocator.free(value_json);
-                        try buf.appendSlice(self.allocator, value_json);
+                        const value_json = try self.luaValueToJson(allocator, lua, -1);
+                        defer allocator.free(value_json);
+                        try buf.appendSlice(allocator, value_json);
 
                         lua.pop(1); // Pop value, keep key for next iteration
                     }
-                    try buf.append(self.allocator, '}');
+                    try buf.append(allocator, '}');
                 }
 
-                return try buf.toOwnedSlice(self.allocator);
+                return try buf.toOwnedSlice(allocator);
             },
             else => {
-                return try self.allocator.dupe(u8, "null");
+                return try allocator.dupe(u8, "null");
             },
         }
     }
