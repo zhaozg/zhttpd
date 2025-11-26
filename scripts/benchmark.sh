@@ -71,7 +71,10 @@ ab -n 10000 -c 100 http://127.0.0.1:8080/ || true
 
 # Stop the server
 echo -e "\n${YELLOW}Stopping server...${NC}"
-kill $SERVER_PID
+kill -TERM $SERVER_PID 2>/dev/null || true
+sleep 2
+# Force kill if still running
+kill -KILL $SERVER_PID 2>/dev/null || true
 wait $SERVER_PID 2>/dev/null || true
 
 echo -e "\n${GREEN}=== Benchmark Complete ===${NC}"

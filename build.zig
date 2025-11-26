@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
     
     // Add dependencies to executable
     exe.root_module.addImport("httpz", httpz.module("httpz"));
+    // Note: ziglua dependency exposes its module as "zlua", not "ziglua"
     exe.root_module.addImport("ziglua", ziglua.module("zlua"));
     exe.root_module.addImport("grapzig", grapzig.module("grapzig"));
 
