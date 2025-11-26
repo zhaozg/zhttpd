@@ -1,5 +1,6 @@
 const std = @import("std");
 const ziglua = @import("ziglua");
+const FileCache = @import("../cache/file_cache.zig").FileCache;
 
 // Lua integration module
 // This module provides integration with Lua for dynamic content handling
@@ -8,6 +9,10 @@ const ziglua = @import("ziglua");
 // Thread Safety:
 // Each request gets its own Lua state from a pool to ensure thread-safety.
 // Lua states are NOT thread-safe, so we use a pool with mutex protection.
+//
+// Script Caching:
+// Scripts are cached using the shared FileCache module which supports
+// multiple reload strategies: never, auto, and force.
 
 const LuaStatePool = struct {
     states: []*ziglua.Lua,
@@ -78,8 +83,9 @@ pub const LuaHandler = struct {
     allocator: std.mem.Allocator,
     scripts_dir: []const u8,
     pool: LuaStatePool,
+    file_cache: FileCache,
 
-    pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8) !LuaHandler {
+    pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8, reload_mode: @import("../config/config.zig").ReloadMode) !LuaHandler {
         // Initialize pool with 4 Lua states
         const pool = try LuaStatePool.init(allocator, 4);
 
@@ -87,11 +93,13 @@ pub const LuaHandler = struct {
             .allocator = allocator,
             .scripts_dir = scripts_dir,
             .pool = pool,
+            .file_cache = FileCache.init(allocator, reload_mode),
         };
     }
 
     pub fn deinit(self: *LuaHandler) void {
         self.pool.deinit();
+        self.file_cache.deinit();
     }
 
     /// Execute a Lua script with request data
@@ -200,10 +208,8 @@ pub const LuaHandler = struct {
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}.lua", .{ self.scripts_dir, script_name });
 
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-
-        return try file.readToEndAlloc(self.allocator, 1024 * 1024);
+        // Use the shared FileCache to load the script
+        return try self.file_cache.loadFile(path);
     }
 
     fn pushJsonValue(self: *LuaHandler, lua: *ziglua.Lua, value: std.json.Value) !void {
@@ -333,7 +339,7 @@ test "lua handler init" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var handler = try LuaHandler.init(allocator, "./examples/lua");
+    var handler = try LuaHandler.init(allocator, "./examples/lua", .auto);
     defer handler.deinit();
 
     try testing.expect(handler.scripts_dir.len > 0);

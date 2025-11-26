@@ -1,5 +1,17 @@
 const std = @import("std");
 
+pub const ReloadMode = enum {
+    never, // Cache file in memory, read once and use continuously
+    auto, // Detect file modification and re-read if modified, otherwise use cache
+    force, // Re-read file every time
+
+    pub fn fromString(s: []const u8) ReloadMode {
+        if (std.ascii.eqlIgnoreCase(s, "never")) return .never;
+        if (std.ascii.eqlIgnoreCase(s, "force")) return .force;
+        return .auto; // default
+    }
+};
+
 pub const Config = struct {
     host: []const u8,
     port: u16,
@@ -15,6 +27,7 @@ pub const Config = struct {
     log_level: []const u8,
     log_file: ?[]const u8,
     access_log_file: ?[]const u8,
+    reload: ReloadMode,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -84,6 +97,7 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .log_level = if (root.get("log_level")) |ll| try allocator.dupe(u8, ll.string) else try allocator.dupe(u8, "info"),
         .log_file = if (root.get("log_file")) |lf| try allocator.dupe(u8, lf.string) else null,
         .access_log_file = if (root.get("access_log_file")) |alf| try allocator.dupe(u8, alf.string) else null,
+        .reload = if (root.get("reload")) |r| ReloadMode.fromString(r.string) else .auto,
         .allocator = allocator,
     };
 }
@@ -104,6 +118,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .log_level = try allocator.dupe(u8, "info"),
         .log_file = null,
         .access_log_file = null,
+        .reload = .auto, // Default to auto reload mode
         .allocator = allocator,
     };
 }
@@ -185,6 +200,8 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         } else if (std.mem.eql(u8, key, "access_log_file")) {
             if (config.access_log_file) |alf| allocator.free(alf);
             config.access_log_file = if (value.len > 0) try allocator.dupe(u8, value) else null;
+        } else if (std.mem.eql(u8, key, "reload")) {
+            config.reload = ReloadMode.fromString(value);
         }
     }
 

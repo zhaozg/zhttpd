@@ -35,6 +35,13 @@ lua_scripts_dir: "./examples/lua"
 #   - false: Lua functionality is disabled, /api/* returns 404
 enable_lua: true
 
+# reload: Script file caching and reload strategy
+#   - "never": Cache scripts in memory permanently after first load (best performance)
+#   - "auto": Detect file modifications and reload automatically (recommended for development)
+#   - "force": Always reload scripts from disk on each request (useful for debugging)
+#   Default: "auto"
+reload: "auto"
+
 # GraphQL Configuration
 # ---------------------
 # enable_graphql: Enable or disable GraphQL endpoint
