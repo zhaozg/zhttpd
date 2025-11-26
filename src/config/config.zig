@@ -39,7 +39,20 @@ pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config {
     const content = try file.readToEndAlloc(allocator, 1024 * 1024);
     defer allocator.free(content);
 
-    return parseJson(allocator, content) catch getDefaultConfig(allocator);
+    // Determine format based on file extension or content
+    const is_yaml = std.mem.endsWith(u8, path, ".yaml") or std.mem.endsWith(u8, path, ".yml");
+
+    if (is_yaml) {
+        return parseYaml(allocator, content) catch |err| {
+            std.debug.print("YAML parse error: {}, using defaults\n", .{err});
+            return getDefaultConfig(allocator);
+        };
+    } else {
+        return parseJson(allocator, content) catch |err| {
+            std.debug.print("JSON parse error: {}, using defaults\n", .{err});
+            return getDefaultConfig(allocator);
+        };
+    }
 }
 
 fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
@@ -85,6 +98,75 @@ fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
     };
 }
 
+/// Simple YAML parser for basic key-value config
+/// Supports: string, integer, boolean values and comments
+fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
+    var config = try getDefaultConfig(allocator);
+    var lines = std.mem.splitScalar(u8, content, '\n');
+
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0 or trimmed[0] == '#') continue;
+
+        // Find the colon separator
+        const colon_pos = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+        if (colon_pos == 0) continue;
+
+        const key = std.mem.trim(u8, trimmed[0..colon_pos], " \t");
+        var value_part = std.mem.trim(u8, trimmed[colon_pos + 1 ..], " \t");
+
+        // Remove inline comments
+        if (std.mem.indexOfScalar(u8, value_part, '#')) |comment_pos| {
+            value_part = std.mem.trim(u8, value_part[0..comment_pos], " \t");
+        }
+
+        // Remove quotes if present
+        const value = if (value_part.len >= 2 and
+            ((value_part[0] == '"' and value_part[value_part.len - 1] == '"') or
+                (value_part[0] == '\'' and value_part[value_part.len - 1] == '\'')))
+            value_part[1 .. value_part.len - 1]
+        else
+            value_part;
+
+        // Parse the value based on the key
+        if (std.mem.eql(u8, key, "host")) {
+            allocator.free(config.host);
+            config.host = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "port")) {
+            config.port = try std.fmt.parseInt(u16, value, 10);
+        } else if (std.mem.eql(u8, key, "static_dir")) {
+            allocator.free(config.static_dir);
+            config.static_dir = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "lua_scripts_dir")) {
+            allocator.free(config.lua_scripts_dir);
+            config.lua_scripts_dir = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "security_headers")) {
+            config.security_headers = std.mem.eql(u8, value, "true");
+        } else if (std.mem.eql(u8, key, "max_body_size")) {
+            config.max_body_size = try std.fmt.parseInt(usize, value, 10);
+        } else if (std.mem.eql(u8, key, "timeout_seconds")) {
+            config.timeout_seconds = try std.fmt.parseInt(u32, value, 10);
+        } else if (std.mem.eql(u8, key, "thread_pool_size")) {
+            config.thread_pool_size = try std.fmt.parseInt(u32, value, 10);
+        } else if (std.mem.eql(u8, key, "enable_lua")) {
+            config.enable_lua = std.mem.eql(u8, value, "true");
+        } else if (std.mem.eql(u8, key, "enable_graphql")) {
+            config.enable_graphql = std.mem.eql(u8, value, "true");
+        } else if (std.mem.eql(u8, key, "graphql_endpoint")) {
+            allocator.free(config.graphql_endpoint);
+            config.graphql_endpoint = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "log_level")) {
+            allocator.free(config.log_level);
+            config.log_level = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "log_file")) {
+            if (config.log_file) |lf| allocator.free(lf);
+            config.log_file = if (value.len > 0) try allocator.dupe(u8, value) else null;
+        }
+    }
+
+    return config;
+}
+
 test "config loading with defaults" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -95,4 +177,39 @@ test "config loading with defaults" {
     try testing.expectEqualStrings("0.0.0.0", cfg.host);
     try testing.expect(cfg.port == 8080);
     try testing.expect(cfg.security_headers == true);
+}
+
+test "yaml config parsing" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const yaml_content =
+        \\host: "127.0.0.1"
+        \\port: 9090
+        \\static_dir: "./public"
+        \\lua_scripts_dir: "./scripts"
+        \\security_headers: false
+        \\max_body_size: 5242880  # 5MB
+        \\timeout_seconds: 60
+        \\thread_pool_size: 8
+        \\enable_lua: true
+        \\enable_graphql: false
+        \\graphql_endpoint: "/gql"
+        \\log_level: "debug"
+    ;
+
+    const cfg = try parseYaml(allocator, yaml_content);
+    defer cfg.deinit();
+
+    try testing.expectEqualStrings("127.0.0.1", cfg.host);
+    try testing.expect(cfg.port == 9090);
+    try testing.expectEqualStrings("./public", cfg.static_dir);
+    try testing.expect(cfg.security_headers == false);
+    try testing.expect(cfg.max_body_size == 5242880);
+    try testing.expect(cfg.timeout_seconds == 60);
+    try testing.expect(cfg.thread_pool_size == 8);
+    try testing.expect(cfg.enable_lua == true);
+    try testing.expect(cfg.enable_graphql == false);
+    try testing.expectEqualStrings("/gql", cfg.graphql_endpoint);
+    try testing.expectEqualStrings("debug", cfg.log_level);
 }

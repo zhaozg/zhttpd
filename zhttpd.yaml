@@ -1,0 +1,124 @@
+# zhttpd Configuration File
+# This is the main configuration file for zhttpd web server
+# All settings can be customized to fit your deployment needs
+
+# Server Binding Configuration
+# -----------------------------
+# host: The IP address to bind the server to
+#   - "0.0.0.0" binds to all available interfaces (default)
+#   - "127.0.0.1" binds only to localhost
+#   - Specific IP address for single interface binding
+host: "0.0.0.0"
+
+# port: The TCP port number to listen on
+#   - Common choices: 80 (HTTP), 8080 (HTTP alternate), 443 (HTTPS)
+#   - Range: 1-65535 (ports < 1024 require root/admin privileges)
+port: 8080
+
+# Static File Serving Configuration
+# ----------------------------------
+# static_dir: Directory path for serving static files
+#   - Relative paths are resolved from the server's working directory
+#   - Absolute paths can also be used
+#   - Example files: HTML, CSS, JavaScript, images, fonts
+static_dir: "./examples/static"
+
+# Lua Scripting Configuration
+# ----------------------------
+# lua_scripts_dir: Directory containing Lua scripts for dynamic content
+#   - Scripts are accessed via /api/{script_name} endpoints
+#   - Example: /api/test loads and executes lua_scripts_dir/test.lua
+lua_scripts_dir: "./examples/lua"
+
+# enable_lua: Enable or disable Lua script execution
+#   - true: Lua API endpoints are active
+#   - false: Lua functionality is disabled, /api/* returns 404
+enable_lua: true
+
+# GraphQL Configuration
+# ---------------------
+# enable_graphql: Enable or disable GraphQL endpoint
+#   - true: GraphQL queries and mutations are processed
+#   - false: GraphQL endpoint returns 404
+enable_graphql: true
+
+# graphql_endpoint: URL path for the GraphQL endpoint
+#   - Typically "/graphql" (industry standard)
+#   - POST requests to this path execute GraphQL queries
+graphql_endpoint: "/graphql"
+
+# Security Configuration
+# ----------------------
+# security_headers: Enable HTTP security headers
+#   - true: Adds CSP, X-Frame-Options, HSTS, etc. (recommended for production)
+#   - false: No additional security headers (useful for development/testing)
+#   Security headers included when enabled:
+#     - Content-Security-Policy
+#     - X-Frame-Options
+#     - X-Content-Type-Options
+#     - X-XSS-Protection
+#     - Strict-Transport-Security (HSTS)
+#     - Referrer-Policy
+#     - Permissions-Policy
+security_headers: true
+
+# Performance and Resource Limits
+# --------------------------------
+# max_body_size: Maximum size of HTTP request body in bytes
+#   - Prevents memory exhaustion from large uploads
+#   - 10485760 bytes = 10 MB (default)
+#   - Adjust based on your application needs (file uploads, API payloads)
+max_body_size: 10485760
+
+# timeout_seconds: Request timeout in seconds
+#   - Maximum time to wait for a complete request
+#   - 30 seconds is a reasonable default for most applications
+#   - Increase for long-running operations or slow clients
+timeout_seconds: 30
+
+# thread_pool_size: Number of worker threads for handling requests
+#   - Recommended: Number of CPU cores or slightly higher
+#   - Too low: Reduced concurrency and throughput
+#   - Too high: Increased context switching overhead
+#   - 4 is a good starting point for most servers
+thread_pool_size: 4
+
+# Logging Configuration
+# ---------------------
+# log_level: Verbosity of log output
+#   - "debug": Detailed debugging information (verbose)
+#   - "info": General informational messages (recommended for production)
+#   - "warn": Warning messages only
+#   - "error": Error messages only (minimal logging)
+log_level: "info"
+
+# log_file: Path to log file (optional)
+#   - If specified, logs are written to this file
+#   - If not specified or empty, logs go to stdout only
+#   - Example: "zhttpd.log" or "/var/log/zhttpd.log"
+# log_file: "zhttpd.log"
+
+# Configuration Tips
+# ------------------
+# 1. For development: Set security_headers to false, log_level to "debug"
+# 2. For production: Enable security_headers, set log_level to "info" or "warn"
+# 3. Monitor performance and adjust thread_pool_size based on CPU usage
+# 4. Set appropriate max_body_size based on expected upload sizes
+# 5. Use log_file for production to maintain persistent logs
+# 6. Keep timeout_seconds reasonable to prevent resource exhaustion
+
+# Example Production Configuration:
+# ----------------------------------
+# host: "0.0.0.0"
+# port: 80
+# static_dir: "/var/www/html"
+# lua_scripts_dir: "/var/www/scripts"
+# security_headers: true
+# max_body_size: 52428800  # 50MB for larger uploads
+# timeout_seconds: 60
+# thread_pool_size: 8  # For 4-core CPU with hyperthreading
+# enable_lua: true
+# enable_graphql: true
+# graphql_endpoint: "/graphql"
+# log_level: "info"
+# log_file: "/var/log/zhttpd/access.log"
