@@ -87,7 +87,9 @@ pub const FileCache = struct {
                     return try self.allocator.dupe(u8, cached.content);
                 }
                 const content = try self.readFileFromDisk(path);
-                // Cache with dummy mtime (we never check it in 'never' mode)
+                errdefer self.allocator.free(content);
+
+                // Cache makes its own copy, so we can return the original
                 try self.putCached(path, content, 0);
                 return content;
             },
@@ -110,6 +112,7 @@ pub const FileCache = struct {
                 const content = try file.readToEndAlloc(self.allocator, 100 * 1024 * 1024); // 100MB max
                 errdefer self.allocator.free(content);
 
+                // Cache makes its own copy, so we can return the original
                 try self.putCached(path, content, current_mtime);
                 return content;
             },
