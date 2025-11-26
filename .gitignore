@@ -27,3 +27,4 @@ config.local.yaml
 # Test outputs
 test-results/
 config.json
+zig-x86_64-linux-*/
