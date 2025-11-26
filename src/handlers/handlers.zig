@@ -129,15 +129,30 @@ pub const Server = struct {
         if (self.config.enable_graphql and std.mem.eql(u8, path, self.config.graphql_endpoint)) {
             if (self.graphql_handler) |*handler| {
                 // Parse GraphQL query from JSON body
-                var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, body, .{}) catch {
+                var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, body, .{}) catch |err| {
+                    std.debug.print("GraphQL JSON parse error: {}\n", .{err});
                     try self.sendResponse(stream, "400 Bad Request", "application/json",
-                        \\{"errors":[{"message":"Invalid JSON"}]}
+                        \\{"errors":[{"message":"Invalid JSON in request body"}]}
                     );
                     return;
                 };
                 defer parsed.deinit();
 
-                const query = if (parsed.value.object.get("query")) |q| q.string else "";
+                // Safely extract query field with type checking
+                const query = if (parsed.value.object.get("query")) |q| blk: {
+                    if (q != .string) {
+                        try self.sendResponse(stream, "400 Bad Request", "application/json",
+                            \\{"errors":[{"message":"'query' field must be a string"}]}
+                        );
+                        return;
+                    }
+                    break :blk q.string;
+                } else {
+                    try self.sendResponse(stream, "400 Bad Request", "application/json",
+                        \\{"errors":[{"message":"Missing 'query' field"}]}
+                    );
+                    return;
+                };
 
                 const result = handler.executeQuery(query) catch {
                     try self.sendResponse(stream, "500 Internal Server Error", "application/json",
