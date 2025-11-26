@@ -17,21 +17,37 @@ pub const LogLevel = enum {
 };
 
 const LOG_BUFFER_SIZE = 4096;
+const DEFAULT_MAX_LOG_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const DEFAULT_MAX_BACKUP_FILES: usize = 5;
 
 pub const Logger = struct {
     allocator: std.mem.Allocator,
     level: LogLevel,
     file: ?std.fs.File,
     mutex: std.Thread.Mutex,
+    log_file_path: ?[]const u8,
+    max_log_size: usize,
+    max_backup_files: usize,
+    current_size: usize,
 
     pub fn init(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8) !Logger {
         var file: ?std.fs.File = null;
+        var current_size: usize = 0;
+        var owned_path: ?[]const u8 = null;
 
         if (log_file_path) |path| {
+            // Duplicate the path so we own it for rotation
+            owned_path = try allocator.dupe(u8, path);
+
             file = try std.fs.cwd().createFile(path, .{
                 .read = false,
                 .truncate = false,
             });
+
+            // Get current file size
+            const stat = try file.?.stat();
+            current_size = stat.size;
+
             // Seek to end for appending
             try file.?.seekFromEnd(0);
         }
@@ -41,12 +57,19 @@ pub const Logger = struct {
             .level = level,
             .file = file,
             .mutex = std.Thread.Mutex{},
+            .log_file_path = owned_path,
+            .max_log_size = DEFAULT_MAX_LOG_SIZE,
+            .max_backup_files = DEFAULT_MAX_BACKUP_FILES,
+            .current_size = current_size,
         };
     }
 
     pub fn deinit(self: *Logger) void {
         if (self.file) |file| {
             file.close();
+        }
+        if (self.log_file_path) |path| {
+            self.allocator.free(path);
         }
     }
 
@@ -59,34 +82,45 @@ pub const Logger = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const timestamp = std.time.timestamp();
+        // Get timestamp with microsecond precision
+        const now = std.time.microTimestamp();
+        const seconds = @divFloor(now, std.time.us_per_s);
+        const microseconds = @mod(now, std.time.us_per_s);
 
         // Format the log message
         var buf: [LOG_BUFFER_SIZE]u8 = undefined;
-        const message = std.fmt.bufPrint(&buf, fmt, args) catch |err| blk: {
-            std.debug.print("Failed to format log message: {}\n", .{err});
+        const message = std.fmt.bufPrint(&buf, fmt, args) catch |format_err| blk: {
+            std.debug.print("Failed to format log message: {}\n", .{format_err});
             break :blk "Log formatting error";
         };
 
-        // Use a simplified timestamp for logging - just epoch seconds
-        // TODO: Consider using a proper datetime library for human-readable timestamps
-        const ts = @as(u64, @intCast(timestamp));
+        // Format timestamp with microsecond precision (UNIX_TIMESTAMP.MICROSECONDS)
+        const timestamp_str = std.fmt.bufPrint(&buf, "{d}.{d:0>6}", .{ seconds, microseconds }) catch "0.000000";
 
         // Write to console
-        std.debug.print("[{d}] [{s}] {s}\n", .{ ts, level.toString(), message });
+        std.debug.print("[{s}] [{s}] {s}\n", .{ timestamp_str, level.toString(), message });
 
         // Write to file if configured
         if (self.file) |file| {
-            const log_line = std.fmt.allocPrint(self.allocator, "[{d}] [{s}] {s}\n", .{
-                ts,
+            const log_line = std.fmt.allocPrint(self.allocator, "[{s}] [{s}] {s}\n", .{
+                timestamp_str,
                 level.toString(),
                 message,
             }) catch return;
             defer self.allocator.free(log_line);
 
-            _ = file.write(log_line) catch |err| {
-                std.debug.print("Failed to write to log file: {}\n", .{err});
+            _ = file.write(log_line) catch |write_err| {
+                std.debug.print("Failed to write to log file: {}\n", .{write_err});
+                return;
             };
+
+            // Track written size and rotate if necessary
+            self.current_size += log_line.len;
+            if (self.current_size >= self.max_log_size) {
+                self.rotateLog() catch |rotate_err| {
+                    std.debug.print("Failed to rotate log file: {}\n", .{rotate_err});
+                };
+            }
         }
     }
 
@@ -104,6 +138,96 @@ pub const Logger = struct {
 
     pub fn err(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         self.log(.err, fmt, args);
+    }
+
+    /// Log HTTP access in Common Log Format with microsecond precision
+    /// Format: <remote_addr> - - [timestamp] "<method> <path> <protocol>" <status> <bytes> "<user_agent>" <duration_us>µs
+    pub fn access(
+        self: *Logger,
+        remote_addr: []const u8,
+        method: []const u8,
+        path: []const u8,
+        protocol: []const u8,
+        status: u16,
+        bytes_sent: usize,
+        user_agent: []const u8,
+        duration_us: i64,
+    ) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Get timestamp with microsecond precision
+        const now = std.time.microTimestamp();
+        const seconds = @divFloor(now, std.time.us_per_s);
+        const microseconds = @mod(now, std.time.us_per_s);
+
+        // Format: IP - - [timestamp] "METHOD PATH PROTOCOL" STATUS BYTES "USER-AGENT" DURATIONµs
+        var buf: [LOG_BUFFER_SIZE]u8 = undefined;
+        const log_line = std.fmt.bufPrint(&buf, "{s} - - [{d}.{d:0>6}] \"{s} {s} {s}\" {d} {d} \"{s}\" {d}µs\n", .{ remote_addr, seconds, microseconds, method, path, protocol, status, bytes_sent, user_agent, duration_us }) catch return;
+
+        // Write to console
+        std.debug.print("{s}", .{log_line});
+
+        // Write to file if configured
+        if (self.file) |file| {
+            _ = file.write(log_line) catch |write_err| {
+                std.debug.print("Failed to write access log: {}\n", .{write_err});
+                return;
+            };
+
+            // Track written size and rotate if necessary
+            self.current_size += log_line.len;
+            if (self.current_size >= self.max_log_size) {
+                self.rotateLog() catch |rotate_err| {
+                    std.debug.print("Failed to rotate log file: {}\n", .{rotate_err});
+                };
+            }
+        }
+    }
+
+    /// Rotate log files: current.log -> current.log.1 -> current.log.2 -> ... -> current.log.N
+    /// Oldest file (N) is deleted
+    fn rotateLog(self: *Logger) !void {
+        const path = self.log_file_path orelse return;
+
+        // Close current file
+        if (self.file) |file| {
+            file.close();
+            self.file = null;
+        }
+
+        // Rotate existing backup files (start from oldest to avoid overwriting)
+        var i: usize = self.max_backup_files;
+        while (i > 0) : (i -= 1) {
+            const old_name = if (i == 1)
+                try std.fmt.allocPrint(self.allocator, "{s}.1", .{path})
+            else
+                try std.fmt.allocPrint(self.allocator, "{s}.{d}", .{ path, i });
+            defer self.allocator.free(old_name);
+
+            const new_name = try std.fmt.allocPrint(self.allocator, "{s}.{d}", .{ path, i + 1 });
+            defer self.allocator.free(new_name);
+
+            // Delete the oldest file if it exists
+            if (i == self.max_backup_files) {
+                std.fs.cwd().deleteFile(old_name) catch {};
+            } else {
+                // Rename file.i to file.i+1
+                std.fs.cwd().rename(old_name, new_name) catch {};
+            }
+        }
+
+        // Rename current log to .1
+        const backup_name = try std.fmt.allocPrint(self.allocator, "{s}.1", .{path});
+        defer self.allocator.free(backup_name);
+        std.fs.cwd().rename(path, backup_name) catch {};
+
+        // Create new log file
+        self.file = try std.fs.cwd().createFile(path, .{
+            .read = false,
+            .truncate = false,
+        });
+        self.current_size = 0;
     }
 };
 
