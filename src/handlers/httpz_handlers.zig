@@ -53,9 +53,9 @@ pub const AppContext = struct {
 
         // Initialize Lua handler if enabled
         if (config.enable_lua) {
-            ctx.lua_handler = try LuaHandler.init(allocator, config.lua_scripts_dir);
+            ctx.lua_handler = try LuaHandler.init(allocator, config.lua_scripts_dir, config.reload);
             errdefer if (ctx.lua_handler) |*lua| lua.deinit();
-            ctx.logger.info("Lua handler initialized with scripts from: {s}", .{config.lua_scripts_dir});
+            ctx.logger.info("Lua handler initialized with scripts from: {s} (reload: {s})", .{ config.lua_scripts_dir, @tagName(config.reload) });
         }
 
         // Initialize GraphQL handler if enabled

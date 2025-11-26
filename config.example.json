@@ -12,5 +12,6 @@
   "graphql_endpoint": "/graphql",
   "log_level": "info",
   "log_file": "zhttpd.log",
-  "access_log_file": "access.log"
+  "access_log_file": "access.log",
+  "reload": "auto"
 }
