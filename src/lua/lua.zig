@@ -153,6 +153,7 @@ pub const LuaHandler = struct {
 
         // Parse and add request body/query if present
         if (request_data.len > 0) {
+            // Note: Using arena allocator which doesn't require manual cleanup
             const parsed = std.json.parseFromSlice(std.json.Value, arena, request_data, .{}) catch |err| {
                 std.debug.print("JSON parse error: {}\n", .{err});
                 lua.pop(2); // Pop function and table
@@ -290,7 +291,7 @@ pub const LuaHandler = struct {
                         if (i > 1) try buf.append(allocator, ',');
                         _ = lua.rawGetIndex(index, i);
                         const value_json = try self.luaValueToJson(allocator, lua, -1);
-                        defer allocator.free(value_json);
+                        // No defer needed: using arena allocator which handles cleanup
                         try buf.appendSlice(allocator, value_json);
                         lua.pop(1);
                     }
@@ -311,7 +312,7 @@ pub const LuaHandler = struct {
 
                         // Get value
                         const value_json = try self.luaValueToJson(allocator, lua, -1);
-                        defer allocator.free(value_json);
+                        // No defer needed: using arena allocator which handles cleanup
                         try buf.appendSlice(allocator, value_json);
 
                         lua.pop(1); // Pop value, keep key for next iteration
