@@ -16,6 +16,8 @@ pub const LogLevel = enum {
     }
 };
 
+const LOG_BUFFER_SIZE = 4096;
+
 pub const Logger = struct {
     allocator: std.mem.Allocator,
     level: LogLevel,
@@ -60,14 +62,14 @@ pub const Logger = struct {
         const timestamp = std.time.timestamp();
 
         // Format the log message
-        var buf: [4096]u8 = undefined;
+        var buf: [LOG_BUFFER_SIZE]u8 = undefined;
         const message = std.fmt.bufPrint(&buf, fmt, args) catch |err| blk: {
             std.debug.print("Failed to format log message: {}\n", .{err});
             break :blk "Log formatting error";
         };
 
-        // Use a simplified timestamp for logging - just epoch seconds for now
-        // In production, consider using a proper datetime library for accurate date formatting
+        // Use a simplified timestamp for logging - just epoch seconds
+        // TODO: Consider using a proper datetime library for human-readable timestamps
         const ts = @as(u64, @intCast(timestamp));
 
         // Write to console
