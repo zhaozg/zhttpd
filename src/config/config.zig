@@ -79,7 +79,7 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
     };
 }
 
-fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
+pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
     return Config{
         .host = try allocator.dupe(u8, "0.0.0.0"),
         .port = 8080,
@@ -98,9 +98,20 @@ fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
     };
 }
 
+/// Parse boolean value from YAML
+/// Accepts: true/false, yes/no, 1/0 (case-insensitive)
+fn parseBool(value: []const u8) bool {
+    if (std.ascii.eqlIgnoreCase(value, "true")) return true;
+    if (std.ascii.eqlIgnoreCase(value, "yes")) return true;
+    if (std.ascii.eqlIgnoreCase(value, "1")) return true;
+    return false;
+}
+
 /// Simple YAML parser for basic key-value config
-/// Supports: string, integer, boolean values and comments
+/// Supports: string, integer values, and boolean values (true/false, yes/no, 1/0)
+/// Comments starting with # are supported
 fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
+    // Start with default config (all strings are heap-allocated)
     var config = try getDefaultConfig(allocator);
     var lines = std.mem.splitScalar(u8, content, '\n');
 
@@ -130,7 +141,7 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
 
         // Parse the value based on the key
         if (std.mem.eql(u8, key, "host")) {
-            allocator.free(config.host);
+            allocator.free(config.host); // Safe: allocated by getDefaultConfig
             config.host = try allocator.dupe(u8, value);
         } else if (std.mem.eql(u8, key, "port")) {
             config.port = try std.fmt.parseInt(u16, value, 10);
@@ -141,7 +152,7 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
             allocator.free(config.lua_scripts_dir);
             config.lua_scripts_dir = try allocator.dupe(u8, value);
         } else if (std.mem.eql(u8, key, "security_headers")) {
-            config.security_headers = std.mem.eql(u8, value, "true");
+            config.security_headers = parseBool(value);
         } else if (std.mem.eql(u8, key, "max_body_size")) {
             config.max_body_size = try std.fmt.parseInt(usize, value, 10);
         } else if (std.mem.eql(u8, key, "timeout_seconds")) {
@@ -149,9 +160,9 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         } else if (std.mem.eql(u8, key, "thread_pool_size")) {
             config.thread_pool_size = try std.fmt.parseInt(u32, value, 10);
         } else if (std.mem.eql(u8, key, "enable_lua")) {
-            config.enable_lua = std.mem.eql(u8, value, "true");
+            config.enable_lua = parseBool(value);
         } else if (std.mem.eql(u8, key, "enable_graphql")) {
-            config.enable_graphql = std.mem.eql(u8, value, "true");
+            config.enable_graphql = parseBool(value);
         } else if (std.mem.eql(u8, key, "graphql_endpoint")) {
             allocator.free(config.graphql_endpoint);
             config.graphql_endpoint = try allocator.dupe(u8, value);

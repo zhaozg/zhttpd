@@ -20,7 +20,7 @@ pub fn main() !void {
                 break :blk c;
             } else |_| {
                 std.debug.print("Using default configuration\n", .{});
-                break :blk try config.loadConfig(allocator, "nonexistent.yaml");
+                break :blk try config.getDefaultConfig(allocator);
             }
         }
     };
