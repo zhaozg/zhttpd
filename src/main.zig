@@ -18,7 +18,6 @@ pub fn main() !void {
     // Initialize the HTTP server with httpz
     var server = try httpz_handlers.HttpzServer.init(allocator, cfg);
     defer server.deinit();
-    defer server.stop();
 
     // Setup routes
     try server.setupRoutes();
