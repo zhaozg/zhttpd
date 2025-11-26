@@ -8,6 +8,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Load configuration - try YAML first, then JSON, finally defaults
+    // Note: Using std.debug.print here since logger is not yet initialized
     const cfg = blk: {
         // Try zhttpd.yaml
         if (config.loadConfig(allocator, "zhttpd.yaml")) |c| {
