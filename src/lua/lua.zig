@@ -117,6 +117,7 @@ pub const LuaHandler = struct {
         defer self.pool.release(lua);
 
         // Load and execute script file
+        // Note: loadScript returns memory allocated by file_cache.allocator (which is self.allocator)
         const script_content = try self.loadScript(script_name);
         defer self.allocator.free(script_content);
 
