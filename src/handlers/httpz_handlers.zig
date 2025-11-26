@@ -262,14 +262,36 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
     };
     defer file.close();
 
-    // Get file size
+    // Get file size and modification time
     const stat = try file.stat();
     const file_size = stat.size;
+    const file_mtime = stat.mtime;
 
     if (file_size > MAX_FILE_SIZE) {
         res.status = 413;
         res.body = "File too large";
         return;
+    }
+
+    // Generate ETag if enabled
+    if (ctx.config.enable_etag) {
+        const etag = try FileCache.generateETag(res.arena, file_size, file_mtime);
+
+        // Check If-None-Match header for conditional requests
+        if (req.headers.get("if-none-match")) |client_etag| {
+            if (std.mem.eql(u8, client_etag, etag)) {
+                // File hasn't changed, return 304 Not Modified
+                res.status = 304;
+                res.headers.add("ETag", etag);
+                res.body = "";
+                return;
+            }
+        }
+
+        // Add ETag header to response
+        res.headers.add("ETag", etag);
+        // Add Cache-Control header for better caching
+        res.headers.add("Cache-Control", "public, max-age=3600");
     }
 
     // Use the response arena allocator directly - more efficient

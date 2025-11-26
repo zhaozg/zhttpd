@@ -5,10 +5,11 @@ const ReloadMode = Config.ReloadMode;
 /// Maximum file size for reading (100MB)
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
-/// Cached file entry with content and modification time
+/// Cached file entry with content, modification time, and ETag
 pub const FileCacheEntry = struct {
     content: []const u8,
     mtime: i128, // File modification time in nanoseconds
+    etag: ?[]const u8 = null, // ETag for cache validation
 };
 
 /// Thread-safe file cache supporting multiple reload strategies
@@ -40,6 +41,9 @@ pub const FileCache = struct {
         while (it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
             self.allocator.free(entry.value_ptr.content);
+            if (entry.value_ptr.etag) |etag| {
+                self.allocator.free(etag);
+            }
         }
         self.map.deinit();
     }
@@ -53,7 +57,7 @@ pub const FileCache = struct {
     }
 
     /// Update the cache with new file content and modification time
-    fn putCached(self: *FileCache, key: []const u8, content: []const u8, mtime: i128) !void {
+    fn putCached(self: *FileCache, key: []const u8, content: []const u8, mtime: i128, etag: ?[]const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -61,6 +65,9 @@ pub const FileCache = struct {
         if (self.map.fetchRemove(key)) |old_entry| {
             self.allocator.free(old_entry.key);
             self.allocator.free(old_entry.value.content);
+            if (old_entry.value.etag) |old_etag| {
+                self.allocator.free(old_etag);
+            }
         }
 
         // Store the new content with owned copies
@@ -70,9 +77,13 @@ pub const FileCache = struct {
         const owned_content = try self.allocator.dupe(u8, content);
         errdefer self.allocator.free(owned_content);
 
+        const owned_etag = if (etag) |e| try self.allocator.dupe(u8, e) else null;
+        errdefer if (owned_etag) |e| self.allocator.free(e);
+
         try self.map.put(owned_key, FileCacheEntry{
             .content = owned_content,
             .mtime = mtime,
+            .etag = owned_etag,
         });
     }
 
@@ -108,7 +119,7 @@ pub const FileCache = struct {
                 errdefer self.allocator.free(content);
 
                 // Cache makes its own copy, so we can return the original
-                try self.putCached(path, content, 0);
+                try self.putCached(path, content, 0, null);
                 return content;
             },
             .auto => {
@@ -137,7 +148,7 @@ pub const FileCache = struct {
                 errdefer self.allocator.free(content);
 
                 // Cache makes its own copy, so we can return the original
-                try self.putCached(path, content, current_mtime);
+                try self.putCached(path, content, current_mtime, null);
                 return content;
             },
         }
@@ -150,6 +161,24 @@ pub const FileCache = struct {
         return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
     }
 
+    /// Generate ETag from file stat (using size and mtime)
+    /// Returns owned string that caller must free
+    pub fn generateETag(allocator: std.mem.Allocator, size: u64, mtime: i128) ![]const u8 {
+        // Use a simple ETag format: "size-mtime" (weak ETag)
+        // Strong ETags would require hashing file content which is expensive
+        return try std.fmt.allocPrint(allocator, "W/\"{x}-{x}\"", .{ size, mtime });
+    }
+
+    /// Get file info with ETag support (for zero-copy serving)
+    pub fn getFileInfo(_: *FileCache, path: []const u8, allocator: std.mem.Allocator) !struct { size: u64, mtime: i128, etag: []const u8 } {
+        const file = try std.fs.cwd().openFile(path, .{});
+        defer file.close();
+        const stat = try file.stat();
+
+        const etag = try generateETag(allocator, stat.size, stat.mtime);
+        return .{ .size = stat.size, .mtime = stat.mtime, .etag = etag };
+    }
+
     /// Clear all cached entries (useful for testing or manual cache invalidation)
     pub fn clear(self: *FileCache) void {
         self.mutex.lock();
@@ -159,6 +188,9 @@ pub const FileCache = struct {
         while (it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
             self.allocator.free(entry.value_ptr.content);
+            if (entry.value_ptr.etag) |etag| {
+                self.allocator.free(etag);
+            }
         }
         self.map.clearRetainingCapacity();
     }

@@ -14,5 +14,6 @@
   "log_file": "zhttpd.log",
   "access_log_file": "access.log",
   "reload": "auto",
-  "max_cache_file_size": 1048576
+  "max_cache_file_size": 1048576,
+  "enable_etag": true
 }
