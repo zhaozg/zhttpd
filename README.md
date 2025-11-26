@@ -270,6 +270,18 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 由于 httpz 为性能优化省略了 HTTP 状态行的原因短语（reason phrase），h2load 会将所有请求标记为"失败"，但实际上数据传输完全正常且性能卓越。这是 RFC 7230 允许的优化行为，不影响实际生产使用。详见 [docs/h2load_compatibility.md](docs/h2load_compatibility.md)。
 Apache Bench 测试结果准确可靠。
 
+### 🗺️ 项目规划
+
+查看 [ROADMAP.md](ROADMAP.md) 了解项目的未来发展计划和增强功能。
+
+当前版本 (v0.1.0) 已完成所有核心功能，处于生产就绪状态。未来的增强包括：
+- Lua 集成增强
+- 完整的 GraphQL 实现
+- 高级中间件支持
+- 性能优化
+
+详细信息请参阅 [ROADMAP.md](ROADMAP.md)。
+
 ### 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
@@ -400,6 +412,18 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 
 **Note on h2load Testing:**
 Due to httpz omitting the HTTP reason phrase for performance optimization, h2load marks all requests as "failed" even though data transfer is fully functional and performance is excellent. This is an RFC 7230 compliant optimization and doesn't affect production use. See [docs/h2load_compatibility.md](docs/h2load_compatibility.md) for details. Apache Bench results are accurate and reliable.
+
+### 🗺️ Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the project's future development plans and enhancement opportunities.
+
+Current version (v0.1.0) has completed all core features and is production-ready. Future enhancements include:
+- Enhanced Lua integration
+- Full GraphQL implementation
+- Advanced middleware support
+- Performance optimizations
+
+For details, see [ROADMAP.md](ROADMAP.md).
 
 ### 🔧 Development
 
