@@ -66,32 +66,19 @@ pub const Logger = struct {
             break :blk "Log formatting error";
         };
 
-        // Get timestamp string
-        const epoch_seconds = @as(u64, @intCast(timestamp));
-        const day_seconds = 86400;
-        const hour_seconds = 3600;
-        const minute_seconds = 60;
-
-        const days_since_epoch = epoch_seconds / day_seconds;
-        const seconds_today = epoch_seconds % day_seconds;
-        const hours = seconds_today / hour_seconds;
-        const minutes = (seconds_today % hour_seconds) / minute_seconds;
-        const seconds = seconds_today % minute_seconds;
-
-        // Simple date calculation (approximate)
-        const year = @as(u32, @intCast(1970 + days_since_epoch / 365));
-        const month = @as(u32, @intCast((days_since_epoch % 365) / 30 + 1));
-        const day = @as(u32, @intCast((days_since_epoch % 365) % 30 + 1));
+        // Use a simplified timestamp for logging - just epoch seconds for now
+        // In production, consider using a proper datetime library for accurate date formatting
+        const ts = @as(u64, @intCast(timestamp));
 
         // Write to console
-        std.debug.print("[{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}] [{s}] {s}\n", .{
-            year, month, day, hours, minutes, seconds, level.toString(), message,
-        });
+        std.debug.print("[{d}] [{s}] {s}\n", .{ ts, level.toString(), message });
 
         // Write to file if configured
         if (self.file) |file| {
-            const log_line = std.fmt.allocPrint(self.allocator, "[{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}] [{s}] {s}\n", .{
-                year, month, day, hours, minutes, seconds, level.toString(), message,
+            const log_line = std.fmt.allocPrint(self.allocator, "[{d}] [{s}] {s}\n", .{
+                ts,
+                level.toString(),
+                message,
             }) catch return;
             defer self.allocator.free(log_line);
 
@@ -133,16 +120,17 @@ test "logger with file" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    const log_path = "/tmp/test_log.txt";
+    // Use a temporary directory path that works cross-platform
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
 
-    // Clean up any existing log file
-    std.fs.cwd().deleteFile(log_path) catch {};
+    var log_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const log_path = try tmp_dir.dir.realpath(".", &log_path_buf);
+    const full_log_path = try std.fmt.allocPrint(allocator, "{s}/test_log.txt", .{log_path});
+    defer allocator.free(full_log_path);
 
-    var logger = try Logger.init(allocator, .debug, log_path);
+    var logger = try Logger.init(allocator, .debug, full_log_path);
     defer logger.deinit();
 
     logger.info("Test file logging", .{});
-
-    // Clean up
-    std.fs.cwd().deleteFile(log_path) catch {};
 }
