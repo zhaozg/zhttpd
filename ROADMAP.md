@@ -67,7 +67,7 @@ The following are **optional enhancements** that could be considered for future 
 **Priority:** Low  
 **Effort:** Medium-High
 
-- [ ] Static file caching with ETags
+- [x] Static file caching with ETags (COMPLETED: v0.1.1)
 - [ ] Response compression (gzip, brotli)
 - [ ] HTTP/2 support (if httpz supports it)
 - [ ] Connection pooling optimizations
