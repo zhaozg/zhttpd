@@ -12,6 +12,8 @@ pub const Config = struct {
     enable_lua: bool,
     enable_graphql: bool,
     graphql_endpoint: []const u8,
+    log_level: []const u8,
+    log_file: ?[]const u8,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -19,6 +21,10 @@ pub const Config = struct {
         self.allocator.free(self.static_dir);
         self.allocator.free(self.lua_scripts_dir);
         self.allocator.free(self.graphql_endpoint);
+        self.allocator.free(self.log_level);
+        if (self.log_file) |lf| {
+            self.allocator.free(lf);
+        }
     }
 };
 
@@ -54,6 +60,8 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_lua = root.get("enable_lua").?.bool,
         .enable_graphql = root.get("enable_graphql").?.bool,
         .graphql_endpoint = try allocator.dupe(u8, root.get("graphql_endpoint").?.string),
+        .log_level = if (root.get("log_level")) |ll| try allocator.dupe(u8, ll.string) else try allocator.dupe(u8, "info"),
+        .log_file = if (root.get("log_file")) |lf| try allocator.dupe(u8, lf.string) else null,
         .allocator = allocator,
     };
 }
@@ -71,6 +79,8 @@ fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_lua = true,
         .enable_graphql = true,
         .graphql_endpoint = try allocator.dupe(u8, "/graphql"),
+        .log_level = try allocator.dupe(u8, "info"),
+        .log_file = null,
         .allocator = allocator,
     };
 }

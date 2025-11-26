@@ -3,7 +3,20 @@
     .version = "0.1.0",
     .fingerprint = 0x607c98786ab287ec,
     .minimum_zig_version = "0.15.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .httpz = .{
+            .url = "https://github.com/karlseguin/http.zig/archive/a4477b1dbdc5b820fd4ad301797ca6399f7eb6e4.tar.gz",
+            .hash = "httpz-0.0.0-PNVzrBgtBwCVkSJyophIX6WHwDR0r8XhBGQr96Kk-1El",
+        },
+        .ziglua = .{
+            .url = "https://github.com/natecraddock/ziglua/archive/315b7f25efd29d9e2143d6c0ab685bb7f640450f.tar.gz",
+            .hash = "zlua-0.1.0-hGRpCww-BQCx3cX6zbKWfTgOx6B7Peo4P17RK2hm7-xV",
+        },
+        .grapzig = .{
+            .url = "https://github.com/yousif-wali/grapzig/archive/fbae8f4c453585a82c9b63fcca43e222027057ef.tar.gz",
+            .hash = "N-V-__8AAMikAQA91nJMnvzwe-Ct894D_zRSvrSjroZk16Z7",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
