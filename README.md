@@ -221,7 +221,31 @@ zig build -Doptimize=ReleaseFast
 
 ### 📊 性能基准
 
-TODO: 添加性能基准测试结果
+使用 Apache Bench (ab) 进行基准测试，构建模式：ReleaseFast
+
+**测试环境：**
+- 系统：Linux x86_64
+- Zig 版本：0.15.2
+- 构建模式：ReleaseFast
+
+**测试结果：**
+
+| 测试场景 | 并发连接 | 总请求数 | RPS (请求/秒) | 传输速率 | 平均延迟 |
+|---------|---------|---------|--------------|---------|----------|
+| 低并发   | 10      | 1,000   | 6,674        | 27.7 MB/s | 1.5 ms |
+| 中并发   | 50      | 5,000   | 6,977        | 28.9 MB/s | 7.2 ms |
+| 高并发   | 100     | 10,000  | 6,824        | 28.3 MB/s | 14.7 ms |
+
+**关键性能指标：**
+- 峰值吞吐量：~7,000 请求/秒
+- 平均传输速率：~28 MB/s
+- 低延迟：< 15ms (100并发)
+
+运行基准测试：
+
+```bash
+./scripts/benchmark.sh
+```
 
 ### 🤝 贡献
 
@@ -302,6 +326,34 @@ Run unit tests:
 
 ```bash
 zig build test
+```
+
+### 📊 Performance Benchmarks
+
+Benchmarked with Apache Bench (ab), Build Mode: ReleaseFast
+
+**Test Environment:**
+- System: Linux x86_64
+- Zig Version: 0.15.2
+- Build Mode: ReleaseFast
+
+**Results:**
+
+| Test Scenario | Concurrency | Total Requests | RPS | Transfer Rate | Avg Latency |
+|--------------|-------------|----------------|-----|---------------|-------------|
+| Low          | 10          | 1,000          | 6,674 | 27.7 MB/s   | 1.5 ms      |
+| Medium       | 50          | 5,000          | 6,977 | 28.9 MB/s   | 7.2 ms      |
+| High         | 100         | 10,000         | 6,824 | 28.3 MB/s   | 14.7 ms     |
+
+**Key Metrics:**
+- Peak Throughput: ~7,000 requests/second
+- Average Transfer Rate: ~28 MB/s
+- Low Latency: < 15ms (100 concurrent)
+
+Run benchmarks:
+
+```bash
+./scripts/benchmark.sh
 ```
 
 ### 🔧 Development
