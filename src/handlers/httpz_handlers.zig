@@ -107,7 +107,9 @@ pub const HttpzServer = struct {
         }
 
         // Lua API endpoints (must come before wildcard)
+        // Support both GET and POST for dynamic Lua handlers
         if (self.context.config.enable_lua) {
+            router.get("/api/*", luaApi, .{});
             router.post("/api/*", luaApi, .{});
         }
 
@@ -254,11 +256,16 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
 
     if (ctx.lua_handler) |*handler| {
         const path = req.url.path;
+        const method = @tagName(req.method);
 
-        // Extract script name from path (/api/test -> test)
+        // Extract script name from path (/api/test -> test, /api/users -> users)
         const script_name = blk: {
             if (std.mem.startsWith(u8, path, "/api/")) {
                 const remaining = path[5..]; // Skip "/api/"
+                // Handle paths like /api/users/123 -> users
+                if (std.mem.indexOfScalar(u8, remaining, '/')) |slash_pos| {
+                    break :blk remaining[0..slash_pos];
+                }
                 break :blk remaining;
             }
             break :blk "test";
@@ -272,7 +279,7 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
         handler.allocator = res.arena;
         defer handler.allocator = original_alloc;
 
-        const result = handler.executeScript(script_name, body) catch |err| {
+        const result = handler.executeScript(script_name, method, path, body) catch |err| {
             std.debug.print("Lua execution error: {}\n", .{err});
             res.status = 500;
             res.body =
