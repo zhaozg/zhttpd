@@ -5,6 +5,11 @@ const security = @import("../security/security.zig");
 const LuaHandler = @import("../lua/lua.zig").LuaHandler;
 const GraphQLHandler = @import("../graphql/graphql.zig").GraphQLHandler;
 
+// Constants
+const BUFFER_SIZE = 64 * 1024; // 64KB for request/response buffers
+const MAX_CONNECTIONS = 512;
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
+
 // Application context that holds our handlers
 pub const AppContext = struct {
     allocator: std.mem.Allocator,
@@ -64,7 +69,7 @@ pub const HttpzServer = struct {
             .request = .{
                 .max_body_size = config.max_body_size,
                 .max_form_count = 20,
-                .buffer_size = 65536, // 64KB for request/response buffers
+                .buffer_size = BUFFER_SIZE,
             },
             .timeout = .{
                 .request = config.timeout_seconds * 1000, // convert to ms
@@ -73,7 +78,7 @@ pub const HttpzServer = struct {
                 .count = @intCast(config.thread_pool_size),
             },
             .workers = .{
-                .max_conn = 512,
+                .max_conn = MAX_CONNECTIONS,
             },
         }, context);
 
@@ -143,7 +148,7 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
     const stat = try file.stat();
     const file_size = stat.size;
 
-    if (file_size > 1024 * 1024 * 10) {
+    if (file_size > MAX_FILE_SIZE) {
         res.status = 413;
         res.body = "File too large";
         return;
