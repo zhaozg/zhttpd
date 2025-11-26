@@ -310,7 +310,7 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         };
 
         // Parse JSON body
-        var parsed = std.json.parseFromSlice(std.json.Value, res.arena, body, .{}) catch |err| {
+        const parsed = std.json.parseFromSlice(std.json.Value, res.arena, body, .{}) catch |err| {
             ctx.logger.err("GraphQL JSON parse error: {}", .{err});
             res.status = 400;
             res.body =
@@ -318,7 +318,7 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
             ;
             return;
         };
-        defer parsed.deinit();
+        // No defer needed for arena-allocated memory
 
         // Extract query field with type checking
         const query = if (parsed.value.object.get("query")) |q| blk: {
@@ -338,19 +338,8 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
             return;
         };
 
-        // DESIGN PATTERN: Temporary allocator switching for per-request arena allocation
-        // This pattern is intentional and safe because:
-        // 1. Single-threaded per-request context - no concurrent access to same handler
-        // 2. Defer ensures allocator is always restored, even on early returns
-        // 3. Each request has its own execution context via res.arena
-        // 4. The response arena is automatically cleaned up by httpz after request completes
-        // Alternative: Passing allocator as parameter would require changing handler API
-        // Risk: Low - defer guarantees restoration regardless of error returns
-        const original_alloc = handler.allocator;
-        handler.allocator = res.arena;
-        defer handler.allocator = original_alloc;
-
-        const result = handler.executeQuery(query) catch {
+        // Use the response arena allocator for per-request allocations
+        const result = handler.executeQuery(res.arena, query) catch {
             res.status = 500;
             res.body =
                 \\{"errors":[{"message":"Query execution failed"}]}
@@ -396,19 +385,9 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
         // Get request body
         const body = req.body() orelse "";
 
-        // DESIGN PATTERN: Temporary allocator switching for per-request arena allocation
-        // This pattern is intentional and safe because:
-        // 1. Single-threaded per-request context - no concurrent access to same handler
-        // 2. Defer ensures allocator is always restored, even on early returns
-        // 3. Each request has its own execution context via res.arena
-        // 4. The response arena is automatically cleaned up by httpz after request completes
-        // Alternative: Passing allocator as parameter would require changing handler API
-        // Risk: Low - defer guarantees restoration regardless of error returns
-        const original_alloc = handler.allocator;
-        handler.allocator = res.arena;
-        defer handler.allocator = original_alloc;
-
-        const result = handler.executeScript(script_name, method, path, body) catch |err| {
+        // Use the response arena allocator for per-request allocations
+        // This ensures all allocations are automatically cleaned up after the response
+        const result = handler.executeScript(res.arena, script_name, method, path, body) catch |err| {
             ctx.logger.err("Lua execution error: {}", .{err});
             res.status = 500;
             res.body =
