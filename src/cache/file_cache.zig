@@ -2,6 +2,9 @@ const std = @import("std");
 const Config = @import("../config/config.zig");
 const ReloadMode = Config.ReloadMode;
 
+/// Maximum file size for reading (100MB)
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
+
 /// Cached file entry with content and modification time
 pub const FileCacheEntry = struct {
     content: []const u8,
@@ -15,14 +18,16 @@ pub const FileCache = struct {
     mutex: std.Thread.Mutex,
     allocator: std.mem.Allocator,
     reload_mode: ReloadMode,
+    max_cache_file_size: usize, // Maximum file size to cache (files larger than this won't be cached)
 
-    /// Initialize a new file cache with the specified reload mode
-    pub fn init(allocator: std.mem.Allocator, reload_mode: ReloadMode) FileCache {
+    /// Initialize a new file cache with the specified reload mode and max cache file size
+    pub fn init(allocator: std.mem.Allocator, reload_mode: ReloadMode, max_cache_file_size: usize) FileCache {
         return FileCache{
             .map = std.StringHashMap(FileCacheEntry).init(allocator),
             .mutex = std.Thread.Mutex{},
             .allocator = allocator,
             .reload_mode = reload_mode,
+            .max_cache_file_size = max_cache_file_size,
         };
     }
 
@@ -72,6 +77,7 @@ pub const FileCache = struct {
     }
 
     /// Load file content with caching based on reload mode
+    /// Files larger than max_cache_file_size are always read from disk without caching
     /// - force: Always read from disk
     /// - never: Use cache if available, otherwise read and cache
     /// - auto: Check file mtime and reload if modified
@@ -86,7 +92,18 @@ pub const FileCache = struct {
                 if (self.getCached(path)) |cached| {
                     return try self.allocator.dupe(u8, cached.content);
                 }
-                const content = try self.readFileFromDisk(path);
+
+                // Check file size before reading
+                const file = try std.fs.cwd().openFile(path, .{});
+                defer file.close();
+                const stat = try file.stat();
+
+                // If file is too large, don't cache it
+                if (stat.size > self.max_cache_file_size) {
+                    return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                }
+
+                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
 
                 // Cache makes its own copy, so we can return the original
@@ -94,11 +111,16 @@ pub const FileCache = struct {
                 return content;
             },
             .auto => {
-                // Check file modification time
+                // Check file modification time and size
                 const file = try std.fs.cwd().openFile(path, .{});
                 defer file.close();
                 const stat = try file.stat();
                 const current_mtime = stat.mtime;
+
+                // If file is too large, don't cache it
+                if (stat.size > self.max_cache_file_size) {
+                    return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                }
 
                 // Check cache
                 if (self.getCached(path)) |cached| {
@@ -109,7 +131,7 @@ pub const FileCache = struct {
                 }
 
                 // File changed or not cached, read and update cache
-                const content = try file.readToEndAlloc(self.allocator, 100 * 1024 * 1024); // 100MB max
+                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
 
                 // Cache makes its own copy, so we can return the original
@@ -123,7 +145,7 @@ pub const FileCache = struct {
     fn readFileFromDisk(self: *FileCache, path: []const u8) ![]const u8 {
         const file = try std.fs.cwd().openFile(path, .{});
         defer file.close();
-        return try file.readToEndAlloc(self.allocator, 100 * 1024 * 1024); // 100MB max
+        return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
     }
 
     /// Clear all cached entries (useful for testing or manual cache invalidation)
@@ -151,7 +173,7 @@ test "file cache init and deinit" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var cache = FileCache.init(allocator, .auto);
+    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
     defer cache.deinit();
 
     try testing.expect(cache.count() == 0);
@@ -161,7 +183,7 @@ test "file cache force mode" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var cache = FileCache.init(allocator, .force);
+    var cache = FileCache.init(allocator, .force, 1024 * 1024);
     defer cache.deinit();
 
     // Create a temporary file

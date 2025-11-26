@@ -42,6 +42,12 @@ enable_lua: true
 #   Default: "auto"
 reload: "auto"
 
+# max_cache_file_size: Maximum file size to cache in bytes
+#   - Files larger than this size will not be cached
+#   - Default: 1048576 (1MB)
+#   - Set to 0 to disable caching for all files
+max_cache_file_size: 1048576
+
 # GraphQL Configuration
 # ---------------------
 # enable_graphql: Enable or disable GraphQL endpoint
