@@ -92,11 +92,21 @@ thread_pool_size: 4
 #   - "error": Error messages only (minimal logging)
 log_level: "info"
 
-# log_file: Path to log file (optional)
-#   - If specified, logs are written to this file
+# log_file: Path to application log file (optional)
+#   - If specified, application logs are written to this file
 #   - If not specified or empty, logs go to stdout only
+#   - Logs include timestamps with microsecond precision
+#   - Automatic rotation when file reaches 10MB (keeps 5 backups)
 #   - Example: "zhttpd.log" or "/var/log/zhttpd.log"
 # log_file: "zhttpd.log"
+
+# access_log_file: Path to HTTP access log file (optional)
+#   - If specified, all HTTP requests are logged in Common Log Format
+#   - Includes: IP, timestamp, method, path, status, bytes, user-agent, duration
+#   - Timestamps include microsecond precision for performance analysis
+#   - Automatic rotation when file reaches 10MB (keeps 5 backups)
+#   - Example: "access.log" or "/var/log/zhttpd/access.log"
+# access_log_file: "access.log"
 
 # Configuration Tips
 # ------------------

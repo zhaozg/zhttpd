@@ -26,14 +26,15 @@ pub fn main() !void {
     };
     defer cfg.deinit();
 
-    std.debug.print("Starting zhttpd v0.1.0 on {s}:{d}\n", .{ cfg.host, cfg.port });
-    std.debug.print("Static files: {s}\n", .{cfg.static_dir});
-    std.debug.print("Security headers: {s}\n", .{if (cfg.security_headers) "enabled" else "disabled"});
-    std.debug.print("Thread pool size: {d}\n", .{cfg.thread_pool_size});
-
     // Initialize the HTTP server with httpz
     var server = try httpz_handlers.HttpzServer.init(allocator, cfg);
     defer server.deinit();
+
+    // Log startup information using the integrated logger
+    server.context.logger.info("Starting zhttpd v0.1.0 on {s}:{d}", .{ cfg.host, cfg.port });
+    server.context.logger.info("Static files: {s}", .{cfg.static_dir});
+    server.context.logger.info("Security headers: {s}", .{if (cfg.security_headers) "enabled" else "disabled"});
+    server.context.logger.info("Thread pool size: {d}", .{cfg.thread_pool_size});
 
     // Setup routes
     try server.setupRoutes();

@@ -14,6 +14,7 @@ pub const Config = struct {
     graphql_endpoint: []const u8,
     log_level: []const u8,
     log_file: ?[]const u8,
+    access_log_file: ?[]const u8,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -24,6 +25,9 @@ pub const Config = struct {
         self.allocator.free(self.log_level);
         if (self.log_file) |lf| {
             self.allocator.free(lf);
+        }
+        if (self.access_log_file) |alf| {
+            self.allocator.free(alf);
         }
     }
 };
@@ -78,6 +82,7 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .graphql_endpoint = try allocator.dupe(u8, root.get("graphql_endpoint").?.string),
         .log_level = if (root.get("log_level")) |ll| try allocator.dupe(u8, ll.string) else try allocator.dupe(u8, "info"),
         .log_file = if (root.get("log_file")) |lf| try allocator.dupe(u8, lf.string) else null,
+        .access_log_file = if (root.get("access_log_file")) |alf| try allocator.dupe(u8, alf.string) else null,
         .allocator = allocator,
     };
 }
@@ -97,6 +102,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .graphql_endpoint = try allocator.dupe(u8, "/graphql"),
         .log_level = try allocator.dupe(u8, "info"),
         .log_file = null,
+        .access_log_file = null,
         .allocator = allocator,
     };
 }
@@ -175,6 +181,9 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         } else if (std.mem.eql(u8, key, "log_file")) {
             if (config.log_file) |lf| allocator.free(lf);
             config.log_file = if (value.len > 0) try allocator.dupe(u8, value) else null;
+        } else if (std.mem.eql(u8, key, "access_log_file")) {
+            if (config.access_log_file) |alf| allocator.free(alf);
+            config.access_log_file = if (value.len > 0) try allocator.dupe(u8, value) else null;
         }
     }
 
