@@ -30,8 +30,9 @@ pub const Config = struct {
 
 pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config {
     // Try to load config file, fallback to defaults
-    const file = std.fs.cwd().openFile(path, .{}) catch {
-        std.debug.print("Config file not found, using defaults\n", .{});
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+        std.debug.print("Config file '{s}' not found: {}\n", .{ path, err });
+        std.debug.print("Using default configuration\n", .{});
         return getDefaultConfig(allocator);
     };
     defer file.close();
@@ -44,12 +45,14 @@ pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config {
 
     if (is_yaml) {
         return parseYaml(allocator, content) catch |err| {
-            std.debug.print("YAML parse error: {}, using defaults\n", .{err});
+            std.debug.print("YAML parse error in '{s}': {}\n", .{ path, err });
+            std.debug.print("Using default configuration\n", .{});
             return getDefaultConfig(allocator);
         };
     } else {
         return parseJson(allocator, content) catch |err| {
-            std.debug.print("JSON parse error: {}, using defaults\n", .{err});
+            std.debug.print("JSON parse error in '{s}': {}\n", .{ path, err });
+            std.debug.print("Using default configuration\n", .{});
             return getDefaultConfig(allocator);
         };
     }
