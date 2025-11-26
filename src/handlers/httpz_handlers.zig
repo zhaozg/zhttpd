@@ -168,12 +168,17 @@ pub const HttpzServer = struct {
 fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, duration_us: i64) void {
     if (ctx.access_logger) |*logger| {
         // Format address - req.address is a union, format it as string
-        var addr_buf: [64]u8 = undefined;
+        var addr_buf: [128]u8 = undefined; // Large enough for IPv6 with port
         const remote_addr = std.fmt.bufPrint(&addr_buf, "{any}", .{req.address}) catch "unknown";
-        
+
         const method = @tagName(req.method);
         const path = req.url.path;
-        const user_agent = req.headers.get("user-agent") orelse "-";
+
+        // Sanitize user-agent to prevent log injection
+        const raw_user_agent = req.headers.get("user-agent") orelse "-";
+        var ua_buf: [256]u8 = undefined;
+        const user_agent = sanitizeLogField(&ua_buf, raw_user_agent);
+
         const bytes_sent = res.body.len;
 
         logger.access(
@@ -187,6 +192,23 @@ fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, durati
             duration_us,
         );
     }
+}
+
+/// Sanitize log field by removing newlines and control characters
+fn sanitizeLogField(buf: []u8, input: []const u8) []const u8 {
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < input.len and j < buf.len) : (i += 1) {
+        const c = input[i];
+        // Replace newlines, carriage returns, and control characters with space
+        if (c == '\n' or c == '\r' or c < 32 or c == 127) {
+            buf[j] = ' ';
+        } else {
+            buf[j] = c;
+        }
+        j += 1;
+    }
+    return buf[0..j];
 }
 
 fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
