@@ -137,7 +137,7 @@ pub const Server = struct {
 
         // Lua integration would go here
         try self.sendResponse(stream, "200 OK", "application/json",
-            \\{"message":"Lua API handler","path":"
+            \\{"message":"Lua API handler","status":"placeholder"}
         );
     }
 
@@ -145,7 +145,7 @@ pub const Server = struct {
         var response_buf: [8192]u8 = undefined;
 
         // Build HTTP response with security headers
-        var response = try std.fmt.bufPrint(&response_buf,
+        const response = try std.fmt.bufPrint(&response_buf,
             \\HTTP/1.1 {s}
             \\Content-Type: {s}
             \\Content-Length: {d}
@@ -153,10 +153,12 @@ pub const Server = struct {
             \\
         , .{ status, content_type, body.len });
 
+        var total_len = response.len;
+
         // Add security headers if enabled
         if (self.config.security_headers) {
             const headers = security.default_headers;
-            const additional = try std.fmt.bufPrint(response_buf[response.len..],
+            const additional = try std.fmt.bufPrint(response_buf[total_len..],
                 \\Content-Security-Policy: {s}
                 \\X-Frame-Options: {s}
                 \\X-Content-Type-Options: {s}
@@ -174,11 +176,11 @@ pub const Server = struct {
                 headers.referrer_policy,
                 headers.permissions_policy,
             });
-            response.len += additional.len;
+            total_len += additional.len;
         }
 
         // Add blank line and body
-        const final_response = try std.fmt.bufPrint(response_buf[0 .. response.len + 2 + body.len], "{s}\r\n{s}", .{ response, body });
+        const final_response = try std.fmt.bufPrint(response_buf[0 .. total_len + 2 + body.len], "{s}\r\n{s}", .{ response_buf[0..total_len], body });
 
         _ = try stream.write(final_response);
     }
