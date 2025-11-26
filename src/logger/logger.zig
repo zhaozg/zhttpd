@@ -82,11 +82,6 @@ pub const Logger = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Get timestamp with microsecond precision
-        const now = std.time.microTimestamp();
-        const seconds = @divFloor(now, std.time.us_per_s);
-        const microseconds = @mod(now, std.time.us_per_s);
-
         // Format the log message
         var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
         const message = std.fmt.bufPrint(&msg_buf, fmt, args) catch |format_err| blk: {
@@ -94,9 +89,8 @@ pub const Logger = struct {
             break :blk "Log formatting error";
         };
 
-        // Format timestamp with microsecond precision (UNIX_TIMESTAMP.MICROSECONDS)
-        var ts_buf: [64]u8 = undefined;
-        const timestamp_str = std.fmt.bufPrint(&ts_buf, "{d}.{d:0>6}", .{ seconds, microseconds }) catch "0.000000";
+        // Format human-readable timestamp (YYYY-MM-DD HH:MM:SS)
+        const timestamp_str = formatTimestamp();
 
         // Write to console
         std.debug.print("[{s}] [{s}] {s}\n", .{ timestamp_str, level.toString(), message });
@@ -125,6 +119,66 @@ pub const Logger = struct {
         }
     }
 
+    /// Format current timestamp as human-readable string (YYYY-MM-DD HH:MM:SS)
+    fn formatTimestamp() [19]u8 {
+        const timestamp = std.time.timestamp();
+        const epoch_seconds: u64 = @intCast(timestamp);
+
+        // Calculate date and time components from Unix timestamp
+        const seconds_per_day = 86400;
+        const days_since_epoch = epoch_seconds / seconds_per_day;
+        const seconds_today = epoch_seconds % seconds_per_day;
+
+        // Calculate year, month, day (simplified algorithm for years 1970-2100)
+        var days_remaining = days_since_epoch;
+        var year: u32 = 1970;
+
+        // Add full years
+        while (true) {
+            const days_in_year: u64 = if (isLeapYear(year)) 366 else 365;
+            if (days_remaining < days_in_year) break;
+            days_remaining -= days_in_year;
+            year += 1;
+        }
+
+        // Calculate month and day
+        const is_leap = isLeapYear(year);
+        const days_in_months = if (is_leap)
+            [_]u32{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+        else
+            [_]u32{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+        var month: u32 = 1;
+        for (days_in_months) |days_in_month| {
+            if (days_remaining < days_in_month) break;
+            days_remaining -= days_in_month;
+            month += 1;
+        }
+        const day = days_remaining + 1;
+
+        // Calculate time components
+        const hours = seconds_today / 3600;
+        const minutes = (seconds_today % 3600) / 60;
+        const seconds = seconds_today % 60;
+
+        // Format as "YYYY-MM-DD HH:MM:SS"
+        var buf: [19]u8 = undefined;
+        _ = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+            year,
+            month,
+            day,
+            hours,
+            minutes,
+            seconds,
+        }) catch unreachable;
+        return buf;
+    }
+
+    /// Check if a year is a leap year
+    fn isLeapYear(year: u32) bool {
+        return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0);
+    }
+
     pub fn debug(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         self.log(.debug, fmt, args);
     }
@@ -141,38 +195,28 @@ pub const Logger = struct {
         self.log(.err, fmt, args);
     }
 
-    /// Log HTTP access in Common Log Format with microsecond precision
-    /// Format: <remote_addr> - - [timestamp] "<method> <path> <protocol>" <status> <bytes> "<user_agent>" <duration_us>µs
-    pub fn access(
-        self: *Logger,
-        remote_addr: []const u8,
-        method: []const u8,
-        path: []const u8,
-        protocol: []const u8,
-        status: u16,
-        bytes_sent: usize,
-        user_agent: []const u8,
-        duration_us: i64,
-    ) void {
+    /// Log a formatted message with custom timestamp (for specialized logging like HTTP access logs)
+    pub fn logWithTimestamp(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Get timestamp with microsecond precision
-        const now = std.time.microTimestamp();
-        const seconds = @divFloor(now, std.time.us_per_s);
-        const microseconds = @mod(now, std.time.us_per_s);
-
-        // Format: IP - - [timestamp] "METHOD PATH PROTOCOL" STATUS BYTES "USER-AGENT" DURATIONµs
-        var buf: [LOG_BUFFER_SIZE]u8 = undefined;
-        const log_line = std.fmt.bufPrint(&buf, "{s} - - [{d}.{d:0>6}] \"{s} {s} {s}\" {d} {d} \"{s}\" {d}µs\n", .{ remote_addr, seconds, microseconds, method, path, protocol, status, bytes_sent, user_agent, duration_us }) catch return;
+        // Format the log message
+        var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+        const message = std.fmt.bufPrint(&msg_buf, fmt, args) catch |format_err| blk: {
+            std.debug.print("Failed to format log message: {}\n", .{format_err});
+            break :blk "Log formatting error";
+        };
 
         // Write to console
-        std.debug.print("{s}", .{log_line});
+        std.debug.print("{s}\n", .{message});
 
         // Write to file if configured
         if (self.file) |file| {
+            const log_line = std.fmt.allocPrint(self.allocator, "{s}\n", .{message}) catch return;
+            defer self.allocator.free(log_line);
+
             _ = file.write(log_line) catch |write_err| {
-                std.debug.print("Failed to write access log: {}\n", .{write_err});
+                std.debug.print("Failed to write to log file: {}\n", .{write_err});
                 return;
             };
 
@@ -184,6 +228,34 @@ pub const Logger = struct {
                 };
             }
         }
+    }
+
+    /// Log HTTP access in Common Log Format
+    /// This is a specialized logger built on top of the general-purpose logger
+    /// Format: <remote_addr> - - [timestamp] "<method> <path> <protocol>" <status> <bytes> "<user_agent>" <duration_ms>ms
+    pub fn access(
+        self: *Logger,
+        remote_addr: []const u8,
+        method: []const u8,
+        path: []const u8,
+        protocol: []const u8,
+        status: u16,
+        bytes_sent: usize,
+        user_agent: []const u8,
+        duration_us: i64,
+    ) void {
+        // Convert microseconds to milliseconds with 2 decimal places
+        const duration_ms = @as(f64, @floatFromInt(duration_us)) / 1000.0;
+
+        // Get human-readable timestamp
+        const timestamp_str = formatTimestamp();
+
+        // Format HTTP access log in Common Log Format with millisecond precision
+        // Format: IP - - [YYYY-MM-DD HH:MM:SS] "METHOD PATH PROTOCOL" STATUS BYTES "USER-AGENT" DURATIONms
+        self.logWithTimestamp(
+            "{s} - - [{s}] \"{s} {s} {s}\" {d} {d} \"{s}\" {d:.2}ms",
+            .{ remote_addr, timestamp_str, method, path, protocol, status, bytes_sent, user_agent, duration_ms },
+        );
     }
 
     /// Rotate log files: current.log -> current.log.1 -> current.log.2 -> ... -> current.log.N
