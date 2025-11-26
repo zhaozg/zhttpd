@@ -32,10 +32,13 @@ pub fn main() !void {
     defer server.deinit();
 
     // Log startup information using the integrated logger
-    server.context.logger.info("Starting zhttpd v0.1.0 on {s}:{d}", .{ cfg.host, cfg.port });
+    server.context.logger.info("Starting zhttpd v0.1.1 on {s}:{d}", .{ cfg.host, cfg.port });
     server.context.logger.info("Static files: {s}", .{cfg.static_dir});
     server.context.logger.info("Security headers: {s}", .{if (cfg.security_headers) "enabled" else "disabled"});
     server.context.logger.info("Thread pool size: {d}", .{cfg.thread_pool_size});
+    server.context.logger.info("Max connections: {d}", .{cfg.max_connections});
+    server.context.logger.info("Request buffer size: {d} bytes", .{cfg.request_buffer_size});
+    server.context.logger.info("ETag caching: {s}", .{if (cfg.enable_etag) "enabled" else "disabled"});
 
     // Setup routes
     try server.setupRoutes();

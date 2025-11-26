@@ -1,6 +1,6 @@
 # Project Status
 
-## Current Version: v0.1.1
+## Current Version: v0.1.2
 
 **Status:** ✅ Production Ready
 
@@ -13,6 +13,7 @@ All primary objectives have been achieved:
 | HTTP Server | ✅ Complete | Based on http.zig (httpz) |
 | Static File Serving | ✅ Complete | HTML, CSS, JS, images with MIME types |
 | ETag Caching | ✅ Complete | Weak ETags for bandwidth reduction |
+| Performance Tuning | ✅ Complete | Configurable connection pools & buffers |
 | Lua Integration | ✅ Complete | Dynamic content via ziglua |
 | GraphQL API | ✅ Complete | Query/mutation support via grapzig |
 | Security Headers | ✅ Complete | CSP, HSTS, X-Frame-Options, etc. |
@@ -45,6 +46,12 @@ All primary objectives have been achieved:
 - Bandwidth Reduction: 50-90% for returning visitors
 - 304 Not Modified responses for unchanged files
 - Cache-Control headers for browser optimization
+
+**Performance Tuning (v0.1.2):**
+- Configurable max_connections (default: 512)
+- Configurable request_buffer_size (default: 64KB)
+- Fine-tuned connection pool management
+- Memory allocation optimization
 
 ## Quick Start
 

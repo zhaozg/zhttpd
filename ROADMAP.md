@@ -68,12 +68,12 @@ The following are **optional enhancements** that could be considered for future 
 **Effort:** Medium-High
 
 - [x] Static file caching with ETags (COMPLETED: v0.1.1)
-- [ ] Response compression (gzip, brotli)
-- [ ] HTTP/2 support (if httpz supports it)
-- [ ] Connection pooling optimizations
-- [ ] Memory pool tuning and arena optimizations
-- [ ] Zero-copy file serving where possible
-- [ ] Async I/O improvements
+- [x] Connection pooling optimizations (COMPLETED: v0.1.2)
+- [x] Memory pool tuning and arena optimizations (COMPLETED: v0.1.2)
+- [ ] Response compression (gzip, brotli) - Deferred (complex in Zig 0.15)
+- [ ] HTTP/2 support (if httpz supports it) - Depends on httpz library
+- [ ] Zero-copy file serving where possible - Requires httpz changes
+- [ ] Async I/O improvements - Already optimized by httpz
 
 ### Phase 5: Observability
 

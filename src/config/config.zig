@@ -21,6 +21,8 @@ pub const Config = struct {
     max_body_size: usize,
     timeout_seconds: u32,
     thread_pool_size: u32,
+    max_connections: u32, // Maximum concurrent connections
+    request_buffer_size: usize, // Buffer size for request/response
     enable_lua: bool,
     enable_graphql: bool,
     graphql_endpoint: []const u8,
@@ -93,6 +95,8 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .max_body_size = @intCast(root.get("max_body_size").?.integer),
         .timeout_seconds = @intCast(root.get("timeout_seconds").?.integer),
         .thread_pool_size = @intCast(root.get("thread_pool_size").?.integer),
+        .max_connections = if (root.get("max_connections")) |mc| @intCast(mc.integer) else 512, // Default 512
+        .request_buffer_size = if (root.get("request_buffer_size")) |rbs| @intCast(rbs.integer) else 65536, // Default 64KB
         .enable_lua = root.get("enable_lua").?.bool,
         .enable_graphql = root.get("enable_graphql").?.bool,
         .graphql_endpoint = try allocator.dupe(u8, root.get("graphql_endpoint").?.string),
@@ -116,6 +120,8 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .max_body_size = 1024 * 1024 * 10, // 10MB
         .timeout_seconds = 30,
         .thread_pool_size = 4,
+        .max_connections = 512, // Default 512 concurrent connections
+        .request_buffer_size = 65536, // Default 64KB buffer
         .enable_lua = true,
         .enable_graphql = true,
         .graphql_endpoint = try allocator.dupe(u8, "/graphql"),
@@ -212,6 +218,10 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
             config.max_cache_file_size = try std.fmt.parseInt(usize, value, 10);
         } else if (std.mem.eql(u8, key, "enable_etag")) {
             config.enable_etag = parseBool(value);
+        } else if (std.mem.eql(u8, key, "max_connections")) {
+            config.max_connections = try std.fmt.parseInt(u32, value, 10);
+        } else if (std.mem.eql(u8, key, "request_buffer_size")) {
+            config.request_buffer_size = try std.fmt.parseInt(usize, value, 10);
         }
     }
 
