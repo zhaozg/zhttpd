@@ -34,6 +34,7 @@ pub const Config = struct {
 
 pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config {
     // Try to load config file, fallback to defaults
+    // Note: Using std.debug.print here since logger is not yet initialized
     const file = std.fs.cwd().openFile(path, .{}) catch |err| {
         std.debug.print("Config file '{s}' not found: {}\n", .{ path, err });
         std.debug.print("Using default configuration\n", .{});
