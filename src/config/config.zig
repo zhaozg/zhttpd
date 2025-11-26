@@ -1,5 +1,10 @@
 const std = @import("std");
 
+// Default configuration values
+pub const DEFAULT_MAX_CONNECTIONS: u32 = 512;
+pub const DEFAULT_REQUEST_BUFFER_SIZE: usize = 65536; // 64KB
+pub const DEFAULT_MAX_CACHE_FILE_SIZE: usize = 1024 * 1024; // 1MB
+
 pub const ReloadMode = enum {
     never, // Cache file in memory, read once and use continuously
     auto, // Detect file modification and re-read if modified, otherwise use cache
@@ -95,8 +100,8 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .max_body_size = @intCast(root.get("max_body_size").?.integer),
         .timeout_seconds = @intCast(root.get("timeout_seconds").?.integer),
         .thread_pool_size = @intCast(root.get("thread_pool_size").?.integer),
-        .max_connections = if (root.get("max_connections")) |mc| @intCast(mc.integer) else 512, // Default 512
-        .request_buffer_size = if (root.get("request_buffer_size")) |rbs| @intCast(rbs.integer) else 65536, // Default 64KB
+        .max_connections = if (root.get("max_connections")) |mc| @intCast(mc.integer) else DEFAULT_MAX_CONNECTIONS,
+        .request_buffer_size = if (root.get("request_buffer_size")) |rbs| @intCast(rbs.integer) else DEFAULT_REQUEST_BUFFER_SIZE,
         .enable_lua = root.get("enable_lua").?.bool,
         .enable_graphql = root.get("enable_graphql").?.bool,
         .graphql_endpoint = try allocator.dupe(u8, root.get("graphql_endpoint").?.string),
@@ -104,7 +109,7 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .log_file = if (root.get("log_file")) |lf| try allocator.dupe(u8, lf.string) else null,
         .access_log_file = if (root.get("access_log_file")) |alf| try allocator.dupe(u8, alf.string) else null,
         .reload = if (root.get("reload")) |r| ReloadMode.fromString(r.string) else .auto,
-        .max_cache_file_size = if (root.get("max_cache_file_size")) |mcfs| @intCast(mcfs.integer) else 1024 * 1024, // Default 1MB
+        .max_cache_file_size = if (root.get("max_cache_file_size")) |mcfs| @intCast(mcfs.integer) else DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = if (root.get("enable_etag")) |ee| ee.bool else true, // Default enabled
         .allocator = allocator,
     };
@@ -120,8 +125,8 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .max_body_size = 1024 * 1024 * 10, // 10MB
         .timeout_seconds = 30,
         .thread_pool_size = 4,
-        .max_connections = 512, // Default 512 concurrent connections
-        .request_buffer_size = 65536, // Default 64KB buffer
+        .max_connections = DEFAULT_MAX_CONNECTIONS,
+        .request_buffer_size = DEFAULT_REQUEST_BUFFER_SIZE,
         .enable_lua = true,
         .enable_graphql = true,
         .graphql_endpoint = try allocator.dupe(u8, "/graphql"),
@@ -129,7 +134,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .log_file = null,
         .access_log_file = null,
         .reload = .auto, // Default to auto reload mode
-        .max_cache_file_size = 1024 * 1024, // Default 1MB
+        .max_cache_file_size = DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = true, // Default enabled
         .allocator = allocator,
     };

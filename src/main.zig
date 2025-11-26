@@ -32,7 +32,7 @@ pub fn main() !void {
     defer server.deinit();
 
     // Log startup information using the integrated logger
-    server.context.logger.info("Starting zhttpd v0.1.1 on {s}:{d}", .{ cfg.host, cfg.port });
+    server.context.logger.info("Starting zhttpd v0.1.2 on {s}:{d}", .{ cfg.host, cfg.port });
     server.context.logger.info("Static files: {s}", .{cfg.static_dir});
     server.context.logger.info("Security headers: {s}", .{if (cfg.security_headers) "enabled" else "disabled"});
     server.context.logger.info("Thread pool size: {d}", .{cfg.thread_pool_size});
