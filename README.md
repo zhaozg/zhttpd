@@ -561,7 +561,7 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 ```
 
 **Note on h2load Testing:**
-Due to httpz omitting the HTTP reason phrase for performance optimization, h2load marks all requests as "failed" even though data transfer is fully functional and performance is excellent. This is an RFC 7230 compliant optimization and doesn't affect production use. Apache Bench results are accurate and reliable.
+Due to httpz omitting the HTTP reason phrase for performance optimization, h2load marks all requests as "failed" even though data transfer is fully functional and performance is excellent. This is an RFC 7230 compliant optimization behavior and doesn't affect production use. Apache Bench results are accurate and reliable.
 
 ### 🗺️ Roadmap
 
