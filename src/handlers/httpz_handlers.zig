@@ -644,14 +644,13 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
             return;
         };
 
-        // Extract variables field (optional)
+        // Extract variables field (optional) and serialize to JSON string
         const variables = if (parsed.value.object.get("variables")) |v| blk: {
-            if (v == .object) {
-                // Use the raw body to extract variables section
-                // For simplicity, pass an empty object if we can't serialize
+            // Serialize variables to JSON string using std.json.Stringify
+            const serialized = std.json.Stringify.valueAlloc(res.arena, v, .{}) catch {
                 break :blk "{}";
-            }
-            break :blk "{}";
+            };
+            break :blk serialized;
         } else "{}";
 
         // Phase 2: If Lua handler is available, delegate to Lua resolver
@@ -677,7 +676,7 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
             };
 
             // Build request data with operation and variables
-            // We only pass operation JSON since raw_query may contain unescaped quotes
+            // We only pass the parsed operation JSON, since the original query string from the request may contain unescaped quotes
             const request_data = std.fmt.allocPrint(res.arena,
                 \\{{"operation":{s},"variables":{s}}}
             , .{ op_json, variables }) catch {

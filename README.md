@@ -217,7 +217,6 @@ end
 
 return { handle = handle_request }
 ```
-```
 
 ### 🔒 安全特性
 
