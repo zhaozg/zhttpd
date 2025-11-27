@@ -10,6 +10,29 @@ const grapzig = @import("grapzig");
 // - Delegates execution (Step 5) and response building (Step 6) to Lua resolvers
 // - Provides general resolver API for Lua-based data fetching
 
+/// Helper function to write a JSON-escaped string
+fn writeJsonEscapedString(writer: anytype, s: []const u8) !void {
+    try writer.writeByte('"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            else => {
+                if (c < 0x20) {
+                    // Control character - write as \u00XX
+                    try writer.print("\\u{x:0>4}", .{c});
+                } else {
+                    try writer.writeByte(c);
+                }
+            },
+        }
+    }
+    try writer.writeByte('"');
+}
+
 /// Parsed selection field for Lua resolver
 pub const SelectionField = struct {
     name: []const u8,
@@ -168,9 +191,8 @@ pub const GraphQLHandler = struct {
         try writer.writeAll("\"");
 
         if (op.name) |name| {
-            try writer.writeAll(",\"name\":\"");
-            try writer.writeAll(name);
-            try writer.writeAll("\"");
+            try writer.writeAll(",\"name\":");
+            try writeJsonEscapedString(writer, name);
         }
 
         try writer.writeAll(",\"selections\":[");
@@ -184,14 +206,12 @@ pub const GraphQLHandler = struct {
     }
 
     fn writeSelectionJson(writer: anytype, sel: *const SelectionField) !void {
-        try writer.writeAll("{\"name\":\"");
-        try writer.writeAll(sel.name);
-        try writer.writeAll("\"");
+        try writer.writeAll("{\"name\":");
+        try writeJsonEscapedString(writer, sel.name);
 
         if (sel.alias) |alias| {
-            try writer.writeAll(",\"alias\":\"");
-            try writer.writeAll(alias);
-            try writer.writeAll("\"");
+            try writer.writeAll(",\"alias\":");
+            try writeJsonEscapedString(writer, alias);
         }
 
         // Write arguments
@@ -202,9 +222,8 @@ pub const GraphQLHandler = struct {
             while (iter.next()) |entry| {
                 if (!first) try writer.writeByte(',');
                 first = false;
-                try writer.writeByte('"');
-                try writer.writeAll(entry.key_ptr.*);
-                try writer.writeAll("\":");
+                try writeJsonEscapedString(writer, entry.key_ptr.*);
+                try writer.writeByte(':');
                 try entry.value_ptr.toJson(writer);
             }
             try writer.writeByte('}');
@@ -266,9 +285,8 @@ pub const GraphQLHandler = struct {
         for (op.selections.items, 0..) |sel, i| {
             if (i > 0) try writer.writeByte(',');
             const name = sel.alias orelse sel.name;
-            try writer.writeByte('"');
-            try writer.writeAll(name);
-            try writer.writeAll("\":null");
+            try writeJsonEscapedString(writer, name);
+            try writer.writeAll(":null");
         }
 
         try writer.writeAll("}}");
