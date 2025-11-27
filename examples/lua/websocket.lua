@@ -19,11 +19,20 @@
 --
 -- For GraphQL subscriptions (/graphql/ws), messages follow the graphql-ws protocol:
 -- https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
+--
+-- STATE MANAGEMENT NOTE:
+-- The connections and subscriptions tables are module-level state that persists
+-- across all WebSocket connections within the same Lua interpreter instance.
+-- This means:
+-- 1. State is shared across all connections (useful for broadcasting)
+-- 2. State will be lost if the Lua script is reloaded
+-- 3. For production use with multiple server instances, consider external
+--    state storage (Redis, database, etc.)
 
--- Store active connections
+-- Store active connections (shared across all WebSocket handlers)
 local connections = {}
 
--- Store active GraphQL subscriptions
+-- Store active GraphQL subscriptions (shared across all WebSocket handlers)
 local subscriptions = {}
 
 -- Handle new connection
@@ -68,6 +77,17 @@ local function handle_disconnect(request)
 end
 
 -- Parse JSON string (simple parser for basic cases)
+-- LIMITATIONS:
+-- This is a simplified pattern-based parser suitable for the graphql-ws protocol.
+-- It only handles:
+-- - Simple string values for "type" and "id" fields
+-- - Top-level "payload" object (as raw string)
+-- It does NOT handle:
+-- - Nested objects within string values
+-- - Escaped quotes within strings
+-- - Arrays, numbers, or boolean values
+-- - Complex nested structures
+-- For production use with complex JSON, integrate lua-cjson or similar library.
 local function parse_json(str)
     -- Try to use a simple pattern-based approach for common cases
     -- This is a simplified parser - for production use cjson

@@ -159,47 +159,64 @@ local mutation_resolvers = {
 }
 
 -- Resolver functions for Subscription type
--- These return initial data for subscriptions
--- In a real implementation, these would set up event listeners
+-- These return mock data matching the GraphQL schema types.
+-- In a real implementation, these would set up event listeners/streams.
+-- Note: Subscriptions over WebSocket would typically push data over time,
+-- but for demo purposes these return initial sample data.
 local subscription_resolvers = {
     -- Subscribe to new user creation events
+    -- Returns a User type as defined in the schema
     userCreated = function(args, context)
-        return {
-            __subscription = true,
-            event = "userCreated",
-            message = "Subscribed to user creation events",
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        -- Return the most recently created user as sample data
+        local user = users["3"] or {
+            id = "1",
+            name = "New User",
+            email = "newuser@example.com",
+            createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }
+        return user
     end,
     
     -- Subscribe to new post creation events
+    -- Returns a Post type as defined in the schema
     postCreated = function(args, context)
-        return {
-            __subscription = true,
-            event = "postCreated",
-            message = "Subscribed to post creation events",
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        -- Return the most recently created post as sample data
+        local post = posts["3"] or {
+            id = "1",
+            title = "New Post",
+            content = "This is a new post.",
+            authorId = "1",
+            createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+            updatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }
+        return post
     end,
     
     -- Subscribe to user update events
+    -- Returns a User type, optionally filtered by userId
     userUpdated = function(args, context)
         local userId = args and args.userId
-        return {
-            __subscription = true,
-            event = "userUpdated",
-            userId = userId,
-            message = "Subscribed to user update events" .. (userId and (" for user " .. userId) or ""),
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-        }
+        local user
+        if userId then
+            user = users[userId]
+        end
+        if not user then
+            user = users["1"] or {
+                id = userId or "1",
+                name = "Updated User",
+                email = "updated@example.com",
+                createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            }
+        end
+        return user
     end,
     
     -- General message subscription (for testing)
+    -- Returns a Message type as defined in the schema
     messageReceived = function(args, context)
         return {
-            __subscription = true,
-            event = "messageReceived",
-            message = "Subscribed to message events",
+            id = "1",
+            content = "Sample subscription message",
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }
     end
