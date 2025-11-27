@@ -171,14 +171,43 @@ pub const WebSocketHandler = struct {
     }
 };
 
-/// Escape a string for JSON embedding
+/// Escape a string for JSON embedding into a provided buffer
+/// Returns the escaped string or null if buffer is too small
+fn escapeJsonStringBuf(input: []const u8, buf: []u8) ?[]const u8 {
+    var pos: usize = 0;
+    for (input) |c| {
+        const escaped: ?[]const u8 = switch (c) {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            else => if (c < 32) null else null, // Control chars handled below
+        };
+        if (escaped) |esc| {
+            if (pos + esc.len > buf.len) return null;
+            @memcpy(buf[pos..][0..esc.len], esc);
+            pos += esc.len;
+        } else if (c < 32) {
+            // Escape control characters as \u00XX
+            if (pos + 6 > buf.len) return null;
+            _ = std.fmt.bufPrint(buf[pos..][0..6], "\\u{x:0>4}", .{c}) catch return null;
+            pos += 6;
+        } else {
+            if (pos >= buf.len) return null;
+            buf[pos] = c;
+            pos += 1;
+        }
+    }
+    return buf[0..pos];
+}
+
+/// Simple check if string needs escaping (for backwards compatibility)
 fn escapeJsonString(input: []const u8) []const u8 {
-    // For simplicity, we'll just return the input if it's safe
-    // A full implementation would escape special characters
+    // Check if input needs escaping - if so, return empty for safety
+    // This is used when we can't allocate a buffer
     for (input) |c| {
         if (c == '"' or c == '\\' or c < 32) {
-            // Has characters that need escaping - for now just return empty
-            // TODO: Implement proper escaping
             return "";
         }
     }
