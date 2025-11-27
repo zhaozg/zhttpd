@@ -726,6 +726,13 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
                         .value = if (eq_pos + 1 < param.len) param[eq_pos + 1 ..] else "",
                     };
                     query_count += 1;
+                } else if (param.len > 0) {
+                    // Handle flag-style parameters (e.g., ?flag&debug)
+                    query_buf[query_count] = KeyValue{
+                        .key = param,
+                        .value = "",
+                    };
+                    query_count += 1;
                 }
             }
         }

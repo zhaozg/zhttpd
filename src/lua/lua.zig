@@ -86,6 +86,8 @@ const ThreadLocalLua = struct {
         const dangerous_globals = [_][:0]const u8{
             "loadfile",
             "dofile",
+            "load", // Can execute arbitrary Lua code from strings
+            "loadstring", // Lua 5.1 equivalent of load
         };
 
         for (dangerous_globals) |name| {
@@ -119,6 +121,10 @@ const ThreadLocalLua = struct {
         // Remove debug library (can be used to escape sandbox)
         lua.pushNil();
         lua.setGlobal("debug");
+
+        // Remove package library (can load arbitrary C libraries via package.loadlib)
+        lua.pushNil();
+        lua.setGlobal("package");
     }
 };
 
@@ -139,6 +145,9 @@ fn pushKeyValueToTable(lua: *ziglua.Lua, key: []const u8, value: []const u8) voi
     // Create null-terminated key for setField
     var key_buf: [MAX_KEY_SIZE]u8 = undefined;
     const key_len = @min(key.len, key_buf.len - 1);
+    if (key.len >= key_buf.len) {
+        std.debug.print("Warning: key truncated from {} to {} bytes: \"{s}\"\n", .{ key.len, key_len, key[0..@min(key.len, 64)] });
+    }
     @memcpy(key_buf[0..key_len], key[0..key_len]);
     key_buf[key_len] = 0;
     lua.setField(-2, key_buf[0..key_len :0]);
@@ -309,12 +318,10 @@ pub const LuaHandler = struct {
         _ = lua.pushString(method);
         lua.setField(-2, "method");
 
-        // Add path
+        // Add path and url (alias for path, luvit style)
         _ = lua.pushString(path);
-        lua.setField(-2, "path");
-
-        // Add url (alias for path, luvit style)
-        _ = lua.pushString(path);
+        lua.pushValue(-1); // Duplicate the path value on stack
+        lua.setField(-3, "path");
         lua.setField(-2, "url");
 
         // Add headers table (luvit/Node.js style)
