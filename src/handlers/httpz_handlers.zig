@@ -699,6 +699,9 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
         const headers = headers_buf[0..headers_count];
 
         // Extract query parameters for Lua (luvit/Node.js style)
+        // Note: URL decoding is not performed here - parameters with encoded
+        // characters (like %20 for spaces) will remain encoded. Full URL decoding
+        // should be implemented in a future enhancement if needed.
         var query_buf: [MAX_QUERY_PARAMS_FOR_LUA]KeyValue = undefined;
         var query_count: usize = 0;
 
