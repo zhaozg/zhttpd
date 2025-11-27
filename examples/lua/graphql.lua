@@ -158,6 +158,53 @@ local mutation_resolvers = {
     end
 }
 
+-- Resolver functions for Subscription type
+-- These return initial data for subscriptions
+-- In a real implementation, these would set up event listeners
+local subscription_resolvers = {
+    -- Subscribe to new user creation events
+    userCreated = function(args, context)
+        return {
+            __subscription = true,
+            event = "userCreated",
+            message = "Subscribed to user creation events",
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+    end,
+    
+    -- Subscribe to new post creation events
+    postCreated = function(args, context)
+        return {
+            __subscription = true,
+            event = "postCreated",
+            message = "Subscribed to post creation events",
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+    end,
+    
+    -- Subscribe to user update events
+    userUpdated = function(args, context)
+        local userId = args and args.userId
+        return {
+            __subscription = true,
+            event = "userUpdated",
+            userId = userId,
+            message = "Subscribed to user update events" .. (userId and (" for user " .. userId) or ""),
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+    end,
+    
+    -- General message subscription (for testing)
+    messageReceived = function(args, context)
+        return {
+            __subscription = true,
+            event = "messageReceived",
+            message = "Subscribed to message events",
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+    end
+}
+
 -- Type resolvers for nested fields
 local type_resolvers = {
     User = {
@@ -258,6 +305,8 @@ function handle_request(request)
         resolvers = query_resolvers
     elseif op_type == "mutation" then
         resolvers = mutation_resolvers
+    elseif op_type == "subscription" then
+        resolvers = subscription_resolvers
     else
         return {
             errors = {

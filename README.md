@@ -15,6 +15,8 @@
 - ⚡ **ETag 缓存** - 支持 ETag 和条件请求，大幅减少带宽使用
 - 🔧 **动态内容处理** - 通过 Lua 脚本实现灵活的动态内容和 API 处理
 - 🔍 **GraphQL API** - 内置 GraphQL 支持，提供强大的 API 查询能力
+- 🔗 **WebSocket 支持** - 实时双向通信，支持 Lua 消息处理
+- 📊 **GraphQL 订阅** - 基于 WebSocket 的 GraphQL 订阅支持
 - 🔒 **安全加固** - 默认启用 HTTP 安全头部（CSP、HSTS、X-Frame-Options 等）
 - ⚙️ **灵活配置** - 支持 JSON 和 YAML 配置文件
 - 🧵 **多线程支持** - 使用线程池处理并发请求
@@ -218,6 +220,84 @@ end
 return { handle = handle_request }
 ```
 
+#### WebSocket 支持
+
+zhttpd 提供内置的 WebSocket 支持，可以通过 `/ws` 端点建立 WebSocket 连接。消息处理委托给 Lua 脚本。
+
+**JavaScript 客户端示例：**
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+
+ws.onopen = () => {
+    console.log('Connected to WebSocket');
+    ws.send(JSON.stringify({ type: 'hello', message: 'Hello from client!' }));
+};
+
+ws.onmessage = (event) => {
+    console.log('Received:', event.data);
+};
+
+ws.onclose = () => {
+    console.log('Disconnected');
+};
+```
+
+**Lua WebSocket 处理器：**
+
+在 `lua_scripts_dir` 目录中创建 `websocket.lua` 文件处理 WebSocket 消息：
+
+```lua
+-- examples/lua/websocket.lua
+function handle_request(request)
+    local event_type = request.type  -- "connect", "message", "disconnect"
+    local connection_id = request.connection_id
+    local data = request.data
+    
+    if event_type == "connect" then
+        return { type = "connected", message = "Welcome!" }
+    elseif event_type == "message" then
+        -- 处理消息并返回响应
+        return { type = "message", received = data, echo = true }
+    else
+        return { type = "disconnected" }
+    end
+end
+
+return { handle = handle_request }
+```
+
+#### GraphQL 订阅
+
+通过 `/graphql/ws` 端点支持 GraphQL 订阅，遵循 graphql-ws 协议。
+
+**订阅示例：**
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/graphql/ws');
+
+ws.onopen = () => {
+    // 初始化连接
+    ws.send(JSON.stringify({ type: 'connection_init' }));
+};
+
+ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'connection_ack') {
+        // 订阅用户创建事件
+        ws.send(JSON.stringify({
+            id: '1',
+            type: 'subscribe',
+            payload: {
+                query: 'subscription { userCreated { id name email } }'
+            }
+        }));
+    } else if (msg.type === 'next') {
+        console.log('Subscription data:', msg.payload);
+    }
+};
+```
+
 ### 🔒 安全特性
 
 zhttpd 默认启用以下 HTTP 安全头部：
@@ -310,10 +390,12 @@ Apache Bench 测试结果准确可靠。
 
 查看 [ROADMAP.md](ROADMAP.md) 了解项目的未来发展计划和增强功能。
 
-当前版本 (v0.2.0) 已完成所有核心功能和高级中间件，处于生产就绪状态。已完成：
+当前版本 (v0.3.0) 已完成所有核心功能和高级中间件，处于生产就绪状态。已完成：
 - ✅ 高级中间件支持 (速率限制、CORS、认证)
 - ✅ SSE 实时推送
 - ✅ JWT/OAuth 认证接口
+- ✅ WebSocket 支持 (Lua 消息处理)
+- ✅ GraphQL 订阅
 
 未来的增强包括：
 - Lua 集成增强
@@ -343,6 +425,8 @@ A high-performance, scalable, HTTP-compliant general-purpose web server built wi
 - ⚡ **ETag Caching** - Supports ETags and conditional requests for reduced bandwidth usage
 - 🔧 **Dynamic Content** - Flexible dynamic content and API handling through Lua scripts
 - 🔍 **GraphQL API** - Built-in GraphQL support for powerful API querying
+- 🔗 **WebSocket Support** - Real-time bidirectional communication with Lua message handling
+- 📊 **GraphQL Subscriptions** - WebSocket-based GraphQL subscription support
 - 🔒 **Security Hardened** - HTTP security headers enabled by default (CSP, HSTS, X-Frame-Options, etc.)
 - ⚙️ **Flexible Configuration** - Support for both JSON and YAML configuration files
 - 🧵 **Multi-threading** - Thread pool for handling concurrent requests
@@ -463,10 +547,12 @@ Due to httpz omitting the HTTP reason phrase for performance optimization, h2loa
 
 See [ROADMAP.md](ROADMAP.md) for the project's future development plans and enhancement opportunities.
 
-Current version (v0.2.0) has completed all core features and advanced middleware, and is production-ready. Completed:
+Current version (v0.3.0) has completed all core features and advanced middleware, and is production-ready. Completed:
 - ✅ Advanced middleware support (Rate limiting, CORS, Authentication)
 - ✅ SSE real-time streaming
 - ✅ JWT/OAuth authentication interface
+- ✅ WebSocket support with Lua message handling
+- ✅ GraphQL subscriptions
 
 Future enhancements include:
 - Enhanced Lua integration

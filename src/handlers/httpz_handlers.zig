@@ -14,6 +14,9 @@ const middleware = @import("../middleware/middleware.zig");
 const RateLimiter = middleware.RateLimiter;
 const CorsMiddleware = middleware.CorsMiddleware;
 const AuthMiddleware = middleware.AuthMiddleware;
+const ws_mod = @import("websocket.zig");
+const WebSocketHandler = ws_mod.WebSocketHandler;
+const WebSocketContext = ws_mod.WebSocketContext;
 
 // Constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
@@ -33,6 +36,10 @@ pub const AppContext = struct {
     rate_limiter: ?*RateLimiter = null,
     cors_middleware: ?CorsMiddleware = null,
     auth_middleware: ?AuthMiddleware = null,
+
+    /// WebSocket handler declaration for httpz integration
+    /// This enables WebSocket support in httpz.Server
+    pub const WebsocketHandler = WebSocketHandler;
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !AppContext {
         // Parse log level
@@ -223,6 +230,15 @@ pub const HttpzServer = struct {
             router.post(endpoint, graphqlPost, .{});
             // GraphQL Playground UI - add /playground suffix
             router.get("/graphql/playground", graphqlPlayground, .{});
+        }
+
+        // WebSocket endpoint (if enabled)
+        if (self.context.config.enable_websocket) {
+            router.get("/ws", websocketHandler, .{});
+            // GraphQL subscriptions endpoint
+            if (self.context.config.enable_graphql) {
+                router.get("/graphql/ws", websocketHandler, .{});
+            }
         }
 
         // Lua API endpoints (must come before wildcard)
@@ -488,6 +504,33 @@ fn sseHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
     };
 
     ctx.logger.debug("SSE events sent successfully", .{});
+}
+
+/// WebSocket upgrade handler
+/// Handles WebSocket upgrade requests and delegates to WebSocketHandler
+fn websocketHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+    ctx.logger.debug("WebSocket upgrade request received", .{});
+
+    // Get a mutable pointer to lua_handler if it exists
+    const lua_handler_ptr: ?*LuaHandler = if (ctx.lua_handler != null) blk: {
+        // We need to get a pointer to the optional's value
+        // This is safe because ctx.lua_handler is stored in AppContext which outlives the request
+        break :blk @constCast(&ctx.lua_handler.?);
+    } else null;
+
+    // Create WebSocket context with Lua handler
+    const ws_ctx = WebSocketContext.init(req.url.path, lua_handler_ptr);
+
+    // Attempt to upgrade the connection to WebSocket
+    if (try httpz.upgradeWebsocket(WebSocketHandler, req, res, &ws_ctx) == false) {
+        ctx.logger.warn("WebSocket upgrade failed - invalid request", .{});
+        res.status = 400;
+        res.body = "{\"error\":\"Invalid WebSocket request\"}";
+        res.content_type = httpz.ContentType.JSON;
+    } else {
+        ctx.logger.info("WebSocket connection established: id={d}, path={s}", .{ ws_ctx.connection_id, req.url.path });
+    }
+    // After successful upgrade, the request and response are no longer valid
 }
 
 fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
