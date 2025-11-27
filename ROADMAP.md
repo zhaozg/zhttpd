@@ -41,13 +41,16 @@ The following are **optional enhancements** that could be considered for future 
 
 **Priority:** Medium  
 **Effort:** High
+**Status:** 🔄 In Progress
 
-- [ ] Define actual data resolvers with business logic
-- [ ] Database integration (PostgreSQL, SQLite)
+- [x] Define actual data resolvers with business logic - via Lua resolver API
+- [x] GraphQL playground UI - available at /graphql/playground
+- [x] Parse GraphQL queries with grapzig library
+- [x] Lua-based resolver system for custom data fetching
+- [ ] Database integration (PostgreSQL, SQLite) - deferred (implement in Lua)
 - [ ] GraphQL subscriptions over WebSocket
 - [ ] Schema introspection improvements
 - [ ] DataLoader pattern for N+1 query optimization
-- [ ] GraphQL playground UI
 - [ ] Query complexity analysis and rate limiting
 
 ### Phase 3: Advanced httpz Features
