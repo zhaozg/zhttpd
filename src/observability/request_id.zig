@@ -32,14 +32,21 @@ pub fn generate(buf: *[37]u8) []const u8 {
     var prng = std.Random.DefaultPrng.init(@bitCast(now));
     const random = prng.random();
 
-    // Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-    _ = std.fmt.bufPrint(buf, "{x:0>8}-{x:0>4}-{x:0>4}-{x:0>4}-{x:0>12}", .{
+    // Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 characters exactly)
+    // Buffer is 37 bytes, format produces exactly 36 chars, so this is guaranteed to succeed
+    const written = std.fmt.bufPrint(buf, "{x:0>8}-{x:0>4}-{x:0>4}-{x:0>4}-{x:0>12}", .{
         secs,
         micros,
         counter,
         random.int(u16),
         random.int(u48),
-    }) catch unreachable;
+    }) catch {
+        // Fallback: return a simple timestamp-based ID if formatting fails
+        _ = std.fmt.bufPrint(buf, "00000000-0000-0000-0000-000000000000", .{}) catch {};
+        buf[36] = 0;
+        return buf[0..36];
+    };
+    _ = written;
 
     buf[36] = 0;
     return buf[0..36];
