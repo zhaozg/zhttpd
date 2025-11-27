@@ -150,9 +150,11 @@ log_level: "info"
 # WebSocket Support
 # -----------------
 # enable_websocket: Enable WebSocket protocol support
-#   - true: WebSocket connections are accepted
+#   - true: WebSocket connections are accepted at /ws endpoint
+#   - GraphQL subscriptions available at /graphql/ws when both WebSocket and GraphQL are enabled
+#   - Messages are handled by websocket.lua script in lua_scripts_dir
 #   - false: WebSocket support disabled (default)
-# enable_websocket: false
+enable_websocket: true
 
 # Server-Sent Events (SSE)
 # -------------------------

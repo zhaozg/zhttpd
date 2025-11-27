@@ -48,7 +48,7 @@ The following are **optional enhancements** that could be considered for future 
 - [x] Parse GraphQL queries with grapzig library
 - [x] Lua-based resolver system for custom data fetching
 - [ ] Database integration (PostgreSQL, SQLite) - deferred (implement in Lua)
-- [ ] GraphQL subscriptions over WebSocket
+- [x] GraphQL subscriptions over WebSocket - via /graphql/ws endpoint with Lua handlers
 - [ ] Schema introspection improvements
 - [ ] DataLoader pattern for N+1 query optimization
 - [ ] Query complexity analysis and rate limiting
@@ -59,7 +59,7 @@ The following are **optional enhancements** that could be considered for future 
 **Effort:** Medium
 **Status:** ✅ Completed (v0.2.0)
 
-- [x] WebSocket support (httpz has built-in support) - Infrastructure ready
+- [x] WebSocket support (httpz has built-in support) - Full implementation with Lua handlers at /ws
 - [x] Server-Side Events (SSE) for real-time updates - Endpoint at /events
 - [x] Rate limiting middleware - Token bucket algorithm with per-IP tracking
 - [x] Authentication/Authorization middleware (JWT, OAuth) - Lua-delegated validation
