@@ -28,13 +28,14 @@ The following are **optional enhancements** that could be considered for future 
 
 **Priority:** Medium  
 **Effort:** Medium
+**Status:** ✅ Completed (v0.3.0)
 
-- [ ] Pass complex request data structures to Lua scripts (headers, query parameters)
-- [ ] Enhanced Lua response handling with full JSON support
-- [ ] Lua script hot-reloading without server restart
-- [ ] Built-in Lua libraries for common tasks (JSON, HTTP client, database)
-- [ ] Lua script caching and precompilation
-- [ ] Sandboxing and resource limits for Lua scripts
+- [x] Pass complex request data structures to Lua scripts (headers, query parameters) - luvit/Node.js style API
+- [x] Lua script hot-reloading without server restart - via FileCache auto mode
+- [x] Lua script caching and precompilation - bytecode caching with mtime validation
+- [x] Sandboxing and resource limits for Lua scripts - instruction limits and dangerous function removal
+- [ ] Enhanced Lua response handling with full JSON support - deferred (use cjson in Lua)
+- [ ] Built-in Lua libraries for common tasks (JSON, HTTP client, database) - deferred (implement in Lua)
 
 ### Phase 2: Full GraphQL Implementation
 
