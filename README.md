@@ -153,6 +153,10 @@ curl -X POST http://localhost:8080/api/test \
 
 GraphQL 端点默认为 `/graphql`。
 
+**GraphQL Playground：**
+
+访问 `http://localhost:8080/graphql/playground` 打开交互式 GraphQL Playground UI，可以方便地测试查询和变更。
+
 **查询示例：**
 
 ```graphql
@@ -186,6 +190,33 @@ mutation {
     email
   }
 }
+```
+
+**Lua 自定义解析器：**
+
+GraphQL 查询执行可以委托给 Lua 脚本进行自定义数据解析。在 `lua_scripts_dir` 目录中创建 `graphql.lua` 文件：
+
+```lua
+-- examples/lua/graphql.lua
+local users = { ... }  -- 数据存储
+
+local query_resolvers = {
+    users = function(args, context)
+        return users
+    end,
+    user = function(args, context)
+        return users[args.id]
+    end
+}
+
+function handle_request(request)
+    local operation = request.body.operation
+    -- 执行查询并返回结果
+    return { data = result }
+end
+
+return { handle = handle_request }
+```
 ```
 
 ### 🔒 安全特性

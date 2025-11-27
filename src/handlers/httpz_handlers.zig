@@ -221,6 +221,8 @@ pub const HttpzServer = struct {
             const endpoint = self.context.config.graphql_endpoint;
             router.get(endpoint, graphqlGet, .{});
             router.post(endpoint, graphqlPost, .{});
+            // GraphQL Playground UI - add /playground suffix
+            router.get("/graphql/playground", graphqlPlayground, .{});
         }
 
         // Lua API endpoints (must come before wildcard)
@@ -642,21 +644,117 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
             return;
         };
 
-        // Use the response arena allocator for per-request allocations
-        const result = handler.executeQuery(res.arena, query) catch {
-            res.status = 500;
-            res.body =
-                \\{"errors":[{"message":"Query execution failed"}]}
-            ;
-            return;
-        };
+        // Extract variables field (optional)
+        const variables = if (parsed.value.object.get("variables")) |v| blk: {
+            if (v == .object) {
+                // Use the raw body to extract variables section
+                // For simplicity, pass an empty object if we can't serialize
+                break :blk "{}";
+            }
+            break :blk "{}";
+        } else "{}";
 
-        res.body = result;
+        // Phase 2: If Lua handler is available, delegate to Lua resolver
+        if (ctx.lua_handler) |*lua_handler| {
+            // Parse the GraphQL query first
+            var parsed_op = handler.parseQuery(res.arena, query) catch |err| {
+                res.body = std.fmt.allocPrint(res.arena,
+                    \\{{"errors":[{{"message":"Parse error: {s}"}}]}}
+                , .{@errorName(err)}) catch
+                    \\{"errors":[{"message":"Parse error"}]}
+                ;
+                return;
+            };
+            defer parsed_op.deinit(res.arena);
+
+            // Convert operation to JSON for Lua
+            const op_json = handler.operationToJson(res.arena, &parsed_op) catch {
+                res.status = 500;
+                res.body =
+                    \\{"errors":[{"message":"Failed to serialize operation"}]}
+                ;
+                return;
+            };
+
+            // Build request data with operation and variables
+            // We only pass operation JSON since raw_query may contain unescaped quotes
+            const request_data = std.fmt.allocPrint(res.arena,
+                \\{{"operation":{s},"variables":{s}}}
+            , .{ op_json, variables }) catch {
+                res.status = 500;
+                res.body =
+                    \\{"errors":[{"message":"Failed to build request"}]}
+                ;
+                return;
+            };
+
+            // Execute Lua graphql resolver script
+            const result = lua_handler.executeScript(res.arena, "graphql", "POST", "/graphql", request_data) catch |err| {
+                // If graphql.lua doesn't exist, fall back to default handler
+                if (err == error.InvalidScriptName or err == error.FileNotFound) {
+                    const default_result = handler.executeQuery(res.arena, query) catch {
+                        res.status = 500;
+                        res.body =
+                            \\{"errors":[{"message":"Query execution failed"}]}
+                        ;
+                        return;
+                    };
+                    res.body = default_result;
+                    return;
+                }
+                ctx.logger.err("GraphQL Lua resolver error: {}", .{err});
+                res.status = 500;
+                res.body =
+                    \\{"errors":[{"message":"Resolver execution failed"}]}
+                ;
+                return;
+            };
+
+            res.body = result;
+        } else {
+            // No Lua handler, use default execution
+            const result = handler.executeQuery(res.arena, query) catch {
+                res.status = 500;
+                res.body =
+                    \\{"errors":[{"message":"Query execution failed"}]}
+                ;
+                return;
+            };
+            res.body = result;
+        }
     } else {
         res.status = 503;
         res.body =
             \\{"errors":[{"message":"GraphQL handler not initialized"}]}
         ;
+    }
+}
+
+/// GraphQL Playground UI handler
+fn graphqlPlayground(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+    const start_time = std.time.microTimestamp();
+    defer {
+        const duration = std.time.microTimestamp() - start_time;
+        logAccess(ctx, req, res, duration);
+    }
+
+    // Apply middleware
+    if (!applyMiddleware(ctx, req, res)) {
+        return;
+    }
+
+    res.content_type = httpz.ContentType.HTML;
+
+    if (ctx.graphql_handler) |*handler| {
+        const html = handler.getPlaygroundHtml(res.arena, ctx.config.graphql_endpoint) catch {
+            res.status = 500;
+            res.body = "Failed to generate playground HTML";
+            return;
+        };
+        res.body = html;
+    } else {
+        res.status = 503;
+        res.body = "GraphQL handler not initialized";
     }
 }
 
