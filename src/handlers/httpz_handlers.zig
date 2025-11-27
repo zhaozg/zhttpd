@@ -9,6 +9,7 @@ const GraphQLHandler = @import("../graphql/graphql.zig").GraphQLHandler;
 const logger_mod = @import("../logger/logger.zig");
 const Logger = logger_mod.Logger;
 const LogLevel = logger_mod.LogLevel;
+const LogFormat = logger_mod.LogFormat;
 const FileCache = @import("../cache/file_cache.zig").FileCache;
 const middleware = @import("../middleware/middleware.zig");
 const RateLimiter = middleware.RateLimiter;
@@ -17,6 +18,11 @@ const AuthMiddleware = middleware.AuthMiddleware;
 const ws_mod = @import("websocket.zig");
 const WebSocketHandler = ws_mod.WebSocketHandler;
 const WebSocketContext = ws_mod.WebSocketContext;
+// Phase 5: Observability
+const observability = @import("../observability/observability.zig");
+const Metrics = observability.Metrics;
+const HealthCheck = observability.health.HealthCheck;
+const request_id = observability.request_id;
 
 // Constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
@@ -36,6 +42,9 @@ pub const AppContext = struct {
     rate_limiter: ?*RateLimiter = null,
     cors_middleware: ?CorsMiddleware = null,
     auth_middleware: ?AuthMiddleware = null,
+    // Phase 5: Observability
+    metrics: ?*Metrics = null,
+    start_time: i64 = 0,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -52,8 +61,11 @@ pub const AppContext = struct {
         else
             LogLevel.info;
 
+        // Parse log format
+        const log_format: LogFormat = if (std.mem.eql(u8, config.log_format, "json")) .json else .text;
+
         // Initialize main logger
-        var logger = try Logger.init(allocator, log_level, config.log_file);
+        var logger = try Logger.initWithFormat(allocator, log_level, config.log_file, log_format);
         errdefer logger.deinit();
 
         // Initialize access logger if configured
@@ -69,12 +81,22 @@ pub const AppContext = struct {
         file_cache.* = FileCache.init(allocator, config.reload, config.max_cache_file_size);
         errdefer file_cache.deinit();
 
+        // Phase 5: Initialize metrics if enabled
+        var metrics_ptr: ?*Metrics = null;
+        if (config.enable_metrics) {
+            metrics_ptr = try allocator.create(Metrics);
+            errdefer allocator.destroy(metrics_ptr.?);
+            metrics_ptr.?.* = Metrics.init();
+        }
+
         var ctx = AppContext{
             .allocator = allocator,
             .config = config,
             .file_cache = file_cache,
             .logger = logger,
             .access_logger = access_logger,
+            .metrics = metrics_ptr,
+            .start_time = std.time.timestamp(),
         };
 
         // Initialize Lua handler if enabled
@@ -152,6 +174,20 @@ pub const AppContext = struct {
             ctx.logger.info("Server-Sent Events (SSE) support enabled", .{});
         }
 
+        // Phase 5: Log observability status
+        if (config.enable_metrics) {
+            ctx.logger.info("Prometheus metrics endpoint: /metrics", .{});
+        }
+        if (config.enable_health_check) {
+            ctx.logger.info("Health check endpoint: /health", .{});
+        }
+        if (config.enable_request_id) {
+            ctx.logger.info("Request ID propagation enabled (X-Request-ID)", .{});
+        }
+        if (std.mem.eql(u8, config.log_format, "json")) {
+            ctx.logger.info("Structured JSON logging enabled", .{});
+        }
+
         return ctx;
     }
 
@@ -165,6 +201,9 @@ pub const AppContext = struct {
         if (self.rate_limiter) |rate_limiter| {
             rate_limiter.deinit();
             self.allocator.destroy(rate_limiter);
+        }
+        if (self.metrics) |metrics_ptr| {
+            self.allocator.destroy(metrics_ptr);
         }
         self.file_cache.deinit();
         self.allocator.destroy(self.file_cache);
@@ -221,6 +260,14 @@ pub const HttpzServer = struct {
 
     pub fn setupRoutes(self: *HttpzServer) !void {
         var router = try self.server.router(.{});
+
+        // Phase 5: Observability endpoints (must come before wildcard)
+        if (self.context.config.enable_health_check) {
+            router.get("/health", healthHandler, .{});
+        }
+        if (self.context.config.enable_metrics) {
+            router.get("/metrics", metricsHandler, .{});
+        }
 
         // Register more specific routes before wildcard routes
         // GraphQL endpoint (must come before wildcard)
@@ -412,8 +459,13 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
     return true;
 }
 
-/// Helper function to log HTTP access
+/// Helper function to log HTTP access and record metrics
 fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, duration_us: i64) void {
+    // Record metrics if enabled
+    if (ctx.metrics) |metrics| {
+        metrics.recordRequest(res.status, duration_us, res.body.len);
+    }
+
     if (ctx.access_logger) |*logger| {
         // Format address - req.address is a union, format it as string
         var addr_buf: [128]u8 = undefined; // Large enough for IPv6 with port
@@ -445,6 +497,15 @@ fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, durati
     }
 }
 
+/// Add request ID header to response if enabled
+fn addRequestIdHeader(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) void {
+    if (!ctx.config.enable_request_id) return;
+
+    var id_buf: [37]u8 = undefined;
+    const req_id = request_id.fromHeadersOrGenerate(req.headers, &id_buf);
+    res.headers.add(request_id.HEADER_NAME, req_id);
+}
+
 /// Sanitize log field by removing newlines and control characters
 /// Returns the sanitized string. If input is longer than buffer, it will be truncated.
 fn sanitizeLogField(buf: []u8, input: []const u8) []const u8 {
@@ -460,11 +521,52 @@ fn sanitizeLogField(buf: []u8, input: []const u8) []const u8 {
         }
         j += 1;
     }
-    // Log warning if truncation occurred (security consideration)
-    if (i < input.len) {
-        std.debug.print("Warning: Log field truncated from {} to {} bytes\n", .{ input.len, j });
-    }
+    // Note: Truncation is handled silently to avoid recursive logging issues
+    // The caller should be aware that long fields may be truncated
     return buf[0..j];
+}
+
+/// Health check endpoint handler
+/// Returns server health status in JSON format
+fn healthHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+    _ = req;
+
+    // Generate health check
+    var health = observability.health.check(
+        ctx.start_time,
+        ctx.config.enable_lua,
+        ctx.config.enable_graphql,
+    );
+
+    const status = health.httpStatusCode();
+    res.status = status;
+
+    // Return detailed JSON response
+    const json = try health.toJson(res.arena);
+    res.body = json;
+    res.content_type = httpz.ContentType.JSON;
+
+    // Add cache control headers - health checks shouldn't be cached
+    res.headers.add("Cache-Control", "no-cache, no-store, must-revalidate");
+}
+
+/// Prometheus metrics endpoint handler
+/// Returns metrics in Prometheus text exposition format
+fn metricsHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+    _ = req;
+
+    if (ctx.metrics) |metrics| {
+        const output = try metrics.toPrometheus(res.arena);
+        res.body = output;
+        // Prometheus text format content type
+        res.headers.add("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+    } else {
+        res.status = 503;
+        res.body = "Metrics not enabled";
+    }
+
+    // Add cache control headers - metrics should be fresh
+    res.headers.add("Cache-Control", "no-cache, no-store, must-revalidate");
 }
 
 /// Server-Sent Events (SSE) handler
@@ -549,6 +651,9 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         logAccess(ctx, req, res, duration);
     }
 
+    // Add request ID header
+    addRequestIdHeader(ctx, req, res);
+
     // Apply middleware
     if (!applyMiddleware(ctx, req, res)) {
         return;
@@ -632,6 +737,9 @@ fn graphqlGet(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         logAccess(ctx, req, res, duration);
     }
 
+    // Add request ID header
+    addRequestIdHeader(ctx, req, res);
+
     // Apply middleware
     if (!applyMiddleware(ctx, req, res)) {
         return;
@@ -649,6 +757,9 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         const duration = std.time.microTimestamp() - start_time;
         logAccess(ctx, req, res, duration);
     }
+
+    // Add request ID header
+    addRequestIdHeader(ctx, req, res);
 
     // Apply middleware
     if (!applyMiddleware(ctx, req, res)) {
@@ -789,6 +900,9 @@ fn graphqlPlayground(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response
         logAccess(ctx, req, res, duration);
     }
 
+    // Add request ID header
+    addRequestIdHeader(ctx, req, res);
+
     // Apply middleware
     if (!applyMiddleware(ctx, req, res)) {
         return;
@@ -815,6 +929,9 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
         const duration = std.time.microTimestamp() - start_time;
         logAccess(ctx, req, res, duration);
     }
+
+    // Add request ID header
+    addRequestIdHeader(ctx, req, res);
 
     // Apply middleware
     if (!applyMiddleware(ctx, req, res)) {

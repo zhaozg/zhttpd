@@ -57,6 +57,11 @@ pub const Config = struct {
     // Lua sandbox configuration (safe defaults)
     lua_sandbox_enabled: bool, // Enable Lua sandbox (default: true)
     lua_max_instructions: u32, // Max Lua instructions per execution (0 = unlimited, default: 100000)
+    // Phase 5: Observability configuration
+    enable_metrics: bool, // Enable Prometheus metrics at /metrics
+    enable_health_check: bool, // Enable health check at /health
+    enable_request_id: bool, // Enable X-Request-ID propagation
+    log_format: []const u8, // Log format: "text" or "json"
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -77,6 +82,7 @@ pub const Config = struct {
         self.allocator.free(self.auth_script);
         self.allocator.free(self.auth_protected_paths);
         self.allocator.free(self.auth_public_paths);
+        self.allocator.free(self.log_format);
     }
 };
 
@@ -157,6 +163,11 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         // Lua sandbox configuration (safe defaults)
         .lua_sandbox_enabled = if (root.get("lua_sandbox_enabled")) |lse| lse.bool else true,
         .lua_max_instructions = if (root.get("lua_max_instructions")) |lmi| @intCast(lmi.integer) else 100_000,
+        // Phase 5: Observability configuration
+        .enable_metrics = if (root.get("enable_metrics")) |em| em.bool else true, // Default enabled
+        .enable_health_check = if (root.get("enable_health_check")) |ehc| ehc.bool else true, // Default enabled
+        .enable_request_id = if (root.get("enable_request_id")) |eri| eri.bool else true, // Default enabled
+        .log_format = if (root.get("log_format")) |lf_val| try allocator.dupe(u8, lf_val.string) else try allocator.dupe(u8, "text"),
         .allocator = allocator,
     };
 }
@@ -199,6 +210,11 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         // Lua sandbox configuration (safe defaults)
         .lua_sandbox_enabled = true,
         .lua_max_instructions = 100_000,
+        // Phase 5: Observability configuration (enabled by default)
+        .enable_metrics = true,
+        .enable_health_check = true,
+        .enable_request_id = true,
+        .log_format = try allocator.dupe(u8, "text"),
         .allocator = allocator,
     };
 }
@@ -331,6 +347,17 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         } else if (std.mem.eql(u8, key, "lua_max_instructions")) {
             config.lua_max_instructions = try std.fmt.parseInt(u32, value, 10);
         }
+        // Phase 5: Observability configuration
+        else if (std.mem.eql(u8, key, "enable_metrics")) {
+            config.enable_metrics = parseBool(value);
+        } else if (std.mem.eql(u8, key, "enable_health_check")) {
+            config.enable_health_check = parseBool(value);
+        } else if (std.mem.eql(u8, key, "enable_request_id")) {
+            config.enable_request_id = parseBool(value);
+        } else if (std.mem.eql(u8, key, "log_format")) {
+            allocator.free(config.log_format);
+            config.log_format = try allocator.dupe(u8, value);
+        }
     }
 
     return config;
@@ -346,6 +373,11 @@ test "config loading with defaults" {
     try testing.expectEqualStrings("0.0.0.0", cfg.host);
     try testing.expect(cfg.port == 8080);
     try testing.expect(cfg.security_headers == true);
+    // Phase 5: Verify observability defaults
+    try testing.expect(cfg.enable_metrics == true);
+    try testing.expect(cfg.enable_health_check == true);
+    try testing.expect(cfg.enable_request_id == true);
+    try testing.expectEqualStrings("text", cfg.log_format);
 }
 
 test "yaml config parsing" {
