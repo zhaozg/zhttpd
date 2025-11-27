@@ -169,6 +169,282 @@ pub const RateLimiter = struct {
     }
 };
 
+// ============================================================================
+// IP Blacklist / Whitelist Manager
+// ============================================================================
+
+/// IP access control result
+pub const IpAccessResult = enum {
+    /// IP is allowed (not in blacklist, or in whitelist)
+    allowed,
+    /// IP is blocked (in blacklist)
+    blocked,
+    /// IP is whitelisted (bypasses rate limiting)
+    whitelisted,
+};
+
+/// IP-based access control with blacklist and whitelist support
+/// Supports exact IP matching and CIDR notation for subnets
+pub const IpAccessControl = struct {
+    /// Configuration for IP access control
+    pub const Config = struct {
+        /// Enable IP access control
+        enabled: bool = false,
+        /// Comma-separated list of blacklisted IPs or CIDR ranges
+        blacklist: []const u8 = "",
+        /// Comma-separated list of whitelisted IPs or CIDR ranges
+        whitelist: []const u8 = "",
+        /// Block requests from private/internal IPs when behind proxy
+        /// (trust X-Forwarded-For or X-Real-IP headers)
+        trust_proxy_headers: bool = false,
+        /// Log blocked requests
+        log_blocked: bool = true,
+    };
+
+    config: Config,
+    /// Parsed blacklist entries
+    blacklist_entries: std.ArrayList(IpEntry),
+    /// Parsed whitelist entries
+    whitelist_entries: std.ArrayList(IpEntry),
+    allocator: std.mem.Allocator,
+    mutex: std.Thread.Mutex,
+
+    /// IP entry (single IP or CIDR range)
+    pub const IpEntry = struct {
+        /// IP address or network address
+        ip: [4]u8,
+        /// Subnet mask (255.255.255.255 for single IP)
+        mask: [4]u8,
+        /// Original string representation
+        original: []const u8,
+
+        /// Check if an IP matches this entry
+        pub fn matches(self: *const IpEntry, ip_bytes: [4]u8) bool {
+            for (0..4) |i| {
+                if ((ip_bytes[i] & self.mask[i]) != (self.ip[i] & self.mask[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    };
+
+    /// Initialize IP access control
+    pub fn init(allocator: std.mem.Allocator, config: Config) !IpAccessControl {
+        var control = IpAccessControl{
+            .config = config,
+            .blacklist_entries = .empty,
+            .whitelist_entries = .empty,
+            .allocator = allocator,
+            .mutex = std.Thread.Mutex{},
+        };
+
+        // Parse blacklist
+        if (config.blacklist.len > 0) {
+            try control.parseIpList(config.blacklist, &control.blacklist_entries);
+        }
+
+        // Parse whitelist
+        if (config.whitelist.len > 0) {
+            try control.parseIpList(config.whitelist, &control.whitelist_entries);
+        }
+
+        return control;
+    }
+
+    /// Clean up resources
+    pub fn deinit(self: *IpAccessControl) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        for (self.blacklist_entries.items) |entry| {
+            self.allocator.free(entry.original);
+        }
+        self.blacklist_entries.deinit(self.allocator);
+
+        for (self.whitelist_entries.items) |entry| {
+            self.allocator.free(entry.original);
+        }
+        self.whitelist_entries.deinit(self.allocator);
+    }
+
+    /// Parse a comma-separated list of IPs/CIDRs
+    fn parseIpList(self: *IpAccessControl, list: []const u8, entries: *std.ArrayList(IpEntry)) !void {
+        var it = std.mem.splitSequence(u8, list, ",");
+        while (it.next()) |item| {
+            const trimmed = std.mem.trim(u8, item, " \t");
+            if (trimmed.len == 0) continue;
+
+            if (parseIpEntry(trimmed)) |entry| {
+                var entry_copy = entry;
+                entry_copy.original = try self.allocator.dupe(u8, trimmed);
+                try entries.append(self.allocator, entry_copy);
+            }
+        }
+    }
+
+    /// Check if an IP is allowed
+    pub fn checkAccess(self: *IpAccessControl, ip_str: []const u8) IpAccessResult {
+        if (!self.config.enabled) {
+            return .allowed;
+        }
+
+        // Parse the IP address
+        const ip_bytes = parseIpAddress(ip_str) orelse return .allowed;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Check whitelist first (whitelisted IPs bypass all checks)
+        for (self.whitelist_entries.items) |*entry| {
+            if (entry.matches(ip_bytes)) {
+                return .whitelisted;
+            }
+        }
+
+        // Check blacklist
+        for (self.blacklist_entries.items) |*entry| {
+            if (entry.matches(ip_bytes)) {
+                return .blocked;
+            }
+        }
+
+        return .allowed;
+    }
+
+    /// Add an IP to the blacklist at runtime
+    pub fn addToBlacklist(self: *IpAccessControl, ip_str: []const u8) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (parseIpEntry(ip_str)) |entry| {
+            var entry_copy = entry;
+            entry_copy.original = try self.allocator.dupe(u8, ip_str);
+            try self.blacklist_entries.append(self.allocator, entry_copy);
+        }
+    }
+
+    /// Remove an IP from the blacklist
+    pub fn removeFromBlacklist(self: *IpAccessControl, ip_str: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var i: usize = 0;
+        while (i < self.blacklist_entries.items.len) {
+            if (std.mem.eql(u8, self.blacklist_entries.items[i].original, ip_str)) {
+                self.allocator.free(self.blacklist_entries.items[i].original);
+                _ = self.blacklist_entries.orderedRemove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Add an IP to the whitelist at runtime
+    pub fn addToWhitelist(self: *IpAccessControl, ip_str: []const u8) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (parseIpEntry(ip_str)) |entry| {
+            var entry_copy = entry;
+            entry_copy.original = try self.allocator.dupe(u8, ip_str);
+            try self.whitelist_entries.append(self.allocator, entry_copy);
+        }
+    }
+
+    /// Get the number of blacklisted entries
+    pub fn getBlacklistCount(self: *IpAccessControl) usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.blacklist_entries.items.len;
+    }
+
+    /// Get the number of whitelisted entries
+    pub fn getWhitelistCount(self: *IpAccessControl) usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.whitelist_entries.items.len;
+    }
+};
+
+/// Parse an IP address string to bytes (IPv4 only)
+fn parseIpAddress(ip_str: []const u8) ?[4]u8 {
+    // Handle IP:port format (strip port)
+    const ip_part = if (std.mem.indexOf(u8, ip_str, ":")) |colon_pos|
+        ip_str[0..colon_pos]
+    else
+        ip_str;
+
+    var result: [4]u8 = undefined;
+    var octet_index: usize = 0;
+    var current_value: u16 = 0;
+    var has_digit = false;
+
+    for (ip_part) |c| {
+        if (c == '.') {
+            if (!has_digit or octet_index >= 3) return null;
+            if (current_value > 255) return null;
+            result[octet_index] = @intCast(current_value);
+            octet_index += 1;
+            current_value = 0;
+            has_digit = false;
+        } else if (c >= '0' and c <= '9') {
+            current_value = current_value * 10 + (c - '0');
+            has_digit = true;
+        } else {
+            return null; // Invalid character
+        }
+    }
+
+    // Final octet
+    if (!has_digit or octet_index != 3) return null;
+    if (current_value > 255) return null;
+    result[octet_index] = @intCast(current_value);
+
+    return result;
+}
+
+/// Parse an IP entry (IP or CIDR notation)
+fn parseIpEntry(entry_str: []const u8) ?IpAccessControl.IpEntry {
+    // Check for CIDR notation
+    if (std.mem.indexOf(u8, entry_str, "/")) |slash_pos| {
+        const ip_part = entry_str[0..slash_pos];
+        const prefix_part = entry_str[slash_pos + 1 ..];
+
+        const ip_bytes = parseIpAddress(ip_part) orelse return null;
+        const prefix_len = std.fmt.parseInt(u8, prefix_part, 10) catch return null;
+
+        if (prefix_len > 32) return null;
+
+        // Calculate subnet mask from prefix length
+        var mask: [4]u8 = [_]u8{ 0, 0, 0, 0 };
+        var bits_remaining: u8 = prefix_len;
+        for (0..4) |i| {
+            if (bits_remaining >= 8) {
+                mask[i] = 255;
+                bits_remaining -= 8;
+            } else if (bits_remaining > 0) {
+                mask[i] = @as(u8, 255) << @intCast(8 - bits_remaining);
+                bits_remaining = 0;
+            }
+        }
+
+        return IpAccessControl.IpEntry{
+            .ip = ip_bytes,
+            .mask = mask,
+            .original = "",
+        };
+    } else {
+        // Single IP address
+        const ip_bytes = parseIpAddress(entry_str) orelse return null;
+        return IpAccessControl.IpEntry{
+            .ip = ip_bytes,
+            .mask = [_]u8{ 255, 255, 255, 255 },
+            .original = "",
+        };
+    }
+}
+
 // Tests
 test "rate limiter basic" {
     const testing = std.testing;
@@ -212,4 +488,121 @@ test "rate limiter per ip" {
 
     // Different IP should still have tokens
     try testing.expect(limiter.checkRequest("192.168.1.2") == true);
+}
+
+test "parse ip address" {
+    const testing = std.testing;
+
+    // Valid IPs
+    const ip1 = parseIpAddress("192.168.1.1");
+    try testing.expect(ip1 != null);
+    try testing.expectEqual([4]u8{ 192, 168, 1, 1 }, ip1.?);
+
+    const ip2 = parseIpAddress("10.0.0.1");
+    try testing.expect(ip2 != null);
+    try testing.expectEqual([4]u8{ 10, 0, 0, 1 }, ip2.?);
+
+    // IP with port
+    const ip3 = parseIpAddress("192.168.1.1:8080");
+    try testing.expect(ip3 != null);
+    try testing.expectEqual([4]u8{ 192, 168, 1, 1 }, ip3.?);
+
+    // Invalid IPs
+    try testing.expect(parseIpAddress("invalid") == null);
+    try testing.expect(parseIpAddress("256.1.1.1") == null);
+    try testing.expect(parseIpAddress("1.2.3") == null);
+}
+
+test "parse ip entry cidr" {
+    const testing = std.testing;
+
+    // Single IP
+    const entry1 = parseIpEntry("192.168.1.1");
+    try testing.expect(entry1 != null);
+    try testing.expectEqual([4]u8{ 192, 168, 1, 1 }, entry1.?.ip);
+    try testing.expectEqual([4]u8{ 255, 255, 255, 255 }, entry1.?.mask);
+
+    // /24 subnet
+    const entry2 = parseIpEntry("192.168.1.0/24");
+    try testing.expect(entry2 != null);
+    try testing.expectEqual([4]u8{ 192, 168, 1, 0 }, entry2.?.ip);
+    try testing.expectEqual([4]u8{ 255, 255, 255, 0 }, entry2.?.mask);
+
+    // /16 subnet
+    const entry3 = parseIpEntry("10.0.0.0/16");
+    try testing.expect(entry3 != null);
+    try testing.expectEqual([4]u8{ 10, 0, 0, 0 }, entry3.?.ip);
+    try testing.expectEqual([4]u8{ 255, 255, 0, 0 }, entry3.?.mask);
+
+    // /8 subnet
+    const entry4 = parseIpEntry("10.0.0.0/8");
+    try testing.expect(entry4 != null);
+    try testing.expectEqual([4]u8{ 255, 0, 0, 0 }, entry4.?.mask);
+}
+
+test "ip entry matching" {
+    const testing = std.testing;
+
+    // Single IP matching
+    const entry1 = parseIpEntry("192.168.1.100").?;
+    try testing.expect(entry1.matches([4]u8{ 192, 168, 1, 100 }) == true);
+    try testing.expect(entry1.matches([4]u8{ 192, 168, 1, 101 }) == false);
+
+    // CIDR matching
+    const entry2 = parseIpEntry("192.168.1.0/24").?;
+    try testing.expect(entry2.matches([4]u8{ 192, 168, 1, 0 }) == true);
+    try testing.expect(entry2.matches([4]u8{ 192, 168, 1, 255 }) == true);
+    try testing.expect(entry2.matches([4]u8{ 192, 168, 2, 1 }) == false);
+}
+
+test "ip access control" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var control = try IpAccessControl.init(allocator, .{
+        .enabled = true,
+        .blacklist = "192.168.1.100, 10.0.0.0/8",
+        .whitelist = "192.168.1.1",
+    });
+    defer control.deinit();
+
+    // Whitelisted IP
+    try testing.expect(control.checkAccess("192.168.1.1") == .whitelisted);
+
+    // Blacklisted exact IP
+    try testing.expect(control.checkAccess("192.168.1.100") == .blocked);
+
+    // Blacklisted by CIDR
+    try testing.expect(control.checkAccess("10.5.3.2") == .blocked);
+
+    // Not in any list
+    try testing.expect(control.checkAccess("8.8.8.8") == .allowed);
+}
+
+test "ip access control dynamic" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var control = try IpAccessControl.init(allocator, .{
+        .enabled = true,
+        .blacklist = "",
+        .whitelist = "",
+    });
+    defer control.deinit();
+
+    // Initially allowed
+    try testing.expect(control.checkAccess("192.168.1.50") == .allowed);
+
+    // Add to blacklist
+    try control.addToBlacklist("192.168.1.50");
+    try testing.expect(control.checkAccess("192.168.1.50") == .blocked);
+    try testing.expect(control.getBlacklistCount() == 1);
+
+    // Add to whitelist (whitelist takes precedence)
+    try control.addToWhitelist("192.168.1.50");
+    try testing.expect(control.checkAccess("192.168.1.50") == .whitelisted);
+
+    // Remove from blacklist
+    control.removeFromBlacklist("192.168.1.50");
+    try testing.expect(control.getBlacklistCount() == 0);
 }

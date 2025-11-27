@@ -21,5 +21,8 @@
   "enable_metrics": true,
   "enable_health_check": true,
   "enable_request_id": true,
-  "log_format": "text"
+  "log_format": "text",
+  "enable_ip_blacklist": false,
+  "ip_blacklist": "",
+  "ip_whitelist": ""
 }

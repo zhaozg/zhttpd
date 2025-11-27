@@ -6,6 +6,8 @@ pub const cors = @import("cors.zig");
 pub const auth = @import("auth.zig");
 
 pub const RateLimiter = rate_limiter.RateLimiter;
+pub const IpAccessControl = rate_limiter.IpAccessControl;
+pub const IpAccessResult = rate_limiter.IpAccessResult;
 pub const CorsConfig = cors.CorsConfig;
 pub const CorsMiddleware = cors.CorsMiddleware;
 pub const AuthConfig = auth.AuthConfig;
