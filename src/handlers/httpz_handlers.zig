@@ -2,7 +2,9 @@ const std = @import("std");
 const httpz = @import("httpz");
 const Config = @import("../config/config.zig").Config;
 const security = @import("../security/security.zig");
-const LuaHandler = @import("../lua/lua.zig").LuaHandler;
+const lua_mod = @import("../lua/lua.zig");
+const LuaHandler = lua_mod.LuaHandler;
+const KeyValue = lua_mod.KeyValue;
 const GraphQLHandler = @import("../graphql/graphql.zig").GraphQLHandler;
 const logger_mod = @import("../logger/logger.zig");
 const Logger = logger_mod.Logger;
@@ -15,6 +17,8 @@ const AuthMiddleware = middleware.AuthMiddleware;
 
 // Constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
+const MAX_HEADERS_FOR_LUA = 32; // Maximum number of headers to pass to Lua
+const MAX_QUERY_PARAMS_FOR_LUA = 32; // Maximum number of query params to pass to Lua
 
 // Application context that holds our handlers
 pub const AppContext = struct {
@@ -680,9 +684,43 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
         // Get request body
         const body = req.body() orelse "";
 
+        // Extract headers for Lua (luvit/Node.js style)
+        var headers_buf: [MAX_HEADERS_FOR_LUA]KeyValue = undefined;
+        var headers_count: usize = 0;
+        var header_iter = req.headers.iterator();
+        while (header_iter.next()) |entry| {
+            if (headers_count >= MAX_HEADERS_FOR_LUA) break;
+            headers_buf[headers_count] = KeyValue{
+                .key = entry.key,
+                .value = entry.value,
+            };
+            headers_count += 1;
+        }
+        const headers = headers_buf[0..headers_count];
+
+        // Extract query parameters for Lua (luvit/Node.js style)
+        var query_buf: [MAX_QUERY_PARAMS_FOR_LUA]KeyValue = undefined;
+        var query_count: usize = 0;
+
+        // Parse query string from URL if present
+        if (req.url.query.len > 0) {
+            var query_iter = std.mem.splitScalar(u8, req.url.query, '&');
+            while (query_iter.next()) |param| {
+                if (query_count >= MAX_QUERY_PARAMS_FOR_LUA) break;
+                if (std.mem.indexOfScalar(u8, param, '=')) |eq_pos| {
+                    query_buf[query_count] = KeyValue{
+                        .key = param[0..eq_pos],
+                        .value = if (eq_pos + 1 < param.len) param[eq_pos + 1 ..] else "",
+                    };
+                    query_count += 1;
+                }
+            }
+        }
+        const query_params = query_buf[0..query_count];
+
         // Use the response arena allocator for per-request allocations
         // This ensures all allocations are automatically cleaned up after the response
-        const result = handler.executeScript(res.arena, script_name, method, path, body) catch |err| {
+        const result = handler.executeScriptEx(res.arena, script_name, method, path, body, headers, query_params) catch |err| {
             ctx.logger.err("Lua execution error: {}", .{err});
             res.status = 500;
             res.body =

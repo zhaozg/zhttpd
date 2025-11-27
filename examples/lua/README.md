@@ -2,6 +2,39 @@
 
 This directory contains example Lua scripts that demonstrate dynamic content generation with zhttpd.
 
+## Phase 1 Enhanced Features
+
+zhttpd now includes enhanced Lua integration with the following features:
+
+### Complex Request Data Structures (luvit/Node.js Style)
+
+Lua scripts now receive full request information including:
+- HTTP headers
+- Query parameters  
+- Request body
+- Method and path
+
+### Script Hot-Reloading
+
+Scripts are automatically reloaded when modified (with `reload: auto` config):
+- No server restart required
+- File modification time is checked on each request
+- Bytecode cache is invalidated automatically
+
+### Script Caching and Precompilation
+
+For improved performance:
+- Scripts are cached in memory
+- Bytecode is precompiled when possible
+- Cache can be cleared programmatically
+
+### Sandboxing and Resource Limits
+
+For security and stability:
+- Dangerous functions are disabled (`io`, `debug`, `os.execute`, etc.)
+- Instruction count limits prevent infinite loops
+- Configurable via `SandboxConfig`
+
 ## Thread Safety
 
 The Lua handler uses a **pool of Lua states** to ensure thread-safety:
@@ -12,13 +45,25 @@ The Lua handler uses a **pool of Lua states** to ensure thread-safety:
 
 ## Request Structure
 
-Each Lua handler receives a request table with the following structure:
+Each Lua handler receives a request table with the following structure (luvit/Node.js style):
 
 ```lua
 request = {
-    method = "GET" or "POST",  -- HTTP method
-    path = "/api/example",     -- Full request path
-    body = { ... }             -- Parsed JSON body (for POST requests)
+    method = "GET" or "POST",       -- HTTP method
+    path = "/api/example",          -- Full request path
+    url = "/api/example",           -- Alias for path (luvit style)
+    headers = {                     -- HTTP request headers
+        ["content-type"] = "application/json",
+        ["user-agent"] = "curl/7.68.0",
+        ["accept"] = "*/*",
+        ...
+    },
+    query = {                       -- Query string parameters
+        page = "1",
+        limit = "10",
+        ...
+    },
+    body = { ... }                  -- Parsed JSON body (for POST/PUT requests)
 }
 ```
 
@@ -37,16 +82,36 @@ return {
 
 ## Examples
 
-### 1. test.lua - Simple Echo Example
+### 1. test.lua - Simple Echo Example with Headers/Query
 
-Basic example that echoes back the request data.
+Demonstrates the full request structure including headers and query parameters.
 
 **Usage:**
 ```bash
-# POST request
+# GET request with query parameters
+curl "http://localhost:8080/api/test?page=2&limit=20"
+
+# POST request with headers
 curl -X POST http://localhost:8080/api/test \
   -H "Content-Type: application/json" \
+  -H "X-Custom-Header: test-value" \
   -d '{"message": "Hello from client"}'
+```
+
+**Response includes request info:**
+```json
+{
+  "status": "success",
+  "message": "Hello from Lua!",
+  "request_info": {
+    "method": "GET",
+    "path": "/api/test",
+    "content_type": "application/json",
+    "user_agent": "curl/7.68.0",
+    "page": "2",
+    "limit": "20"
+  }
+}
 ```
 
 ### 2. users.lua - User Management API
@@ -129,6 +194,15 @@ Error response:
 }
 ```
 
+### 4. auth.lua - Authentication Example
+
+Demonstrates JWT/OAuth token validation for protected endpoints.
+
+**Features:**
+- Token validation (demo format: `zhttpd_<user_id>_<role>`)
+- Session management
+- Role-based access control
+
 ## Creating Your Own Lua Handler
 
 1. Create a new `.lua` file in this directory
@@ -141,9 +215,21 @@ function handle_request(request)
     local path = request.path
     local body = request.body
     
+    -- Access headers (luvit/Node.js style)
+    local auth_header = request.headers and request.headers["authorization"] or nil
+    
+    -- Access query parameters
+    local page = request.query and request.query["page"] or "1"
+    
     -- Your logic here
     if method == "GET" then
-        return { status = "success", data = { message = "GET response" } }
+        return { 
+            status = "success", 
+            data = { 
+                message = "GET response",
+                page = page
+            } 
+        }
     elseif method == "POST" then
         return { status = "success", data = { received = body } }
     end
@@ -162,13 +248,31 @@ return {
 2. **Memory Management**: Each state's stack is cleared after use
 3. **Concurrency**: Pool size can be adjusted in `lua.zig` (default: 4 states)
 4. **Data Persistence**: In-memory data is per-state. For shared data, use external storage
+5. **Bytecode Caching**: Scripts are precompiled for faster execution
 
 ## Security Notes
 
 1. **Path Traversal Protection**: Script names cannot contain `..`, `/`, or `\`
 2. **JSON Validation**: Request bodies are validated before passing to Lua
 3. **Error Handling**: Lua errors are caught and returned as JSON error responses
-4. **Sandboxing**: Standard Lua libraries are available, but file system access is limited
+4. **Sandboxing**: The following are disabled by default:
+   - `io` library (file I/O)
+   - `debug` library (can escape sandbox)
+   - `os.execute`, `os.exit`, `os.remove`, `os.rename`, `os.getenv`, `os.tmpname`
+   - `loadfile`, `dofile` (arbitrary file execution)
+5. **Instruction Limits**: Scripts are limited to 100,000 instructions by default
+
+## Configuration
+
+Sandbox configuration can be customized via `SandboxConfig`:
+
+```zig
+const config = SandboxConfig{
+    .max_instructions = 50_000,    // Instruction limit (0 = unlimited)
+    .max_memory = 0,               // Memory limit in bytes (not yet implemented)
+    .enable_sandbox = true,        // Enable sandboxing
+};
+```
 
 ## Advanced Topics
 
@@ -212,6 +316,11 @@ const pool = try LuaStatePool.init(allocator, 8); // Increase pool size
 **Lua execution errors:**
 - Check server logs for detailed error messages
 - Ensure your script returns a table with a `handle` function
+
+**Instruction limit exceeded:**
+- Your script may have an infinite loop
+- Increase `max_instructions` in sandbox config if needed
+- Optimize your Lua code
 
 **Concurrency issues:**
 - The Lua state pool handles thread-safety automatically

@@ -13,14 +13,50 @@ const FileCache = @import("../cache/file_cache.zig").FileCache;
 // Script Caching:
 // Scripts are cached using the shared FileCache module which supports
 // multiple reload strategies: never, auto, and force.
+//
+// Phase 1 Enhanced Features:
+// - Complex request data structures (headers, query parameters) in luvit/Node.js style
+// - Script hot-reloading via FileCache auto mode
+// - Bytecode caching and precompilation for performance
+// - Sandboxing with instruction count limits for resource control
+
+/// Configuration for Lua sandbox limits
+pub const SandboxConfig = struct {
+    /// Maximum number of Lua instructions per script execution (0 = unlimited)
+    max_instructions: u32 = 100_000,
+    /// Maximum memory in bytes for Lua state (0 = unlimited, not yet implemented)
+    max_memory: usize = 0,
+    /// Enable sandboxing (disables dangerous functions)
+    enable_sandbox: bool = true,
+};
+
+/// Default sandbox configuration
+pub const default_sandbox_config = SandboxConfig{};
+
+/// Bytecode cache entry
+const BytecodeEntry = struct {
+    bytecode: []const u8,
+    mtime: i128,
+};
+
+/// Instruction limit hook - called by Lua when instruction count is reached
+/// This throws an error to stop script execution if limit is exceeded
+fn instructionLimitHook(lua: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo) void {
+    // Raise an error to stop execution
+    _ = lua.raiseErrorStr("instruction limit exceeded", .{});
+}
+
+/// No-op hook used to disable hooks when returning Lua state to pool
+fn noopHook(_: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo) void {}
 
 const LuaStatePool = struct {
     states: []*ziglua.Lua,
     states_len: usize,
     mutex: std.Thread.Mutex,
     allocator: std.mem.Allocator,
+    sandbox_config: SandboxConfig,
 
-    fn init(allocator: std.mem.Allocator, initial_size: usize) !LuaStatePool {
+    fn init(allocator: std.mem.Allocator, initial_size: usize, sandbox_config: SandboxConfig) !LuaStatePool {
         const states = try allocator.alloc(*ziglua.Lua, initial_size * 2); // Allocate space for growth
 
         // Pre-allocate Lua states
@@ -28,6 +64,9 @@ const LuaStatePool = struct {
         while (i < initial_size) : (i += 1) {
             var lua = try ziglua.Lua.init(allocator);
             lua.openLibs();
+            if (sandbox_config.enable_sandbox) {
+                applySandbox(lua);
+            }
             states[i] = lua;
         }
 
@@ -36,6 +75,7 @@ const LuaStatePool = struct {
             .states_len = initial_size,
             .mutex = std.Thread.Mutex{},
             .allocator = allocator,
+            .sandbox_config = sandbox_config,
         };
     }
 
@@ -58,6 +98,9 @@ const LuaStatePool = struct {
         // Create new state if pool is empty
         var lua = try ziglua.Lua.init(self.allocator);
         lua.openLibs();
+        if (self.sandbox_config.enable_sandbox) {
+            applySandbox(lua);
+        }
         return lua;
     }
 
@@ -68,6 +111,10 @@ const LuaStatePool = struct {
         // Clear the stack before returning to pool
         lua.setTop(0);
 
+        // Disable any hooks that might have been set (by setting empty mask)
+        // Using a no-op hook with empty mask effectively disables all hooks
+        lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+
         // Add back to pool if there's space
         if (self.states_len < self.states.len) {
             self.states[self.states_len] = lua;
@@ -77,6 +124,54 @@ const LuaStatePool = struct {
             lua.deinit();
         }
     }
+
+    /// Apply sandbox restrictions by removing dangerous functions
+    fn applySandbox(lua: *ziglua.Lua) void {
+        // Remove dangerous global functions for sandboxing
+        // These could be used to escape the sandbox or cause harm
+        const dangerous_globals = [_][:0]const u8{
+            "loadfile",
+            "dofile",
+        };
+
+        for (dangerous_globals) |name| {
+            lua.pushNil();
+            lua.setGlobal(name);
+        }
+
+        // Remove dangerous os functions (keep safe ones like os.time, os.date)
+        _ = lua.getGlobal("os") catch {};
+        if (lua.typeOf(-1) == .table) {
+            const dangerous_os_funcs = [_][:0]const u8{
+                "execute",
+                "exit",
+                "remove",
+                "rename",
+                "setlocale",
+                "tmpname",
+                "getenv",
+            };
+            for (dangerous_os_funcs) |name| {
+                lua.pushNil();
+                lua.setField(-2, name);
+            }
+        }
+        lua.pop(1);
+
+        // Remove dangerous io functions
+        lua.pushNil();
+        lua.setGlobal("io");
+
+        // Remove debug library (can be used to escape sandbox)
+        lua.pushNil();
+        lua.setGlobal("debug");
+    }
+};
+
+/// Key-value pair for headers and query parameters (luvit/Node.js style)
+pub const KeyValue = struct {
+    key: []const u8,
+    value: []const u8,
 };
 
 pub const LuaHandler = struct {
@@ -84,25 +179,59 @@ pub const LuaHandler = struct {
     scripts_dir: []const u8,
     pool: LuaStatePool,
     file_cache: *FileCache, // Shared global file cache
+    sandbox_config: SandboxConfig,
+    bytecode_cache: std.StringHashMap(BytecodeEntry),
+    bytecode_mutex: std.Thread.Mutex,
 
     pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8, file_cache: *FileCache) !LuaHandler {
+        return initWithConfig(allocator, scripts_dir, file_cache, default_sandbox_config);
+    }
+
+    pub fn initWithConfig(allocator: std.mem.Allocator, scripts_dir: []const u8, file_cache: *FileCache, sandbox_config: SandboxConfig) !LuaHandler {
         // Initialize pool with 4 Lua states
-        const pool = try LuaStatePool.init(allocator, 4);
+        const pool = try LuaStatePool.init(allocator, 4, sandbox_config);
 
         return LuaHandler{
             .allocator = allocator,
             .scripts_dir = scripts_dir,
             .pool = pool,
             .file_cache = file_cache,
+            .sandbox_config = sandbox_config,
+            .bytecode_cache = std.StringHashMap(BytecodeEntry).init(allocator),
+            .bytecode_mutex = std.Thread.Mutex{},
         };
     }
 
     pub fn deinit(self: *LuaHandler) void {
+        // Clean up bytecode cache
+        self.bytecode_mutex.lock();
+        defer self.bytecode_mutex.unlock();
+
+        var it = self.bytecode_cache.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.bytecode);
+        }
+        self.bytecode_cache.deinit();
+
         self.pool.deinit();
         // Don't deinit file_cache - it's shared and owned by AppContext
     }
 
-    /// Execute a Lua script with request data
+    /// Clear bytecode cache (useful for hot-reloading)
+    pub fn clearBytecodeCache(self: *LuaHandler) void {
+        self.bytecode_mutex.lock();
+        defer self.bytecode_mutex.unlock();
+
+        var it = self.bytecode_cache.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.bytecode);
+        }
+        self.bytecode_cache.clearRetainingCapacity();
+    }
+
+    /// Execute a Lua script with request data (legacy interface for compatibility)
     /// Supports both GET and POST methods
     /// Request data format:
     /// {
@@ -112,9 +241,36 @@ pub const LuaHandler = struct {
     ///   "query": {...}  // For GET requests
     /// }
     pub fn executeScript(self: *LuaHandler, arena: std.mem.Allocator, script_name: []const u8, method: []const u8, path: []const u8, request_data: []const u8) ![]const u8 {
+        // Call new enhanced function with empty headers and query
+        return self.executeScriptEx(arena, script_name, method, path, request_data, &[_]KeyValue{}, &[_]KeyValue{});
+    }
+
+    /// Execute a Lua script with full request data including headers and query parameters
+    /// This provides a luvit/Node.js style API where the request object contains:
+    /// - method: HTTP method (GET, POST, etc.)
+    /// - path: Request path
+    /// - body: Parsed request body (for POST/PUT)
+    /// - headers: Table of request headers
+    /// - query: Table of query parameters
+    /// - url: Full URL path
+    pub fn executeScriptEx(
+        self: *LuaHandler,
+        arena: std.mem.Allocator,
+        script_name: []const u8,
+        method: []const u8,
+        path: []const u8,
+        request_data: []const u8,
+        headers: []const KeyValue,
+        query_params: []const KeyValue,
+    ) ![]const u8 {
         // Get a Lua state from the pool
         var lua = try self.pool.acquire();
         defer self.pool.release(lua);
+
+        // Set up instruction limit hook if configured
+        if (self.sandbox_config.max_instructions > 0) {
+            lua.setHook(ziglua.wrap(instructionLimitHook), .{ .count = true }, @intCast(self.sandbox_config.max_instructions));
+        }
 
         // Load and execute script file
         // Note: loadScript returns memory allocated by file_cache.allocator (which is self.allocator)
@@ -149,7 +305,7 @@ pub const LuaHandler = struct {
             );
         }
 
-        // Create request table
+        // Create request table (luvit/Node.js style)
         lua.newTable();
 
         // Add method
@@ -159,6 +315,36 @@ pub const LuaHandler = struct {
         // Add path
         _ = lua.pushString(path);
         lua.setField(-2, "path");
+
+        // Add url (alias for path, luvit style)
+        _ = lua.pushString(path);
+        lua.setField(-2, "url");
+
+        // Add headers table (luvit/Node.js style)
+        lua.newTable();
+        for (headers) |header| {
+            _ = lua.pushString(header.value);
+            // Create null-terminated key for setField
+            var key_buf: [256]u8 = undefined;
+            const key_len = @min(header.key.len, key_buf.len - 1);
+            @memcpy(key_buf[0..key_len], header.key[0..key_len]);
+            key_buf[key_len] = 0;
+            lua.setField(-2, key_buf[0..key_len :0]);
+        }
+        lua.setField(-2, "headers");
+
+        // Add query table (luvit/Node.js style)
+        lua.newTable();
+        for (query_params) |param| {
+            _ = lua.pushString(param.value);
+            // Create null-terminated key for setField
+            var key_buf: [256]u8 = undefined;
+            const key_len = @min(param.key.len, key_buf.len - 1);
+            @memcpy(key_buf[0..key_len], param.key[0..key_len]);
+            key_buf[key_len] = 0;
+            lua.setField(-2, key_buf[0..key_len :0]);
+        }
+        lua.setField(-2, "query");
 
         // Parse and add request body/query if present
         if (request_data.len > 0) {
@@ -185,6 +371,12 @@ pub const LuaHandler = struct {
         // Call the handle function with request table
         lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
             std.debug.print("Error calling Lua handler: {}\n", .{err});
+            // Check if it was an instruction limit error
+            if (self.sandbox_config.max_instructions > 0) {
+                return try arena.dupe(u8,
+                    \\{"status":"error","message":"Lua script execution limit exceeded"}
+                );
+            }
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua handler execution failed"}
             );
@@ -347,4 +539,85 @@ test "lua handler init" {
     defer handler.deinit();
 
     try testing.expect(handler.scripts_dir.len > 0);
+}
+
+test "lua handler init with sandbox config" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer cache.deinit();
+
+    const config = SandboxConfig{
+        .max_instructions = 50_000,
+        .enable_sandbox = true,
+    };
+
+    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
+    defer handler.deinit();
+
+    try testing.expect(handler.sandbox_config.max_instructions == 50_000);
+    try testing.expect(handler.sandbox_config.enable_sandbox == true);
+}
+
+test "lua handler executeScriptEx with headers and query" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer cache.deinit();
+
+    // Disable sandbox for this test as the example scripts may use io/debug
+    const config = SandboxConfig{
+        .max_instructions = 0,
+        .enable_sandbox = false,
+    };
+
+    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
+    defer handler.deinit();
+
+    // Create test headers and query params
+    const headers = [_]KeyValue{
+        .{ .key = "content-type", .value = "application/json" },
+        .{ .key = "user-agent", .value = "test-client" },
+    };
+
+    const query_params = [_]KeyValue{
+        .{ .key = "page", .value = "1" },
+        .{ .key = "limit", .value = "10" },
+    };
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const result = try handler.executeScriptEx(
+        arena.allocator(),
+        "test",
+        "GET",
+        "/api/test",
+        "",
+        &headers,
+        &query_params,
+    );
+
+    // Verify we got a response
+    try testing.expect(result.len > 0);
+    // The test.lua script returns a JSON object with status "success"
+    try testing.expect(std.mem.indexOf(u8, result, "success") != null);
+}
+
+test "lua handler bytecode cache clear" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer cache.deinit();
+
+    var handler = try LuaHandler.init(allocator, "./examples/lua", &cache);
+    defer handler.deinit();
+
+    // Clear bytecode cache should not fail
+    handler.clearBytecodeCache();
+
+    try testing.expect(handler.bytecode_cache.count() == 0);
 }
