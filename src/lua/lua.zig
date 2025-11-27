@@ -182,7 +182,21 @@ pub const LuaHandler = struct {
         }
         self.bytecode_cache.deinit();
         // Don't deinit file_cache - it's shared and owned by AppContext
-        // Thread-local Lua states will be cleaned up when threads exit
+        // Note: Thread-local Lua states are managed per-thread. In httpz's
+        // worker pool model, threads persist for the server lifetime and their
+        // TLS Lua states remain valid. When the server shuts down, the process
+        // exits and all memory is reclaimed by the OS. For explicit cleanup,
+        // call deinitThreadLocalLua() from each worker thread before shutdown.
+    }
+
+    /// Cleanup thread-local Lua state for the current thread.
+    /// Call this from each worker thread during graceful shutdown if needed.
+    /// In most cases, this is not necessary as the OS reclaims memory on process exit.
+    pub fn deinitThreadLocalLua() void {
+        if (tls_lua) |*tl| {
+            tl.deinit();
+            tls_lua = null;
+        }
     }
 
     /// Get or create the thread-local Lua state for the current worker thread
@@ -192,6 +206,7 @@ pub const LuaHandler = struct {
         }
         // Initialize thread-local Lua state for this worker thread
         tls_lua = try ThreadLocalLua.init(self.allocator, self.sandbox_config);
+        // tls_lua is guaranteed to be non-null after successful init
         return tls_lua.?.lua;
     }
 
