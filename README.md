@@ -455,6 +455,7 @@ A high-performance, scalable, HTTP-compliant general-purpose web server built wi
 - 🛡️ **Rate Limiting** - Token bucket algorithm for request throttling
 - 🌐 **CORS Support** - Configurable cross-origin resource sharing policies
 - 🔑 **Authentication Middleware** - JWT/OAuth interface with Lua-based validation
+- 🚫 **IP Access Control** - Blacklist/whitelist with CIDR support
 
 ### 🏗️ Architecture
 
