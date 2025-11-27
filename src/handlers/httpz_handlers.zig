@@ -349,6 +349,8 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
     const client_ip = std.fmt.bufPrint(&addr_buf, "{any}", .{req.address}) catch null;
 
     // Phase 7: IP access control check (first, before rate limiting)
+    // Store the result to avoid duplicate checkAccess calls
+    var is_whitelisted = false;
     if (ctx.ip_access_control) |ip_control| {
         if (client_ip) |ip| {
             const access_result = ip_control.checkAccess(ip);
@@ -363,7 +365,7 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
                 },
                 .whitelisted => {
                     // Whitelisted IPs bypass rate limiting
-                    // Continue to CORS and auth checks
+                    is_whitelisted = true;
                 },
                 .allowed => {
                     // Continue to rate limiting
@@ -374,12 +376,6 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
 
     // Rate limiting check (skip for whitelisted IPs)
     if (ctx.rate_limiter) |rate_limiter| {
-        // Check if IP is whitelisted (already checked above, but access_result is out of scope)
-        const is_whitelisted = if (ctx.ip_access_control) |ip_control|
-            if (client_ip) |ip| ip_control.checkAccess(ip) == .whitelisted else false
-        else
-            false;
-
         if (!is_whitelisted and !rate_limiter.checkRequest(client_ip)) {
             res.status = 429; // Too Many Requests
             res.body =

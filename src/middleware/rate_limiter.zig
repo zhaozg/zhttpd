@@ -233,8 +233,8 @@ pub const IpAccessControl = struct {
     pub fn init(allocator: std.mem.Allocator, config: Config) !IpAccessControl {
         var control = IpAccessControl{
             .config = config,
-            .blacklist_entries = .empty,
-            .whitelist_entries = .empty,
+            .blacklist_entries = std.ArrayList(IpEntry){},
+            .whitelist_entries = std.ArrayList(IpEntry){},
             .allocator = allocator,
             .mutex = std.Thread.Mutex{},
         };
