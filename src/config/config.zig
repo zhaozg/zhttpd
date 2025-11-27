@@ -37,6 +37,23 @@ pub const Config = struct {
     reload: ReloadMode,
     max_cache_file_size: usize, // Maximum file size to cache in bytes
     enable_etag: bool, // Enable ETag support for static files
+    // Phase 3: Advanced httpz features
+    enable_websocket: bool, // Enable WebSocket support
+    enable_sse: bool, // Enable Server-Sent Events support
+    // Rate limiting configuration
+    enable_rate_limit: bool,
+    rate_limit_requests: u32, // Max requests per window
+    rate_limit_window: u32, // Window in seconds
+    // CORS configuration
+    enable_cors: bool,
+    cors_origins: []const u8, // Allowed origins (* for any)
+    cors_methods: []const u8, // Allowed methods
+    cors_headers: []const u8, // Allowed headers
+    // Authentication configuration (delegated to Lua)
+    enable_auth: bool,
+    auth_script: []const u8, // Lua script name for auth validation
+    auth_protected_paths: []const u8, // Paths requiring auth
+    auth_public_paths: []const u8, // Always public paths
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -51,6 +68,12 @@ pub const Config = struct {
         if (self.access_log_file) |alf| {
             self.allocator.free(alf);
         }
+        self.allocator.free(self.cors_origins);
+        self.allocator.free(self.cors_methods);
+        self.allocator.free(self.cors_headers);
+        self.allocator.free(self.auth_script);
+        self.allocator.free(self.auth_protected_paths);
+        self.allocator.free(self.auth_public_paths);
     }
 };
 
@@ -111,6 +134,23 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .reload = if (root.get("reload")) |r| ReloadMode.fromString(r.string) else .auto,
         .max_cache_file_size = if (root.get("max_cache_file_size")) |mcfs| @intCast(mcfs.integer) else DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = if (root.get("enable_etag")) |ee| ee.bool else true, // Default enabled
+        // Phase 3: Advanced httpz features
+        .enable_websocket = if (root.get("enable_websocket")) |ew| ew.bool else false,
+        .enable_sse = if (root.get("enable_sse")) |es| es.bool else false,
+        // Rate limiting
+        .enable_rate_limit = if (root.get("enable_rate_limit")) |erl| erl.bool else false,
+        .rate_limit_requests = if (root.get("rate_limit_requests")) |rlr| @intCast(rlr.integer) else 100,
+        .rate_limit_window = if (root.get("rate_limit_window")) |rlw| @intCast(rlw.integer) else 60,
+        // CORS
+        .enable_cors = if (root.get("enable_cors")) |ec| ec.bool else false,
+        .cors_origins = if (root.get("cors_origins")) |co| try allocator.dupe(u8, co.string) else try allocator.dupe(u8, "*"),
+        .cors_methods = if (root.get("cors_methods")) |cm| try allocator.dupe(u8, cm.string) else try allocator.dupe(u8, "GET, POST, PUT, DELETE, OPTIONS"),
+        .cors_headers = if (root.get("cors_headers")) |ch| try allocator.dupe(u8, ch.string) else try allocator.dupe(u8, "Content-Type, Authorization"),
+        // Authentication
+        .enable_auth = if (root.get("enable_auth")) |ea| ea.bool else false,
+        .auth_script = if (root.get("auth_script")) |as_val| try allocator.dupe(u8, as_val.string) else try allocator.dupe(u8, "auth"),
+        .auth_protected_paths = if (root.get("auth_protected_paths")) |app| try allocator.dupe(u8, app.string) else try allocator.dupe(u8, "/api/*"),
+        .auth_public_paths = if (root.get("auth_public_paths")) |apu| try allocator.dupe(u8, apu.string) else try allocator.dupe(u8, "/api/login, /api/register"),
         .allocator = allocator,
     };
 }
@@ -136,6 +176,20 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .reload = .auto, // Default to auto reload mode
         .max_cache_file_size = DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = true, // Default enabled
+        // Phase 3: Advanced httpz features (disabled by default)
+        .enable_websocket = false,
+        .enable_sse = false,
+        .enable_rate_limit = false,
+        .rate_limit_requests = 100,
+        .rate_limit_window = 60,
+        .enable_cors = false,
+        .cors_origins = try allocator.dupe(u8, "*"),
+        .cors_methods = try allocator.dupe(u8, "GET, POST, PUT, DELETE, OPTIONS"),
+        .cors_headers = try allocator.dupe(u8, "Content-Type, Authorization"),
+        .enable_auth = false,
+        .auth_script = try allocator.dupe(u8, "auth"),
+        .auth_protected_paths = try allocator.dupe(u8, "/api/*"),
+        .auth_public_paths = try allocator.dupe(u8, "/api/login, /api/register"),
         .allocator = allocator,
     };
 }
@@ -227,6 +281,40 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
             config.max_connections = try std.fmt.parseInt(u32, value, 10);
         } else if (std.mem.eql(u8, key, "request_buffer_size")) {
             config.request_buffer_size = try std.fmt.parseInt(usize, value, 10);
+        }
+        // Phase 3: Advanced httpz features
+        else if (std.mem.eql(u8, key, "enable_websocket")) {
+            config.enable_websocket = parseBool(value);
+        } else if (std.mem.eql(u8, key, "enable_sse")) {
+            config.enable_sse = parseBool(value);
+        } else if (std.mem.eql(u8, key, "enable_rate_limit")) {
+            config.enable_rate_limit = parseBool(value);
+        } else if (std.mem.eql(u8, key, "rate_limit_requests")) {
+            config.rate_limit_requests = try std.fmt.parseInt(u32, value, 10);
+        } else if (std.mem.eql(u8, key, "rate_limit_window")) {
+            config.rate_limit_window = try std.fmt.parseInt(u32, value, 10);
+        } else if (std.mem.eql(u8, key, "enable_cors")) {
+            config.enable_cors = parseBool(value);
+        } else if (std.mem.eql(u8, key, "cors_origins")) {
+            allocator.free(config.cors_origins);
+            config.cors_origins = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "cors_methods")) {
+            allocator.free(config.cors_methods);
+            config.cors_methods = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "cors_headers")) {
+            allocator.free(config.cors_headers);
+            config.cors_headers = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "enable_auth")) {
+            config.enable_auth = parseBool(value);
+        } else if (std.mem.eql(u8, key, "auth_script")) {
+            allocator.free(config.auth_script);
+            config.auth_script = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "auth_protected_paths")) {
+            allocator.free(config.auth_protected_paths);
+            config.auth_protected_paths = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "auth_public_paths")) {
+            allocator.free(config.auth_public_paths);
+            config.auth_public_paths = try allocator.dupe(u8, value);
         }
     }
 
