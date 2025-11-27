@@ -28,13 +28,6 @@ const LuaHandler = lua_mod.LuaHandler;
 ///   data = <response data>,
 ///   target = <connection_id> (optional, for targeted send)
 /// }
-/// Allocator for WebSocket operations - passed from context
-var global_allocator: ?std.mem.Allocator = null;
-
-/// Set the allocator for WebSocket operations
-pub fn setAllocator(allocator: std.mem.Allocator) void {
-    global_allocator = allocator;
-}
 /// WebSocket message types for Lua interface
 pub const MessageType = enum {
     text,
@@ -140,9 +133,13 @@ pub const WebSocketHandler = struct {
         const handler = self.lua_handler orelse return error.NoLuaHandler;
 
         // Build request JSON for Lua
-        // Use a thread-local buffer for building the request
+        // Use buffers for building the request and escaping data
+        var escape_buf: [4096]u8 = undefined;
         var request_buf: [8192]u8 = undefined;
-        const escaped_data = escapeJsonString(data);
+
+        // Escape the data using buffer-based function to handle special characters properly
+        const escaped_data = escapeJsonStringBuf(data, &escape_buf) orelse "";
+
         const request_json = std.fmt.bufPrint(&request_buf, "{{\"type\":\"{s}\",\"connection_id\":{d},\"path\":\"{s}\",\"data\":\"{s}\"}}", .{
             event_type,
             self.connection_id,
@@ -201,24 +198,6 @@ fn escapeJsonStringBuf(input: []const u8, buf: []u8) ?[]const u8 {
     return buf[0..pos];
 }
 
-/// Simple check if string needs escaping (for backwards compatibility)
-fn escapeJsonString(input: []const u8) []const u8 {
-    // Check if input needs escaping - if so, return empty for safety
-    // This is used when we can't allocate a buffer
-    for (input) |c| {
-        if (c == '"' or c == '\\' or c < 32) {
-            return "";
-        }
-    }
-    return input;
-}
-
-/// Check if a request is a WebSocket upgrade request
-pub fn isWebSocketRequest(req: *httpz.Request) bool {
-    const upgrade = req.header("upgrade") orelse return false;
-    return std.ascii.eqlIgnoreCase(upgrade, "websocket");
-}
-
 // Tests
 test "websocket context init" {
     const testing = std.testing;
@@ -238,14 +217,25 @@ test "message type to string" {
     try testing.expectEqualStrings("close", MessageType.close.toString());
 }
 
-test "escape json string" {
+test "escape json string buf" {
     const testing = std.testing;
 
     // Test simple string
+    var buf: [256]u8 = undefined;
     const simple = "hello world";
-    try testing.expectEqualStrings("hello world", escapeJsonString(simple));
+    const result1 = escapeJsonStringBuf(simple, &buf);
+    try testing.expect(result1 != null);
+    try testing.expectEqualStrings("hello world", result1.?);
 
-    // Test string with special chars returns empty for safety
+    // Test string with special chars - should be properly escaped
     const special = "hello\"world";
-    try testing.expectEqualStrings("", escapeJsonString(special));
+    const result2 = escapeJsonStringBuf(special, &buf);
+    try testing.expect(result2 != null);
+    try testing.expectEqualStrings("hello\\\"world", result2.?);
+
+    // Test newlines
+    const newline = "line1\nline2";
+    const result3 = escapeJsonStringBuf(newline, &buf);
+    try testing.expect(result3 != null);
+    try testing.expectEqualStrings("line1\\nline2", result3.?);
 }

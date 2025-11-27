@@ -511,6 +511,11 @@ fn sseHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
 fn websocketHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     ctx.logger.debug("WebSocket upgrade request received", .{});
 
+    // Apply middleware (rate limiting, CORS, auth) before accepting WebSocket connection
+    if (!applyMiddleware(ctx, req, res)) {
+        return;
+    }
+
     // Get a mutable pointer to lua_handler if it exists
     const lua_handler_ptr: ?*LuaHandler = if (ctx.lua_handler != null) blk: {
         // We need to get a pointer to the optional's value
@@ -519,6 +524,10 @@ fn websocketHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response)
     } else null;
 
     // Create WebSocket context with Lua handler
+    // Note: The path from req.url.path is stored in WebSocketContext. Since httpz manages
+    // the request lifetime and WebSocket connections are handled synchronously within the
+    // request context by httpz, the path reference remains valid during the upgrade process.
+    // After upgrade, WebSocketHandler stores its own copy of connection metadata.
     const ws_ctx = WebSocketContext.init(req.url.path, lua_handler_ptr);
 
     // Attempt to upgrade the connection to WebSocket
