@@ -8,6 +8,10 @@ const logger_mod = @import("../logger/logger.zig");
 const Logger = logger_mod.Logger;
 const LogLevel = logger_mod.LogLevel;
 const FileCache = @import("../cache/file_cache.zig").FileCache;
+const middleware = @import("../middleware/middleware.zig");
+const RateLimiter = middleware.RateLimiter;
+const CorsMiddleware = middleware.CorsMiddleware;
+const AuthMiddleware = middleware.AuthMiddleware;
 
 // Constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
@@ -21,6 +25,10 @@ pub const AppContext = struct {
     graphql_handler: ?GraphQLHandler = null,
     logger: Logger,
     access_logger: ?Logger = null,
+    // Phase 3: Middleware
+    rate_limiter: ?*RateLimiter = null,
+    cors_middleware: ?CorsMiddleware = null,
+    auth_middleware: ?AuthMiddleware = null,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) !AppContext {
         // Parse log level
@@ -77,6 +85,52 @@ pub const AppContext = struct {
             ctx.logger.info("GraphQL handler initialized", .{});
         }
 
+        // Phase 3: Initialize middleware
+
+        // Initialize rate limiter if enabled
+        if (config.enable_rate_limit) {
+            const rate_limiter = try allocator.create(RateLimiter);
+            errdefer allocator.destroy(rate_limiter);
+            rate_limiter.* = RateLimiter.init(allocator, .{
+                .max_requests = config.rate_limit_requests,
+                .window_seconds = config.rate_limit_window,
+                .per_ip = true,
+                .burst_size = 10,
+            });
+            ctx.rate_limiter = rate_limiter;
+            ctx.logger.info("Rate limiter initialized: {d} requests per {d} seconds", .{ config.rate_limit_requests, config.rate_limit_window });
+        }
+
+        // Initialize CORS middleware if enabled
+        if (config.enable_cors) {
+            ctx.cors_middleware = CorsMiddleware.init(.{
+                .enabled = true,
+                .allowed_origins = config.cors_origins,
+                .allowed_methods = config.cors_methods,
+                .allowed_headers = config.cors_headers,
+            });
+            ctx.logger.info("CORS middleware initialized with origins: {s}", .{config.cors_origins});
+        }
+
+        // Initialize auth middleware if enabled
+        if (config.enable_auth) {
+            ctx.auth_middleware = AuthMiddleware.init(.{
+                .enabled = true,
+                .auth_script = config.auth_script,
+                .protected_paths = config.auth_protected_paths,
+                .public_paths = config.auth_public_paths,
+            });
+            ctx.logger.info("Auth middleware initialized, protected paths: {s}", .{config.auth_protected_paths});
+        }
+
+        // Log WebSocket and SSE status
+        if (config.enable_websocket) {
+            ctx.logger.info("WebSocket support enabled", .{});
+        }
+        if (config.enable_sse) {
+            ctx.logger.info("Server-Sent Events (SSE) support enabled", .{});
+        }
+
         return ctx;
     }
 
@@ -86,6 +140,10 @@ pub const AppContext = struct {
         }
         if (self.graphql_handler) |*graphql| {
             graphql.deinit();
+        }
+        if (self.rate_limiter) |rate_limiter| {
+            rate_limiter.deinit();
+            self.allocator.destroy(rate_limiter);
         }
         self.file_cache.deinit();
         self.allocator.destroy(self.file_cache);
@@ -160,6 +218,11 @@ pub const HttpzServer = struct {
 
         // Static file routes (wildcard must come last)
         router.get("/*", serveStatic, .{});
+
+        // SSE endpoint (if enabled)
+        if (self.context.config.enable_sse) {
+            router.get("/events", sseHandler, .{});
+        }
     }
 
     pub fn listen(self: *HttpzServer) !void {
@@ -174,6 +237,123 @@ pub const HttpzServer = struct {
 };
 
 // Route handlers
+
+/// Apply middleware checks (rate limiting, CORS, auth)
+/// Returns true if request should proceed, false if blocked
+fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) bool {
+    // Rate limiting check
+    if (ctx.rate_limiter) |rate_limiter| {
+        // Extract client IP from address
+        var addr_buf: [128]u8 = undefined;
+        const client_ip = std.fmt.bufPrint(&addr_buf, "{any}", .{req.address}) catch null;
+
+        if (!rate_limiter.checkRequest(client_ip)) {
+            res.status = 429; // Too Many Requests
+            res.body =
+                \\{"error":"Too Many Requests","message":"Rate limit exceeded. Please try again later."}
+            ;
+            res.headers.add("Retry-After", "60");
+            res.headers.add("Content-Type", "application/json");
+            return false;
+        }
+
+        // Add rate limit headers
+        const remaining = rate_limiter.getRemainingTokens(client_ip);
+        var remaining_buf: [16]u8 = undefined;
+        const remaining_str = std.fmt.bufPrint(&remaining_buf, "{d}", .{remaining}) catch "0";
+        res.headers.add("X-RateLimit-Remaining", remaining_str);
+    }
+
+    // CORS handling
+    if (ctx.cors_middleware) |*cors| {
+        if (req.headers.get("origin")) |origin| {
+            if (cors.getHeaders(origin)) |cors_headers| {
+                res.headers.add("Access-Control-Allow-Origin", cors_headers.access_control_allow_origin);
+                res.headers.add("Access-Control-Allow-Methods", cors_headers.access_control_allow_methods);
+                res.headers.add("Access-Control-Allow-Headers", cors_headers.access_control_allow_headers);
+
+                if (cors_headers.access_control_allow_credentials) {
+                    res.headers.add("Access-Control-Allow-Credentials", "true");
+                }
+
+                // Handle preflight requests
+                if (req.method == .OPTIONS) {
+                    res.status = 204;
+                    res.body = "";
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Authentication check (delegates to Lua for actual validation)
+    if (ctx.auth_middleware) |*auth| {
+        if (auth.requiresAuth(req.url.path)) {
+            const auth_header = req.headers.get(auth.config.token_header) orelse {
+                res.status = 401;
+                res.body =
+                    \\{"error":"Unauthorized","message":"Authentication required"}
+                ;
+                res.headers.add("WWW-Authenticate", "Bearer");
+                res.headers.add("Content-Type", "application/json");
+                return false;
+            };
+
+            const token = auth.extractToken(auth_header) orelse {
+                res.status = 401;
+                res.body =
+                    \\{"error":"Unauthorized","message":"Invalid authorization header format"}
+                ;
+                res.headers.add("Content-Type", "application/json");
+                return false;
+            };
+
+            // If Lua handler is available, delegate token validation to Lua auth script
+            if (ctx.lua_handler) |*handler| {
+                const method = @tagName(req.method);
+                const auth_request = auth.buildAuthRequest(res.arena, token, method, req.url.path) catch {
+                    res.status = 500;
+                    res.body =
+                        \\{"error":"Internal Server Error","message":"Failed to build auth request"}
+                    ;
+                    res.headers.add("Content-Type", "application/json");
+                    return false;
+                };
+
+                const result = handler.executeScript(res.arena, auth.config.auth_script, "POST", "/auth/validate", auth_request) catch {
+                    res.status = 500;
+                    res.body =
+                        \\{"error":"Internal Server Error","message":"Auth script execution failed"}
+                    ;
+                    res.headers.add("Content-Type", "application/json");
+                    return false;
+                };
+
+                // Parse auth result - simple check for "authenticated":true in response
+                if (std.mem.indexOf(u8, result, "\"authenticated\":true") == null and
+                    std.mem.indexOf(u8, result, "\"authenticated\": true") == null)
+                {
+                    res.status = 403;
+                    res.body = result; // Return the auth script's response
+                    res.headers.add("Content-Type", "application/json");
+                    return false;
+                }
+            } else {
+                // No Lua handler, just check that token exists (basic validation)
+                if (token.len == 0) {
+                    res.status = 401;
+                    res.body =
+                        \\{"error":"Unauthorized","message":"Empty token"}
+                    ;
+                    res.headers.add("Content-Type", "application/json");
+                    return false;
+                }
+            }
+        }
+    }
+
+    return true;
+}
 
 /// Helper function to log HTTP access
 fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, duration_us: i64) void {
@@ -230,11 +410,49 @@ fn sanitizeLogField(buf: []u8, input: []const u8) []const u8 {
     return buf[0..j];
 }
 
+/// Server-Sent Events (SSE) handler
+/// Sends a stream of events to the client
+fn sseHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+    // Apply middleware
+    if (!applyMiddleware(ctx, req, res)) {
+        return;
+    }
+
+    ctx.logger.debug("SSE connection established from client", .{});
+
+    // Start event stream (synchronous mode for simpler handling)
+    const stream = res.startEventStreamSync() catch |err| {
+        ctx.logger.err("Failed to start SSE stream: {}", .{err});
+        res.status = 500;
+        res.body = "Failed to start event stream";
+        return;
+    };
+
+    // Send a welcome event
+    _ = stream.write("event: connected\ndata: {\"status\":\"connected\",\"message\":\"SSE stream established\"}\n\n") catch |err| {
+        ctx.logger.warn("Failed to write SSE welcome event: {}", .{err});
+        return;
+    };
+
+    // Send a heartbeat event to keep connection alive
+    _ = stream.write("event: heartbeat\ndata: {\"timestamp\":0}\n\n") catch |err| {
+        ctx.logger.warn("Failed to write SSE heartbeat: {}", .{err});
+        return;
+    };
+
+    ctx.logger.debug("SSE events sent successfully", .{});
+}
+
 fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     const start_time = std.time.microTimestamp();
     defer {
         const duration = std.time.microTimestamp() - start_time;
         logAccess(ctx, req, res, duration);
+    }
+
+    // Apply middleware
+    if (!applyMiddleware(ctx, req, res)) {
+        return;
     }
 
     const path = req.url.path;
@@ -315,6 +533,11 @@ fn graphqlGet(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         logAccess(ctx, req, res, duration);
     }
 
+    // Apply middleware
+    if (!applyMiddleware(ctx, req, res)) {
+        return;
+    }
+
     res.content_type = httpz.ContentType.JSON;
     res.body =
         \\{"data":{"message":"GraphQL endpoint - use POST for queries"}}
@@ -326,6 +549,11 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
     defer {
         const duration = std.time.microTimestamp() - start_time;
         logAccess(ctx, req, res, duration);
+    }
+
+    // Apply middleware
+    if (!applyMiddleware(ctx, req, res)) {
+        return;
     }
 
     res.content_type = httpz.ContentType.JSON;
@@ -392,6 +620,11 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     defer {
         const duration = std.time.microTimestamp() - start_time;
         logAccess(ctx, req, res, duration);
+    }
+
+    // Apply middleware
+    if (!applyMiddleware(ctx, req, res)) {
+        return;
     }
 
     res.content_type = httpz.ContentType.JSON;

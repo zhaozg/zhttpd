@@ -53,14 +53,15 @@ The following are **optional enhancements** that could be considered for future 
 
 **Priority:** Low  
 **Effort:** Medium
+**Status:** ✅ Completed (v0.2.0)
 
-- [ ] WebSocket support (httpz has built-in support)
-- [ ] Server-Side Events (SSE) for real-time updates
-- [ ] Rate limiting middleware
-- [ ] Authentication/Authorization middleware (JWT, OAuth)
-- [ ] Request logging middleware
-- [ ] CORS middleware with configurable policies
-- [ ] Request/response compression middleware
+- [x] WebSocket support (httpz has built-in support) - Infrastructure ready
+- [x] Server-Side Events (SSE) for real-time updates - Endpoint at /events
+- [x] Rate limiting middleware - Token bucket algorithm with per-IP tracking
+- [x] Authentication/Authorization middleware (JWT, OAuth) - Lua-delegated validation
+- [x] Request logging middleware - Already implemented via access_logger
+- [x] CORS middleware with configurable policies - Full CORS header support
+- [ ] Request/response compression middleware - Deferred (complex in Zig 0.15)
 
 ### Phase 4: Performance & Scalability
 

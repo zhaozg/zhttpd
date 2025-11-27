@@ -144,6 +144,52 @@ log_level: "info"
 #   - Example: "access.log" or "/var/log/zhttpd/access.log"
 # access_log_file: "access.log"
 
+# Advanced Features (Phase 3)
+# ============================
+
+# WebSocket Support
+# -----------------
+# enable_websocket: Enable WebSocket protocol support
+#   - true: WebSocket connections are accepted
+#   - false: WebSocket support disabled (default)
+# enable_websocket: false
+
+# Server-Sent Events (SSE)
+# -------------------------
+# enable_sse: Enable Server-Sent Events endpoint
+#   - true: SSE endpoint available at /events
+#   - false: SSE disabled (default)
+# enable_sse: false
+
+# Rate Limiting
+# -------------
+# enable_rate_limit: Enable request rate limiting
+#   - Protects against abuse and DoS attacks
+#   - Uses token bucket algorithm with per-IP tracking
+# enable_rate_limit: false
+# rate_limit_requests: 100  # Maximum requests per window
+# rate_limit_window: 60     # Window size in seconds
+
+# CORS (Cross-Origin Resource Sharing)
+# -------------------------------------
+# enable_cors: Enable CORS headers for cross-origin requests
+#   - Allows web applications from different origins to access the API
+# enable_cors: false
+# cors_origins: "*"  # Allowed origins (* for any, or comma-separated list)
+# cors_methods: "GET, POST, PUT, DELETE, OPTIONS"
+# cors_headers: "Content-Type, Authorization"
+
+# Authentication Middleware
+# --------------------------
+# enable_auth: Enable authentication middleware
+#   - Token validation is delegated to a Lua script for flexibility
+#   - Supports JWT and OAuth token formats
+#   - The Lua script receives token, method, path, and type
+# enable_auth: false
+# auth_script: "auth"  # Lua script name (without .lua extension)
+# auth_protected_paths: "/api/*"  # Paths requiring authentication
+# auth_public_paths: "/api/login, /api/register"  # Always public paths
+
 # Configuration Tips
 # ------------------
 # 1. For development: Set security_headers to false, log_level to "debug"
@@ -152,6 +198,8 @@ log_level: "info"
 # 4. Set appropriate max_body_size based on expected upload sizes
 # 5. Use log_file for production to maintain persistent logs
 # 6. Keep timeout_seconds reasonable to prevent resource exhaustion
+# 7. Enable rate_limit in production to prevent abuse
+# 8. Configure CORS if serving a web API consumed by browser clients
 
 # Example Production Configuration:
 # ----------------------------------
@@ -168,3 +216,7 @@ log_level: "info"
 # graphql_endpoint: "/graphql"
 # log_level: "info"
 # log_file: "/var/log/zhttpd/access.log"
+# enable_rate_limit: true
+# rate_limit_requests: 1000
+# enable_cors: true
+# cors_origins: "https://example.com, https://app.example.com"
