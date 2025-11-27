@@ -112,7 +112,13 @@ pub const RateLimiter = struct {
         const max_tokens: u32 = self.config.max_requests + self.config.burst_size;
         const refill_rate: i64 = @divFloor(@as(i64, max_tokens) * elapsed, window);
 
-        entry.tokens = @min(max_tokens, entry.tokens + @as(u32, @intCast(@min(refill_rate, @as(i64, max_tokens)))));
+        // Clamp refill amount to max_tokens to prevent overflow
+        const clamped_refill: i64 = @min(refill_rate, @as(i64, max_tokens));
+        const refill_amount: u32 = @intCast(clamped_refill);
+
+        // Calculate new token count, clamped to max
+        const new_tokens = entry.tokens + refill_amount;
+        entry.tokens = @min(max_tokens, new_tokens);
         entry.last_update = now;
     }
 
