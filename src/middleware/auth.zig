@@ -101,19 +101,23 @@ pub const AuthMiddleware = struct {
 
     /// Build request data for Lua auth script
     /// Format: { "token": "...", "method": "...", "path": "...", "type": "jwt"|"oauth" }
-    /// JSON-escapes special characters in token and path to prevent injection
+    /// JSON-escapes special characters in token, method, and path to prevent injection
+    /// Note: When both jwt_enabled and oauth_enabled are true, JWT takes precedence
     pub fn buildAuthRequest(self: *const AuthMiddleware, allocator: std.mem.Allocator, token: []const u8, method: []const u8, path: []const u8) ![]const u8 {
+        // JWT takes precedence when both jwt_enabled and oauth_enabled are true
         const auth_type: []const u8 = if (self.config.jwt_enabled) "jwt" else if (self.config.oauth_enabled) "oauth" else "unknown";
 
-        // Escape token and path for JSON safety
+        // Escape all user-controlled fields for JSON safety (defense in depth)
         const escaped_token = try escapeJsonString(allocator, token);
         defer allocator.free(escaped_token);
+        const escaped_method = try escapeJsonString(allocator, method);
+        defer allocator.free(escaped_method);
         const escaped_path = try escapeJsonString(allocator, path);
         defer allocator.free(escaped_path);
 
         return try std.fmt.allocPrint(allocator,
             \\{{"token":"{s}","method":"{s}","path":"{s}","type":"{s}"}}
-        , .{ escaped_token, method, escaped_path, auth_type });
+        , .{ escaped_token, escaped_method, escaped_path, auth_type });
     }
 };
 

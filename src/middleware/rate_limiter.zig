@@ -2,6 +2,11 @@ const std = @import("std");
 
 /// Rate limiting implementation using token bucket algorithm
 /// Provides configurable request rate limiting per client IP or globally
+///
+/// Note: This implementation stores per-IP entries indefinitely. For high-traffic
+/// servers with many unique IPs, consider implementing periodic cleanup of stale
+/// entries (e.g., entries older than window_seconds * N) or LRU eviction to
+/// prevent unbounded memory growth.
 pub const RateLimiter = struct {
     /// Rate limit configuration
     pub const Config = struct {
@@ -123,17 +128,25 @@ pub const RateLimiter = struct {
     }
 
     /// Get remaining tokens for a client
+    /// Note: Refills tokens based on elapsed time before returning count
     pub fn getRemainingTokens(self: *RateLimiter, client_ip: ?[]const u8) u32 {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        const now = std.time.timestamp();
+
         if (self.config.per_ip) {
-            const ip = client_ip orelse return self.global_entry.tokens;
-            if (self.entries.get(ip)) |entry| {
+            const ip = client_ip orelse {
+                self.refillTokens(&self.global_entry, now);
+                return self.global_entry.tokens;
+            };
+            if (self.entries.getPtr(ip)) |entry| {
+                self.refillTokens(entry, now);
                 return entry.tokens;
             }
             return self.config.max_requests + self.config.burst_size;
         } else {
+            self.refillTokens(&self.global_entry, now);
             return self.global_entry.tokens;
         }
     }
