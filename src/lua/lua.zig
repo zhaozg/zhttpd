@@ -20,6 +20,9 @@ const FileCache = @import("../cache/file_cache.zig").FileCache;
 // - Bytecode caching and precompilation for performance
 // - Sandboxing with instruction count limits for resource control
 
+/// Maximum size for header/query parameter keys when passing to Lua
+const MAX_KEY_SIZE: usize = 256;
+
 /// Configuration for Lua sandbox limits
 pub const SandboxConfig = struct {
     /// Maximum number of Lua instructions per script execution (0 = unlimited)
@@ -33,7 +36,7 @@ pub const SandboxConfig = struct {
 /// Default sandbox configuration
 pub const default_sandbox_config = SandboxConfig{};
 
-/// Bytecode cache entry
+/// Bytecode cache entry (reserved for future bytecode precompilation)
 const BytecodeEntry = struct {
     bytecode: []const u8,
     mtime: i128,
@@ -174,12 +177,27 @@ pub const KeyValue = struct {
     value: []const u8,
 };
 
+/// Helper function to push a key-value table entry to Lua
+/// Handles null-termination of keys for Lua's setField API
+fn pushKeyValueToTable(lua: *ziglua.Lua, key: []const u8, value: []const u8) void {
+    _ = lua.pushString(value);
+    // Create null-terminated key for setField
+    var key_buf: [MAX_KEY_SIZE]u8 = undefined;
+    const key_len = @min(key.len, key_buf.len - 1);
+    @memcpy(key_buf[0..key_len], key[0..key_len]);
+    key_buf[key_len] = 0;
+    lua.setField(-2, key_buf[0..key_len :0]);
+}
+
 pub const LuaHandler = struct {
     allocator: std.mem.Allocator,
     scripts_dir: []const u8,
     pool: LuaStatePool,
     file_cache: *FileCache, // Shared global file cache
     sandbox_config: SandboxConfig,
+    // Bytecode cache for precompiled Lua scripts (infrastructure for future optimization)
+    // Currently the cache is initialized but bytecode precompilation is not yet implemented.
+    // The FileCache already handles source caching; bytecode caching would add precompilation.
     bytecode_cache: std.StringHashMap(BytecodeEntry),
     bytecode_mutex: std.Thread.Mutex,
 
@@ -323,26 +341,14 @@ pub const LuaHandler = struct {
         // Add headers table (luvit/Node.js style)
         lua.newTable();
         for (headers) |header| {
-            _ = lua.pushString(header.value);
-            // Create null-terminated key for setField
-            var key_buf: [256]u8 = undefined;
-            const key_len = @min(header.key.len, key_buf.len - 1);
-            @memcpy(key_buf[0..key_len], header.key[0..key_len]);
-            key_buf[key_len] = 0;
-            lua.setField(-2, key_buf[0..key_len :0]);
+            pushKeyValueToTable(lua, header.key, header.value);
         }
         lua.setField(-2, "headers");
 
         // Add query table (luvit/Node.js style)
         lua.newTable();
         for (query_params) |param| {
-            _ = lua.pushString(param.value);
-            // Create null-terminated key for setField
-            var key_buf: [256]u8 = undefined;
-            const key_len = @min(param.key.len, key_buf.len - 1);
-            @memcpy(key_buf[0..key_len], param.key[0..key_len]);
-            key_buf[key_len] = 0;
-            lua.setField(-2, key_buf[0..key_len :0]);
+            pushKeyValueToTable(lua, param.key, param.value);
         }
         lua.setField(-2, "query");
 
@@ -371,12 +377,9 @@ pub const LuaHandler = struct {
         // Call the handle function with request table
         lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
             std.debug.print("Error calling Lua handler: {}\n", .{err});
-            // Check if it was an instruction limit error
-            if (self.sandbox_config.max_instructions > 0) {
-                return try arena.dupe(u8,
-                    \\{"status":"error","message":"Lua script execution limit exceeded"}
-                );
-            }
+            // Note: When instruction limit is exceeded, the hook raises an error
+            // which is caught here. We can't distinguish between instruction limit
+            // and other Lua errors, so we return a generic error message.
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua handler execution failed"}
             );
