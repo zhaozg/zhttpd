@@ -186,6 +186,7 @@ pub const Logger = struct {
     }
 
     /// Escape a string for JSON
+    /// Returns the escaped string, truncated if buffer is too small
     fn escapeJsonString(input: []const u8, buf: []u8) []const u8 {
         var pos: usize = 0;
         for (input) |c| {
@@ -202,8 +203,9 @@ pub const Logger = struct {
                 @memcpy(buf[pos..][0..esc.len], esc);
                 pos += esc.len;
             } else if (c < 32) {
-                // Escape control characters as \u00XX
+                // Escape control characters as \uXXXX (6 characters total)
                 if (pos + 6 > buf.len) break;
+                // Format produces exactly 6 chars: \u + 4 hex digits
                 _ = std.fmt.bufPrint(buf[pos..][0..6], "\\u{x:0>4}", .{c}) catch break;
                 pos += 6;
             } else {

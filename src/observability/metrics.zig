@@ -76,16 +76,22 @@ pub const Histogram = struct {
     }
 
     /// Observe a value in milliseconds
+    /// Each bucket stores the count of observations that fall into that specific bucket range
+    /// In Prometheus format, buckets are cumulative (le=X means all observations <= X)
     pub fn observe(self: *Histogram, value_ms: f64) void {
         _ = self.count.fetchAdd(1, .monotonic);
         _ = self.sum.fetchAdd(@intFromFloat(value_ms * 1000.0), .monotonic); // Store in microseconds
 
-        // Increment all buckets >= value
+        // Find the appropriate bucket and increment it
+        // Each bucket stores only the count for its specific range
         for (LATENCY_BUCKETS, 0..) |bound, i| {
             if (value_ms <= bound) {
                 _ = self.buckets[i].fetchAdd(1, .monotonic);
+                break; // Only increment the first matching bucket
             }
         }
+        // If value_ms exceeds all bucket bounds, it's still counted in count/sum
+        // but not in any bucket (will show in +Inf)
     }
 
     pub fn getCount(self: *const Histogram) u64 {
