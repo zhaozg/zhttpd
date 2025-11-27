@@ -32,7 +32,7 @@ The following are **optional enhancements** that could be considered for future 
 
 - [x] Pass complex request data structures to Lua scripts (headers, query parameters) - luvit/Node.js style API
 - [x] Lua script hot-reloading without server restart - via FileCache auto mode
-- [x] Lua script caching and precompilation - bytecode caching with mtime validation
+- [x] Lua script caching and precompilation - source caching with mtime validation (bytecode infrastructure added for future use)
 - [x] Sandboxing and resource limits for Lua scripts - instruction limits and dangerous function removal
 - [ ] Enhanced Lua response handling with full JSON support - deferred (use cjson in Lua)
 - [ ] Built-in Lua libraries for common tasks (JSON, HTTP client, database) - deferred (implement in Lua)

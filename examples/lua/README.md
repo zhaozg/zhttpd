@@ -19,13 +19,12 @@ Lua scripts now receive full request information including:
 Scripts are automatically reloaded when modified (with `reload: auto` config):
 - No server restart required
 - File modification time is checked on each request
-- Bytecode cache is invalidated automatically
 
-### Script Caching and Precompilation
+### Script Caching
 
 For improved performance:
 - Scripts are cached in memory
-- Bytecode is precompiled when possible
+- Infrastructure for bytecode precompilation is in place (not yet active)
 - Cache can be cleared programmatically
 
 ### Sandboxing and Resource Limits
@@ -249,7 +248,7 @@ return {
 2. **Memory Management**: Each state's stack is cleared after use
 3. **Concurrency**: One Lua VM per worker thread (controlled by `thread_pool_size`)
 4. **Data Persistence**: In-memory data is per-thread. For shared data, use external storage
-5. **Bytecode Caching**: Scripts are precompiled for faster execution
+5. **Script Caching**: Source scripts are cached in memory (bytecode precompilation planned for future)
 
 ## Security Notes
 
@@ -259,8 +258,9 @@ return {
 4. **Sandboxing**: The following are disabled by default:
    - `io` library (file I/O)
    - `debug` library (can escape sandbox)
-   - `os.execute`, `os.exit`, `os.remove`, `os.rename`, `os.getenv`, `os.tmpname`
-   - `loadfile`, `dofile` (arbitrary file execution)
+   - `package` library (can load arbitrary C libraries)
+   - `os.execute`, `os.exit`, `os.remove`, `os.rename`, `os.getenv`, `os.setlocale`, `os.tmpname`
+   - `loadfile`, `dofile`, `load`, `loadstring` (arbitrary code execution)
 5. **Instruction Limits**: Scripts are limited to 100,000 instructions by default
 
 ## Configuration
