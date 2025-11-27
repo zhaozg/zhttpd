@@ -252,7 +252,10 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
             res.body =
                 \\{"error":"Too Many Requests","message":"Rate limit exceeded. Please try again later."}
             ;
-            res.headers.add("Retry-After", "60");
+            // Use actual rate_limit_window config value for Retry-After
+            var retry_after_buf: [16]u8 = undefined;
+            const retry_after_str = std.fmt.bufPrint(&retry_after_buf, "{d}", .{ctx.config.rate_limit_window}) catch "60";
+            res.headers.add("Retry-After", retry_after_str);
             res.headers.add("Content-Type", "application/json");
             return false;
         }
@@ -271,6 +274,7 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
                 res.headers.add("Access-Control-Allow-Origin", cors_headers.access_control_allow_origin);
                 res.headers.add("Access-Control-Allow-Methods", cors_headers.access_control_allow_methods);
                 res.headers.add("Access-Control-Allow-Headers", cors_headers.access_control_allow_headers);
+                res.headers.add("Access-Control-Expose-Headers", cors_headers.access_control_expose_headers);
 
                 if (cors_headers.access_control_allow_credentials) {
                     res.headers.add("Access-Control-Allow-Credentials", "true");
@@ -280,6 +284,10 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
                 if (req.method == .OPTIONS) {
                     res.status = 204;
                     res.body = "";
+                    // Add max-age header for preflight caching
+                    var max_age_buf: [16]u8 = undefined;
+                    const max_age_str = std.fmt.bufPrint(&max_age_buf, "{d}", .{cors_headers.access_control_max_age}) catch "0";
+                    res.headers.add("Access-Control-Max-Age", max_age_str);
                     return false;
                 }
             }
