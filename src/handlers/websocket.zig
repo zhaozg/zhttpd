@@ -28,7 +28,6 @@ const LuaHandler = lua_mod.LuaHandler;
 ///   data = <response data>,
 ///   target = <connection_id> (optional, for targeted send)
 /// }
-
 /// Allocator for WebSocket operations - passed from context
 var global_allocator: ?std.mem.Allocator = null;
 
