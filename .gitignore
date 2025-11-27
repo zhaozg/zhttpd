@@ -28,3 +28,4 @@ config.local.yaml
 test-results/
 config.json
 zig-x86_64-linux-*/
+zig-x86_64-linux-0.15.2/
