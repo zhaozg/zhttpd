@@ -19,6 +19,10 @@
 - ⚙️ **灵活配置** - 支持 JSON 和 YAML 配置文件
 - 🧵 **多线程支持** - 使用线程池处理并发请求
 - 📝 **RESTful API** - 支持标准的 REST API 设计模式
+- 📡 **Server-Sent Events** - 支持 SSE 实时数据推送
+- 🛡️ **速率限制** - 令牌桶算法的请求限速中间件
+- 🌐 **CORS 支持** - 可配置的跨域资源共享策略
+- 🔑 **认证中间件** - JWT/OAuth 认证接口，支持 Lua 自定义验证
 
 ### 🏗️ 架构设计
 
@@ -276,10 +280,14 @@ Apache Bench 测试结果准确可靠。
 
 查看 [ROADMAP.md](ROADMAP.md) 了解项目的未来发展计划和增强功能。
 
-当前版本 (v0.1.0) 已完成所有核心功能，处于生产就绪状态。未来的增强包括：
+当前版本 (v0.2.0) 已完成所有核心功能和高级中间件，处于生产就绪状态。已完成：
+- ✅ 高级中间件支持 (速率限制、CORS、认证)
+- ✅ SSE 实时推送
+- ✅ JWT/OAuth 认证接口
+
+未来的增强包括：
 - Lua 集成增强
 - 完整的 GraphQL 实现
-- 高级中间件支持
 - 性能优化
 
 详细信息请参阅 [ROADMAP.md](ROADMAP.md)。
@@ -309,6 +317,10 @@ A high-performance, scalable, HTTP-compliant general-purpose web server built wi
 - ⚙️ **Flexible Configuration** - Support for both JSON and YAML configuration files
 - 🧵 **Multi-threading** - Thread pool for handling concurrent requests
 - 📝 **RESTful API** - Support for standard REST API design patterns
+- 📡 **Server-Sent Events** - SSE support for real-time data streaming
+- 🛡️ **Rate Limiting** - Token bucket algorithm for request throttling
+- 🌐 **CORS Support** - Configurable cross-origin resource sharing policies
+- 🔑 **Authentication Middleware** - JWT/OAuth interface with Lua-based validation
 
 ### 🏗️ Architecture
 
@@ -421,10 +433,14 @@ Due to httpz omitting the HTTP reason phrase for performance optimization, h2loa
 
 See [ROADMAP.md](ROADMAP.md) for the project's future development plans and enhancement opportunities.
 
-Current version (v0.1.0) has completed all core features and is production-ready. Future enhancements include:
+Current version (v0.2.0) has completed all core features and advanced middleware, and is production-ready. Completed:
+- ✅ Advanced middleware support (Rate limiting, CORS, Authentication)
+- ✅ SSE real-time streaming
+- ✅ JWT/OAuth authentication interface
+
+Future enhancements include:
 - Enhanced Lua integration
 - Full GraphQL implementation
-- Advanced middleware support
 - Performance optimizations
 
 For details, see [ROADMAP.md](ROADMAP.md).
