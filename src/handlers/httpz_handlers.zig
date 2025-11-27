@@ -15,6 +15,8 @@ const middleware = @import("../middleware/middleware.zig");
 const RateLimiter = middleware.RateLimiter;
 const CorsMiddleware = middleware.CorsMiddleware;
 const AuthMiddleware = middleware.AuthMiddleware;
+const IpAccessControl = middleware.IpAccessControl;
+const IpAccessResult = middleware.IpAccessResult;
 const ws_mod = @import("websocket.zig");
 const WebSocketHandler = ws_mod.WebSocketHandler;
 const WebSocketContext = ws_mod.WebSocketContext;
@@ -45,6 +47,8 @@ pub const AppContext = struct {
     // Phase 5: Observability
     metrics: ?*Metrics = null,
     start_time: i64 = 0,
+    // Phase 7: Security
+    ip_access_control: ?*IpAccessControl = null,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -166,6 +170,22 @@ pub const AppContext = struct {
             ctx.logger.info("Auth middleware initialized, protected paths: {s}", .{config.auth_protected_paths});
         }
 
+        // Phase 7: Initialize IP access control if enabled
+        if (config.enable_ip_blacklist) {
+            const ip_access_control = try allocator.create(IpAccessControl);
+            errdefer allocator.destroy(ip_access_control);
+            ip_access_control.* = try IpAccessControl.init(allocator, .{
+                .enabled = true,
+                .blacklist = config.ip_blacklist,
+                .whitelist = config.ip_whitelist,
+            });
+            ctx.ip_access_control = ip_access_control;
+            ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries)", .{
+                ip_access_control.getBlacklistCount(),
+                ip_access_control.getWhitelistCount(),
+            });
+        }
+
         // Log WebSocket and SSE status
         if (config.enable_websocket) {
             ctx.logger.info("WebSocket support enabled", .{});
@@ -201,6 +221,10 @@ pub const AppContext = struct {
         if (self.rate_limiter) |rate_limiter| {
             rate_limiter.deinit();
             self.allocator.destroy(rate_limiter);
+        }
+        if (self.ip_access_control) |ip_control| {
+            ip_control.deinit();
+            self.allocator.destroy(ip_control);
         }
         if (self.metrics) |metrics_ptr| {
             self.allocator.destroy(metrics_ptr);
@@ -317,16 +341,46 @@ pub const HttpzServer = struct {
 
 // Route handlers
 
-/// Apply middleware checks (rate limiting, CORS, auth)
+/// Apply middleware checks (IP access control, rate limiting, CORS, auth)
 /// Returns true if request should proceed, false if blocked
 fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) bool {
-    // Rate limiting check
-    if (ctx.rate_limiter) |rate_limiter| {
-        // Extract client IP from address
-        var addr_buf: [128]u8 = undefined;
-        const client_ip = std.fmt.bufPrint(&addr_buf, "{any}", .{req.address}) catch null;
+    // Extract client IP from address for use in multiple checks
+    var addr_buf: [128]u8 = undefined;
+    const client_ip = std.fmt.bufPrint(&addr_buf, "{any}", .{req.address}) catch null;
 
-        if (!rate_limiter.checkRequest(client_ip)) {
+    // Phase 7: IP access control check (first, before rate limiting)
+    if (ctx.ip_access_control) |ip_control| {
+        if (client_ip) |ip| {
+            const access_result = ip_control.checkAccess(ip);
+            switch (access_result) {
+                .blocked => {
+                    res.status = 403; // Forbidden
+                    res.body =
+                        \\{"error":"Forbidden","message":"Your IP address has been blocked."}
+                    ;
+                    res.headers.add("Content-Type", "application/json");
+                    return false;
+                },
+                .whitelisted => {
+                    // Whitelisted IPs bypass rate limiting
+                    // Continue to CORS and auth checks
+                },
+                .allowed => {
+                    // Continue to rate limiting
+                },
+            }
+        }
+    }
+
+    // Rate limiting check (skip for whitelisted IPs)
+    if (ctx.rate_limiter) |rate_limiter| {
+        // Check if IP is whitelisted (already checked above, but access_result is out of scope)
+        const is_whitelisted = if (ctx.ip_access_control) |ip_control|
+            if (client_ip) |ip| ip_control.checkAccess(ip) == .whitelisted else false
+        else
+            false;
+
+        if (!is_whitelisted and !rate_limiter.checkRequest(client_ip)) {
             res.status = 429; // Too Many Requests
             res.body =
                 \\{"error":"Too Many Requests","message":"Rate limit exceeded. Please try again later."}
@@ -339,11 +393,13 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
             return false;
         }
 
-        // Add rate limit headers
-        const remaining = rate_limiter.getRemainingTokens(client_ip);
-        var remaining_buf: [16]u8 = undefined;
-        const remaining_str = std.fmt.bufPrint(&remaining_buf, "{d}", .{remaining}) catch "0";
-        res.headers.add("X-RateLimit-Remaining", remaining_str);
+        // Add rate limit headers (skip for whitelisted)
+        if (!is_whitelisted) {
+            const remaining = rate_limiter.getRemainingTokens(client_ip);
+            var remaining_buf: [16]u8 = undefined;
+            const remaining_str = std.fmt.bufPrint(&remaining_buf, "{d}", .{remaining}) catch "0";
+            res.headers.add("X-RateLimit-Remaining", remaining_str);
+        }
     }
 
     // CORS handling

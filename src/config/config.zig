@@ -62,6 +62,10 @@ pub const Config = struct {
     enable_health_check: bool, // Enable health check at /health
     enable_request_id: bool, // Enable X-Request-ID propagation
     log_format: []const u8, // Log format: "text" or "json"
+    // Phase 7: Security enhancements
+    enable_ip_blacklist: bool, // Enable IP blacklist/whitelist
+    ip_blacklist: []const u8, // Comma-separated list of blocked IPs/CIDRs
+    ip_whitelist: []const u8, // Comma-separated list of whitelisted IPs/CIDRs
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -83,6 +87,8 @@ pub const Config = struct {
         self.allocator.free(self.auth_protected_paths);
         self.allocator.free(self.auth_public_paths);
         self.allocator.free(self.log_format);
+        self.allocator.free(self.ip_blacklist);
+        self.allocator.free(self.ip_whitelist);
     }
 };
 
@@ -168,6 +174,10 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_health_check = if (root.get("enable_health_check")) |ehc| ehc.bool else true, // Default enabled
         .enable_request_id = if (root.get("enable_request_id")) |eri| eri.bool else true, // Default enabled
         .log_format = if (root.get("log_format")) |lf_val| try allocator.dupe(u8, lf_val.string) else try allocator.dupe(u8, "text"),
+        // Phase 7: Security enhancements
+        .enable_ip_blacklist = if (root.get("enable_ip_blacklist")) |eib| eib.bool else false,
+        .ip_blacklist = if (root.get("ip_blacklist")) |ibl| try allocator.dupe(u8, ibl.string) else try allocator.dupe(u8, ""),
+        .ip_whitelist = if (root.get("ip_whitelist")) |iwl| try allocator.dupe(u8, iwl.string) else try allocator.dupe(u8, ""),
         .allocator = allocator,
     };
 }
@@ -215,6 +225,10 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_health_check = true,
         .enable_request_id = true,
         .log_format = try allocator.dupe(u8, "text"),
+        // Phase 7: Security enhancements (disabled by default)
+        .enable_ip_blacklist = false,
+        .ip_blacklist = try allocator.dupe(u8, ""),
+        .ip_whitelist = try allocator.dupe(u8, ""),
         .allocator = allocator,
     };
 }
@@ -357,6 +371,16 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         } else if (std.mem.eql(u8, key, "log_format")) {
             allocator.free(config.log_format);
             config.log_format = try allocator.dupe(u8, value);
+        }
+        // Phase 7: Security enhancements
+        else if (std.mem.eql(u8, key, "enable_ip_blacklist")) {
+            config.enable_ip_blacklist = parseBool(value);
+        } else if (std.mem.eql(u8, key, "ip_blacklist")) {
+            allocator.free(config.ip_blacklist);
+            config.ip_blacklist = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, key, "ip_whitelist")) {
+            allocator.free(config.ip_whitelist);
+            config.ip_whitelist = try allocator.dupe(u8, value);
         }
     }
 

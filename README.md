@@ -312,6 +312,26 @@ zhttpd 默认启用以下 HTTP 安全头部：
 
 可以在配置文件中设置 `security_headers: false` 来禁用。
 
+#### IP 访问控制
+
+zhttpd 支持基于 IP 的访问控制，包括黑名单和白名单：
+
+```yaml
+enable_ip_blacklist: true
+ip_blacklist: "10.0.0.0/8, 192.168.1.100"  # CIDR 和单 IP 支持
+ip_whitelist: "192.168.1.1"  # 白名单 IP 跳过速率限制
+```
+
+#### HTTPS/TLS 配置
+
+推荐使用反向代理（nginx、Caddy）进行 TLS 终止。详见 [docs/TLS_SETUP.md](docs/TLS_SETUP.md)。
+
+#### 安全文档
+
+- [TLS 设置指南](docs/TLS_SETUP.md) - HTTPS 配置说明
+- [OWASP 合规性](docs/OWASP_COMPLIANCE.md) - 安全合规审查
+- [安全功能](docs/SECURITY.md) - 安全功能详解
+
 ### 🧪 测试
 
 运行单元测试：

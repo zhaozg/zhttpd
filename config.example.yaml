@@ -59,3 +59,11 @@ enable_request_id: true  # Enable X-Request-ID header propagation
 # Structured Logging
 log_format: "text"  # Log format: "text" or "json" (JSON enables structured logging)
 
+# Phase 7: Security Enhancements
+# ------------------------------
+
+# IP Access Control (blacklist/whitelist)
+enable_ip_blacklist: false  # Enable IP access control
+ip_blacklist: ""  # Comma-separated list of blocked IPs/CIDRs (e.g., "10.0.0.0/8, 192.168.1.100")
+ip_whitelist: ""  # Comma-separated list of whitelisted IPs/CIDRs (bypass rate limiting)
+
