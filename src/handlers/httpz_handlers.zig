@@ -329,10 +329,27 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
                     return false;
                 };
 
-                // Parse auth result - simple check for "authenticated":true in response
-                if (std.mem.indexOf(u8, result, "\"authenticated\":true") == null and
-                    std.mem.indexOf(u8, result, "\"authenticated\": true") == null)
-                {
+                // Parse auth result using proper JSON parsing
+                const auth_response = std.json.parseFromSlice(std.json.Value, res.arena, result, .{}) catch {
+                    // If JSON parsing fails, treat as unauthenticated
+                    res.status = 500;
+                    res.body =
+                        \\{"error":"Internal Server Error","message":"Invalid auth response format"}
+                    ;
+                    res.headers.add("Content-Type", "application/json");
+                    return false;
+                };
+
+                // Check if authenticated field is true
+                const authenticated = if (auth_response.value == .object)
+                    if (auth_response.value.object.get("authenticated")) |auth_val|
+                        auth_val == .bool and auth_val.bool
+                    else
+                        false
+                else
+                    false;
+
+                if (!authenticated) {
                     res.status = 403;
                     res.body = result; // Return the auth script's response
                     res.headers.add("Content-Type", "application/json");
@@ -434,8 +451,14 @@ fn sseHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         return;
     };
 
-    // Send a heartbeat event to keep connection alive
-    _ = stream.write("event: heartbeat\ndata: {\"timestamp\":0}\n\n") catch |err| {
+    // Send a heartbeat event with actual timestamp
+    var heartbeat_buf: [128]u8 = undefined;
+    const timestamp = std.time.timestamp();
+    const heartbeat_data = std.fmt.bufPrint(&heartbeat_buf, "event: heartbeat\ndata: {{\"timestamp\":{d}}}\n\n", .{timestamp}) catch {
+        ctx.logger.warn("Failed to format SSE heartbeat", .{});
+        return;
+    };
+    _ = stream.write(heartbeat_data) catch |err| {
         ctx.logger.warn("Failed to write SSE heartbeat: {}", .{err});
         return;
     };

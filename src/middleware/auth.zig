@@ -101,14 +101,49 @@ pub const AuthMiddleware = struct {
 
     /// Build request data for Lua auth script
     /// Format: { "token": "...", "method": "...", "path": "...", "type": "jwt"|"oauth" }
+    /// JSON-escapes special characters in token and path to prevent injection
     pub fn buildAuthRequest(self: *const AuthMiddleware, allocator: std.mem.Allocator, token: []const u8, method: []const u8, path: []const u8) ![]const u8 {
         const auth_type: []const u8 = if (self.config.jwt_enabled) "jwt" else if (self.config.oauth_enabled) "oauth" else "unknown";
 
+        // Escape token and path for JSON safety
+        const escaped_token = try escapeJsonString(allocator, token);
+        defer allocator.free(escaped_token);
+        const escaped_path = try escapeJsonString(allocator, path);
+        defer allocator.free(escaped_path);
+
         return try std.fmt.allocPrint(allocator,
             \\{{"token":"{s}","method":"{s}","path":"{s}","type":"{s}"}}
-        , .{ token, method, path, auth_type });
+        , .{ escaped_token, method, escaped_path, auth_type });
     }
 };
+
+/// Escape a string for safe inclusion in JSON
+fn escapeJsonString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    var result = std.ArrayListUnmanaged(u8){};
+    errdefer result.deinit(allocator);
+
+    for (input) |c| {
+        switch (c) {
+            '"' => try result.appendSlice(allocator, "\\\""),
+            '\\' => try result.appendSlice(allocator, "\\\\"),
+            '\n' => try result.appendSlice(allocator, "\\n"),
+            '\r' => try result.appendSlice(allocator, "\\r"),
+            '\t' => try result.appendSlice(allocator, "\\t"),
+            else => {
+                if (c < 32) {
+                    // Escape control characters as \uXXXX
+                    var buf: [6]u8 = undefined;
+                    const escape_str = std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{c}) catch continue;
+                    try result.appendSlice(allocator, escape_str);
+                } else {
+                    try result.append(allocator, c);
+                }
+            },
+        }
+    }
+
+    return try result.toOwnedSlice(allocator);
+}
 
 /// Simple path matching with wildcard support
 fn matchPath(pattern: []const u8, path: []const u8) bool {
