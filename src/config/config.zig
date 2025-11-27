@@ -54,6 +54,9 @@ pub const Config = struct {
     auth_script: []const u8, // Lua script name for auth validation
     auth_protected_paths: []const u8, // Paths requiring auth
     auth_public_paths: []const u8, // Always public paths
+    // Lua sandbox configuration (safe defaults)
+    lua_sandbox_enabled: bool, // Enable Lua sandbox (default: true)
+    lua_max_instructions: u32, // Max Lua instructions per execution (0 = unlimited, default: 100000)
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -151,6 +154,9 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .auth_script = if (root.get("auth_script")) |as_val| try allocator.dupe(u8, as_val.string) else try allocator.dupe(u8, "auth"),
         .auth_protected_paths = if (root.get("auth_protected_paths")) |app| try allocator.dupe(u8, app.string) else try allocator.dupe(u8, "/api/*"),
         .auth_public_paths = if (root.get("auth_public_paths")) |apu| try allocator.dupe(u8, apu.string) else try allocator.dupe(u8, "/api/login, /api/register"),
+        // Lua sandbox configuration (safe defaults)
+        .lua_sandbox_enabled = if (root.get("lua_sandbox_enabled")) |lse| lse.bool else true,
+        .lua_max_instructions = if (root.get("lua_max_instructions")) |lmi| @intCast(lmi.integer) else 100_000,
         .allocator = allocator,
     };
 }
@@ -190,6 +196,9 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .auth_script = try allocator.dupe(u8, "auth"),
         .auth_protected_paths = try allocator.dupe(u8, "/api/*"),
         .auth_public_paths = try allocator.dupe(u8, "/api/login, /api/register"),
+        // Lua sandbox configuration (safe defaults)
+        .lua_sandbox_enabled = true,
+        .lua_max_instructions = 100_000,
         .allocator = allocator,
     };
 }
@@ -315,6 +324,12 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         } else if (std.mem.eql(u8, key, "auth_public_paths")) {
             allocator.free(config.auth_public_paths);
             config.auth_public_paths = try allocator.dupe(u8, value);
+        }
+        // Lua sandbox configuration
+        else if (std.mem.eql(u8, key, "lua_sandbox_enabled")) {
+            config.lua_sandbox_enabled = parseBool(value);
+        } else if (std.mem.eql(u8, key, "lua_max_instructions")) {
+            config.lua_max_instructions = try std.fmt.parseInt(u32, value, 10);
         }
     }
 

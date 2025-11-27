@@ -7,8 +7,8 @@ const FileCache = @import("../cache/file_cache.zig").FileCache;
 // Based on ziglua: https://github.com/natecraddock/ziglua
 //
 // Thread Safety:
-// Each request gets its own Lua state from a pool to ensure thread-safety.
-// Lua states are NOT thread-safe, so we use a pool with mutex protection.
+// Each HTTP worker thread has its own dedicated Lua VM via thread-local storage.
+// This eliminates mutex contention and provides better performance than pooling.
 //
 // Script Caching:
 // Scripts are cached using the shared FileCache module which supports
@@ -24,16 +24,19 @@ const FileCache = @import("../cache/file_cache.zig").FileCache;
 const MAX_KEY_SIZE: usize = 256;
 
 /// Configuration for Lua sandbox limits
+/// All settings have safe defaults that can be overridden via configuration
 pub const SandboxConfig = struct {
     /// Maximum number of Lua instructions per script execution (0 = unlimited)
+    /// Default: 100,000 instructions (safe default to prevent infinite loops)
     max_instructions: u32 = 100_000,
     /// Maximum memory in bytes for Lua state (0 = unlimited, not yet implemented)
     max_memory: usize = 0,
     /// Enable sandboxing (disables dangerous functions)
+    /// Default: true (safe default to prevent malicious scripts)
     enable_sandbox: bool = true,
 };
 
-/// Default sandbox configuration
+/// Default sandbox configuration with safe defaults
 pub const default_sandbox_config = SandboxConfig{};
 
 /// Bytecode cache entry (reserved for future bytecode precompilation)
@@ -49,83 +52,31 @@ fn instructionLimitHook(lua: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo)
     _ = lua.raiseErrorStr("instruction limit exceeded", .{});
 }
 
-/// No-op hook used to disable hooks when returning Lua state to pool
+/// No-op hook used to reset hooks after script execution
 fn noopHook(_: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo) void {}
 
-const LuaStatePool = struct {
-    states: []*ziglua.Lua,
-    states_len: usize,
-    mutex: std.Thread.Mutex,
+/// Thread-local Lua state wrapper
+/// Each HTTP worker thread gets its own Lua VM for optimal performance
+const ThreadLocalLua = struct {
+    lua: *ziglua.Lua,
     allocator: std.mem.Allocator,
     sandbox_config: SandboxConfig,
 
-    fn init(allocator: std.mem.Allocator, initial_size: usize, sandbox_config: SandboxConfig) !LuaStatePool {
-        const states = try allocator.alloc(*ziglua.Lua, initial_size * 2); // Allocate space for growth
-
-        // Pre-allocate Lua states
-        var i: usize = 0;
-        while (i < initial_size) : (i += 1) {
-            var lua = try ziglua.Lua.init(allocator);
-            lua.openLibs();
-            if (sandbox_config.enable_sandbox) {
-                applySandbox(lua);
-            }
-            states[i] = lua;
+    fn init(allocator: std.mem.Allocator, sandbox_config: SandboxConfig) !ThreadLocalLua {
+        var lua = try ziglua.Lua.init(allocator);
+        lua.openLibs();
+        if (sandbox_config.enable_sandbox) {
+            applySandbox(lua);
         }
-
-        return LuaStatePool{
-            .states = states,
-            .states_len = initial_size,
-            .mutex = std.Thread.Mutex{},
+        return ThreadLocalLua{
+            .lua = lua,
             .allocator = allocator,
             .sandbox_config = sandbox_config,
         };
     }
 
-    fn deinit(self: *LuaStatePool) void {
-        for (self.states[0..self.states_len]) |lua| {
-            lua.deinit();
-        }
-        self.allocator.free(self.states);
-    }
-
-    fn acquire(self: *LuaStatePool) !*ziglua.Lua {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        if (self.states_len > 0) {
-            self.states_len -= 1;
-            return self.states[self.states_len];
-        }
-
-        // Create new state if pool is empty
-        var lua = try ziglua.Lua.init(self.allocator);
-        lua.openLibs();
-        if (self.sandbox_config.enable_sandbox) {
-            applySandbox(lua);
-        }
-        return lua;
-    }
-
-    fn release(self: *LuaStatePool, lua: *ziglua.Lua) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        // Clear the stack before returning to pool
-        lua.setTop(0);
-
-        // Disable any hooks that might have been set (by setting empty mask)
-        // Using a no-op hook with empty mask effectively disables all hooks
-        lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-
-        // Add back to pool if there's space
-        if (self.states_len < self.states.len) {
-            self.states[self.states_len] = lua;
-            self.states_len += 1;
-        } else {
-            // Pool is full, just deinit the state
-            lua.deinit();
-        }
+    fn deinit(self: *ThreadLocalLua) void {
+        self.lua.deinit();
     }
 
     /// Apply sandbox restrictions by removing dangerous functions
@@ -171,6 +122,10 @@ const LuaStatePool = struct {
     }
 };
 
+/// Thread-local storage for Lua VM
+/// Each worker thread automatically gets its own Lua state
+threadlocal var tls_lua: ?ThreadLocalLua = null;
+
 /// Key-value pair for headers and query parameters (luvit/Node.js style)
 pub const KeyValue = struct {
     key: []const u8,
@@ -192,7 +147,6 @@ fn pushKeyValueToTable(lua: *ziglua.Lua, key: []const u8, value: []const u8) voi
 pub const LuaHandler = struct {
     allocator: std.mem.Allocator,
     scripts_dir: []const u8,
-    pool: LuaStatePool,
     file_cache: *FileCache, // Shared global file cache
     sandbox_config: SandboxConfig,
     // Bytecode cache for precompiled Lua scripts (infrastructure for future optimization)
@@ -206,13 +160,9 @@ pub const LuaHandler = struct {
     }
 
     pub fn initWithConfig(allocator: std.mem.Allocator, scripts_dir: []const u8, file_cache: *FileCache, sandbox_config: SandboxConfig) !LuaHandler {
-        // Initialize pool with 4 Lua states
-        const pool = try LuaStatePool.init(allocator, 4, sandbox_config);
-
         return LuaHandler{
             .allocator = allocator,
             .scripts_dir = scripts_dir,
-            .pool = pool,
             .file_cache = file_cache,
             .sandbox_config = sandbox_config,
             .bytecode_cache = std.StringHashMap(BytecodeEntry).init(allocator),
@@ -231,9 +181,18 @@ pub const LuaHandler = struct {
             self.allocator.free(entry.value_ptr.bytecode);
         }
         self.bytecode_cache.deinit();
-
-        self.pool.deinit();
         // Don't deinit file_cache - it's shared and owned by AppContext
+        // Thread-local Lua states will be cleaned up when threads exit
+    }
+
+    /// Get or create the thread-local Lua state for the current worker thread
+    fn getThreadLocalLua(self: *LuaHandler) !*ziglua.Lua {
+        if (tls_lua) |*tl| {
+            return tl.lua;
+        }
+        // Initialize thread-local Lua state for this worker thread
+        tls_lua = try ThreadLocalLua.init(self.allocator, self.sandbox_config);
+        return tls_lua.?.lua;
     }
 
     /// Clear bytecode cache (useful for hot-reloading)
@@ -281,9 +240,11 @@ pub const LuaHandler = struct {
         headers: []const KeyValue,
         query_params: []const KeyValue,
     ) ![]const u8 {
-        // Get a Lua state from the pool
-        var lua = try self.pool.acquire();
-        defer self.pool.release(lua);
+        // Get the thread-local Lua state (one per worker thread)
+        var lua = try self.getThreadLocalLua();
+
+        // Clear the stack before starting
+        lua.setTop(0);
 
         // Set up instruction limit hook if configured
         if (self.sandbox_config.max_instructions > 0) {
@@ -302,6 +263,7 @@ pub const LuaHandler = struct {
         // Load the script (doesn't execute yet)
         lua.doString(script_z) catch |err| {
             std.debug.print("Error loading Lua script: {}\n", .{err});
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua script load failed"}
             );
@@ -310,6 +272,7 @@ pub const LuaHandler = struct {
         // The script should return a table with a 'handle' function
         // Get the module table from the stack
         if (lua.getTop() != 1) {
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Script must return a table"}
             );
@@ -318,6 +281,7 @@ pub const LuaHandler = struct {
         // Get the handle function from the table
         _ = lua.getField(1, "handle");
         if (lua.typeOf(-1) != .function) {
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Script must export a 'handle' function"}
             );
@@ -358,6 +322,7 @@ pub const LuaHandler = struct {
             const parsed = std.json.parseFromSlice(std.json.Value, arena, request_data, .{}) catch |err| {
                 std.debug.print("JSON parse error: {}\n", .{err});
                 lua.pop(2); // Pop function and table
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
                 return try arena.dupe(u8,
                     \\{"status":"error","message":"Invalid JSON in request body"}
                 );
@@ -367,6 +332,7 @@ pub const LuaHandler = struct {
             // Add body field
             self.pushJsonValue(lua, parsed.value) catch {
                 lua.pop(2);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
                 return try arena.dupe(u8,
                     \\{"status":"error","message":"Failed to convert JSON to Lua"}
                 );
@@ -380,6 +346,7 @@ pub const LuaHandler = struct {
             // Note: When instruction limit is exceeded, the hook raises an error
             // which is caught here. We can't distinguish between instruction limit
             // and other Lua errors, so we return a generic error message.
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua handler execution failed"}
             );
@@ -388,6 +355,9 @@ pub const LuaHandler = struct {
         // Convert return value to JSON using arena allocator
         const response_json = try self.luaValueToJson(arena, lua, -1);
         lua.pop(1); // Pop the return value
+
+        // Clear instruction limit hook
+        lua.setHook(ziglua.wrap(noopHook), .{}, 0);
 
         return response_json;
     }

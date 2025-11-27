@@ -190,6 +190,21 @@ log_level: "info"
 # auth_protected_paths: "/api/*"  # Paths requiring authentication
 # auth_public_paths: "/api/login, /api/register"  # Always public paths
 
+# Lua Sandbox Configuration
+# --------------------------
+# lua_sandbox_enabled: Enable Lua sandboxing
+#   - true: Dangerous functions (io, debug, os.execute, etc.) are disabled
+#   - false: Full Lua library access (use only for trusted scripts)
+#   - Default: true (safe default)
+lua_sandbox_enabled: true
+
+# lua_max_instructions: Maximum Lua instructions per script execution
+#   - Prevents infinite loops and runaway scripts
+#   - 0 = unlimited (not recommended for production)
+#   - 100000 = default, suitable for most scripts
+#   - Increase for complex scripts, decrease for stricter resource control
+lua_max_instructions: 100000
+
 # Configuration Tips
 # ------------------
 # 1. For development: Set security_headers to false, log_level to "debug"

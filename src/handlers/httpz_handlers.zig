@@ -72,9 +72,19 @@ pub const AppContext = struct {
 
         // Initialize Lua handler if enabled
         if (config.enable_lua) {
-            ctx.lua_handler = try LuaHandler.init(allocator, config.lua_scripts_dir, file_cache);
+            // Create sandbox config from configuration
+            const sandbox_config = lua_mod.SandboxConfig{
+                .max_instructions = config.lua_max_instructions,
+                .enable_sandbox = config.lua_sandbox_enabled,
+            };
+            ctx.lua_handler = try LuaHandler.initWithConfig(allocator, config.lua_scripts_dir, file_cache, sandbox_config);
             errdefer if (ctx.lua_handler) |*lua| lua.deinit();
-            ctx.logger.info("Lua handler initialized with scripts from: {s} (reload: {s}, max_cache_file_size: {})", .{ config.lua_scripts_dir, @tagName(config.reload), config.max_cache_file_size });
+            ctx.logger.info("Lua handler initialized with scripts from: {s} (reload: {s}, sandbox: {s}, max_instructions: {})", .{
+                config.lua_scripts_dir,
+                @tagName(config.reload),
+                if (config.lua_sandbox_enabled) "enabled" else "disabled",
+                config.lua_max_instructions,
+            });
         }
 
         // Initialize GraphQL handler if enabled

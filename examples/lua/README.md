@@ -30,17 +30,18 @@ For improved performance:
 
 ### Sandboxing and Resource Limits
 
-For security and stability:
+For security and stability (configurable via `zhttpd.yaml`):
 - Dangerous functions are disabled (`io`, `debug`, `os.execute`, etc.)
 - Instruction count limits prevent infinite loops
-- Configurable via `SandboxConfig`
+- `lua_sandbox_enabled: true` (safe default)
+- `lua_max_instructions: 100000` (safe default)
 
 ## Thread Safety
 
-The Lua handler uses a **pool of Lua states** to ensure thread-safety:
-- Each request gets its own Lua state from the pool
-- Lua states are NOT thread-safe, so we use mutex-protected pooling
-- After handling a request, the state is cleared and returned to the pool
+Each HTTP worker thread has its own **dedicated Lua VM** via thread-local storage:
+- No mutex contention for better performance
+- Each worker thread processes requests with its own Lua state
+- Lua states are automatically initialized on first use per thread
 - This allows efficient multi-threaded, multi-connection concurrent processing
 
 ## Request Structure
@@ -244,10 +245,10 @@ return {
 
 ## Performance Considerations
 
-1. **Lua State Pooling**: States are reused across requests for efficiency
+1. **Thread-Local Lua VMs**: Each worker thread has its own Lua VM (no mutex contention)
 2. **Memory Management**: Each state's stack is cleared after use
-3. **Concurrency**: Pool size can be adjusted in `lua.zig` (default: 4 states)
-4. **Data Persistence**: In-memory data is per-state. For shared data, use external storage
+3. **Concurrency**: One Lua VM per worker thread (controlled by `thread_pool_size`)
+4. **Data Persistence**: In-memory data is per-thread. For shared data, use external storage
 5. **Bytecode Caching**: Scripts are precompiled for faster execution
 
 ## Security Notes
@@ -264,7 +265,15 @@ return {
 
 ## Configuration
 
-Sandbox configuration can be customized via `SandboxConfig`:
+Sandbox settings can be configured via `zhttpd.yaml`:
+
+```yaml
+# Lua sandbox configuration (safe defaults)
+lua_sandbox_enabled: true      # Enable sandbox restrictions (default: true)
+lua_max_instructions: 100000   # Max instructions per execution (0 = unlimited, default: 100000)
+```
+
+Or programmatically via `SandboxConfig`:
 
 ```zig
 const config = SandboxConfig{
@@ -275,6 +284,14 @@ const config = SandboxConfig{
 ```
 
 ## Advanced Topics
+
+### Thread-Local Lua VMs
+
+Each HTTP worker thread has its own dedicated Lua VM via thread-local storage:
+
+- No mutex contention for better performance
+- Each worker processes requests with its own Lua state
+- Lua states are automatically cleaned up when threads exit
 
 ### Shared State Across Requests
 
@@ -289,19 +306,18 @@ Since each Lua state is isolated, in-memory data is not shared between requests 
 You can extend the Lua environment by modifying `lua.zig`:
 
 ```zig
-// In LuaStatePool.init()
+// In ThreadLocalLua.init()
 lua.openLibs();
 // Register custom libraries here
 ```
 
 ### Performance Tuning
 
-Adjust the pool size based on your concurrency needs:
+Each HTTP worker thread automatically gets its own Lua VM:
 
-```zig
-// In lua.zig, LuaHandler.init()
-const pool = try LuaStatePool.init(allocator, 8); // Increase pool size
-```
+- Thread-local storage eliminates mutex contention
+- No pool management overhead
+- Configure `thread_pool_size` in zhttpd.yaml to adjust the number of worker threads
 
 ## Troubleshooting
 
@@ -319,7 +335,7 @@ const pool = try LuaStatePool.init(allocator, 8); // Increase pool size
 
 **Instruction limit exceeded:**
 - Your script may have an infinite loop
-- Increase `max_instructions` in sandbox config if needed
+- Increase `lua_max_instructions` in zhttpd.yaml if needed
 - Optimize your Lua code
 
 **Concurrency issues:**
