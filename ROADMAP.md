@@ -84,13 +84,14 @@ The following are **optional enhancements** that could be considered for future 
 
 **Priority:** Medium  
 **Effort:** Low-Medium
+**Status:** ✅ Completed (v0.2.0)
 
-- [ ] Integrate logger throughout codebase (currently has 23 std.debug.print instances that should use the logger)
-- [ ] Metrics endpoint (Prometheus format)
-- [ ] Health check endpoint
-- [ ] Distributed tracing support (OpenTelemetry)
-- [ ] Request ID propagation
-- [ ] Structured JSON logging option
+- [x] Metrics endpoint (Prometheus format) - /metrics endpoint with request counts, latency histograms, and more
+- [x] Health check endpoint - /health endpoint with component status and uptime
+- [x] Request ID propagation - X-Request-ID header propagation across requests
+- [x] Structured JSON logging option - log_format: "json" for structured logging
+- [ ] Integrate remaining std.debug.print instances - Some debug prints intentionally kept for error handling
+- [ ] Distributed tracing support (OpenTelemetry) - Deferred for future
 
 ### Phase 6: Developer Experience
 

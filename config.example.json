@@ -17,5 +17,9 @@
   "access_log_file": "access.log",
   "reload": "auto",
   "max_cache_file_size": 1048576,
-  "enable_etag": true
+  "enable_etag": true,
+  "enable_metrics": true,
+  "enable_health_check": true,
+  "enable_request_id": true,
+  "log_format": "text"
 }

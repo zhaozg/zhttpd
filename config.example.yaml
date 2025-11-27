@@ -44,3 +44,18 @@ auth_script: "auth"  # Lua script name for token validation
 auth_protected_paths: "/api/*"  # Paths requiring authentication
 auth_public_paths: "/api/login, /api/register"  # Always public paths
 
+# Phase 5: Observability
+# -----------------------
+
+# Prometheus Metrics
+enable_metrics: true  # Enable Prometheus metrics endpoint at /metrics
+
+# Health Check
+enable_health_check: true  # Enable health check endpoint at /health
+
+# Request ID Propagation
+enable_request_id: true  # Enable X-Request-ID header propagation
+
+# Structured Logging
+log_format: "text"  # Log format: "text" or "json" (JSON enables structured logging)
+

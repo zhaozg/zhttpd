@@ -14,6 +14,21 @@ pub const LogLevel = enum {
             .err => "ERROR",
         };
     }
+
+    pub fn toJsonLevel(self: LogLevel) []const u8 {
+        return switch (self) {
+            .debug => "debug",
+            .info => "info",
+            .warn => "warn",
+            .err => "error",
+        };
+    }
+};
+
+/// Log output format
+pub const LogFormat = enum {
+    text, // Human-readable format: [timestamp] [LEVEL] message
+    json, // Structured JSON: {"timestamp":"...","level":"...","message":"..."}
 };
 
 const LOG_BUFFER_SIZE = 4096;
@@ -29,8 +44,13 @@ pub const Logger = struct {
     max_log_size: usize,
     max_backup_files: usize,
     current_size: usize,
+    format: LogFormat,
 
     pub fn init(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8) !Logger {
+        return initWithFormat(allocator, level, log_file_path, .text);
+    }
+
+    pub fn initWithFormat(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8, format: LogFormat) !Logger {
         var file: ?std.fs.File = null;
         var current_size: usize = 0;
         var owned_path: ?[]const u8 = null;
@@ -63,6 +83,7 @@ pub const Logger = struct {
             .max_log_size = DEFAULT_MAX_LOG_SIZE,
             .max_backup_files = DEFAULT_MAX_BACKUP_FILES,
             .current_size = current_size,
+            .format = format,
         };
     }
 
@@ -76,6 +97,11 @@ pub const Logger = struct {
     }
 
     pub fn log(self: *Logger, level: LogLevel, comptime fmt: []const u8, args: anytype) void {
+        self.logWithRequestId(level, null, fmt, args);
+    }
+
+    /// Log with optional request ID for tracing
+    pub fn logWithRequestId(self: *Logger, level: LogLevel, request_id: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         // Skip if log level is below configured level
         if (@intFromEnum(level) < @intFromEnum(self.level)) {
             return;
@@ -94,19 +120,56 @@ pub const Logger = struct {
         // Format human-readable timestamp with microsecond precision (YYYY-MM-DD HH:MM:SS.microseconds)
         const timestamp_str = formatTimestamp();
 
-        // Write to console
-        std.debug.print("[{s}] [{s}] {s}\n", .{ timestamp_str, level.toString(), message });
+        // Format output based on configured format
+        var log_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+        const log_line = switch (self.format) {
+            .text => blk: {
+                if (request_id) |rid| {
+                    break :blk std.fmt.bufPrint(&log_buf, "[{s}] [{s}] [{s}] {s}\n", .{
+                        timestamp_str,
+                        level.toString(),
+                        rid,
+                        message,
+                    }) catch return;
+                } else {
+                    break :blk std.fmt.bufPrint(&log_buf, "[{s}] [{s}] {s}\n", .{
+                        timestamp_str,
+                        level.toString(),
+                        message,
+                    }) catch return;
+                }
+            },
+            .json => blk: {
+                // Escape message for JSON
+                var escaped_msg: [LOG_BUFFER_SIZE]u8 = undefined;
+                const escaped = escapeJsonString(message, &escaped_msg);
+
+                if (request_id) |rid| {
+                    break :blk std.fmt.bufPrint(&log_buf, "{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"request_id\":\"{s}\",\"message\":\"{s}\"}}\n", .{
+                        timestamp_str,
+                        level.toJsonLevel(),
+                        rid,
+                        escaped,
+                    }) catch return;
+                } else {
+                    break :blk std.fmt.bufPrint(&log_buf, "{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"message\":\"{s}\"}}\n", .{
+                        timestamp_str,
+                        level.toJsonLevel(),
+                        escaped,
+                    }) catch return;
+                }
+            },
+        };
+
+        // Write to console (always use text format for readability)
+        if (self.format == .text or request_id == null) {
+            std.debug.print("[{s}] [{s}] {s}\n", .{ timestamp_str, level.toString(), message });
+        } else {
+            std.debug.print("[{s}] [{s}] [{s}] {s}\n", .{ timestamp_str, level.toString(), request_id.?, message });
+        }
 
         // Write to file if configured
         if (self.file) |file| {
-            // Use stack buffer instead of allocation for better performance
-            var log_buf: [LOG_BUFFER_SIZE]u8 = undefined;
-            const log_line = std.fmt.bufPrint(&log_buf, "[{s}] [{s}] {s}\n", .{
-                timestamp_str,
-                level.toString(),
-                message,
-            }) catch return;
-
             _ = file.write(log_line) catch |write_err| {
                 std.debug.print("Failed to write to log file: {}\n", .{write_err});
                 return;
@@ -120,6 +183,36 @@ pub const Logger = struct {
                 };
             }
         }
+    }
+
+    /// Escape a string for JSON
+    fn escapeJsonString(input: []const u8, buf: []u8) []const u8 {
+        var pos: usize = 0;
+        for (input) |c| {
+            const escaped: ?[]const u8 = switch (c) {
+                '"' => "\\\"",
+                '\\' => "\\\\",
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                else => null,
+            };
+            if (escaped) |esc| {
+                if (pos + esc.len > buf.len) break;
+                @memcpy(buf[pos..][0..esc.len], esc);
+                pos += esc.len;
+            } else if (c < 32) {
+                // Escape control characters as \u00XX
+                if (pos + 6 > buf.len) break;
+                _ = std.fmt.bufPrint(buf[pos..][0..6], "\\u{x:0>4}", .{c}) catch break;
+                pos += 6;
+            } else {
+                if (pos >= buf.len) break;
+                buf[pos] = c;
+                pos += 1;
+            }
+        }
+        return buf[0..pos];
     }
 
     /// Format current timestamp as human-readable string with microsecond precision
@@ -417,4 +510,75 @@ test "logger access log format" {
         "TestAgent/1.0",
         1500, // 1.5ms
     );
+}
+
+test "logger json format" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var log_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const log_path = try tmp_dir.dir.realpath(".", &log_path_buf);
+    const full_log_path = try std.fmt.allocPrint(allocator, "{s}/json_test.log", .{log_path});
+    defer allocator.free(full_log_path);
+
+    var logger = try Logger.initWithFormat(allocator, .info, full_log_path, .json);
+    defer logger.deinit();
+
+    logger.info("Test JSON logging", .{});
+
+    // Read the log file and verify JSON format
+    const file = try std.fs.cwd().openFile(full_log_path, .{});
+    defer file.close();
+
+    var read_buf: [1024]u8 = undefined;
+    const bytes_read = try file.readAll(&read_buf);
+    const content = read_buf[0..bytes_read];
+
+    // Verify JSON structure
+    try testing.expect(std.mem.indexOf(u8, content, "\"timestamp\":") != null);
+    try testing.expect(std.mem.indexOf(u8, content, "\"level\":\"info\"") != null);
+    try testing.expect(std.mem.indexOf(u8, content, "\"message\":\"Test JSON logging\"") != null);
+}
+
+test "logger with request id" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var log_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const log_path = try tmp_dir.dir.realpath(".", &log_path_buf);
+    const full_log_path = try std.fmt.allocPrint(allocator, "{s}/reqid_test.log", .{log_path});
+    defer allocator.free(full_log_path);
+
+    var logger = try Logger.initWithFormat(allocator, .info, full_log_path, .json);
+    defer logger.deinit();
+
+    logger.logWithRequestId(.info, "abc123-xyz", "Test with request ID", .{});
+
+    // Read the log file and verify request ID is included
+    const file = try std.fs.cwd().openFile(full_log_path, .{});
+    defer file.close();
+
+    var read_buf: [1024]u8 = undefined;
+    const bytes_read = try file.readAll(&read_buf);
+    const content = read_buf[0..bytes_read];
+
+    try testing.expect(std.mem.indexOf(u8, content, "\"request_id\":\"abc123-xyz\"") != null);
+}
+
+test "logger escape json string" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var logger = try Logger.init(allocator, .info, null);
+    defer logger.deinit();
+
+    var buf: [256]u8 = undefined;
+    const escaped = Logger.escapeJsonString("test\nvalue\"quote", &buf);
+    try testing.expectEqualStrings("test\\nvalue\\\"quote", escaped);
 }
