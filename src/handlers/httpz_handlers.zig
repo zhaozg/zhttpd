@@ -501,9 +501,21 @@ fn logAccess(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response, durati
 fn addRequestIdHeader(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) void {
     if (!ctx.config.enable_request_id) return;
 
+    // Check if client provided a request ID
+    if (req.headers.get(request_id.HEADER_NAME)) |existing| {
+        if (request_id.isValid(existing)) {
+            res.headers.add(request_id.HEADER_NAME, existing);
+            return;
+        }
+    }
+
+    // Generate a new request ID - use arena allocator to ensure lifetime
     var id_buf: [37]u8 = undefined;
-    const req_id = request_id.fromHeadersOrGenerate(req.headers, &id_buf);
-    res.headers.add(request_id.HEADER_NAME, req_id);
+    const generated_id = request_id.generate(&id_buf);
+
+    // Copy to arena to ensure proper lifetime for response
+    const arena_id = res.arena.dupe(u8, generated_id) catch return;
+    res.headers.add(request_id.HEADER_NAME, arena_id);
 }
 
 /// Sanitize log field by removing newlines and control characters
@@ -528,8 +540,10 @@ fn sanitizeLogField(buf: []u8, input: []const u8) []const u8 {
 
 /// Health check endpoint handler
 /// Returns server health status in JSON format
+/// Note: Health check does not record metrics to avoid feedback loops
 fn healthHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    _ = req;
+    // Add request ID header
+    addRequestIdHeader(ctx, req, res);
 
     // Generate health check
     var health = observability.health.check(
@@ -552,8 +566,10 @@ fn healthHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !v
 
 /// Prometheus metrics endpoint handler
 /// Returns metrics in Prometheus text exposition format
+/// Note: Metrics endpoint does not record metrics to avoid feedback loops
 fn metricsHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    _ = req;
+    // Add request ID header
+    addRequestIdHeader(ctx, req, res);
 
     if (ctx.metrics) |metrics| {
         const output = try metrics.toPrometheus(res.arena);

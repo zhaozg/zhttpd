@@ -42,14 +42,15 @@ pub fn generate(buf: *[37]u8) []const u8 {
         random.int(u48),
     }) catch {
         // Fallback: return a simple timestamp-based ID if formatting fails
-        _ = std.fmt.bufPrint(buf, "00000000-0000-0000-0000-000000000000", .{}) catch {};
-        buf[36] = 0;
+        @memset(buf, '0');
+        buf[8] = '-';
+        buf[13] = '-';
+        buf[18] = '-';
+        buf[23] = '-';
         return buf[0..36];
     };
-    _ = written;
 
-    buf[36] = 0;
-    return buf[0..36];
+    return written;
 }
 
 /// Check if a string is a valid request ID format

@@ -218,6 +218,30 @@ lua_max_instructions: 100000
 # 7. Enable rate_limit in production to prevent abuse
 # 8. Configure CORS if serving a web API consumed by browser clients
 
+# Observability (Phase 5)
+# ------------------------
+# enable_metrics: Enable Prometheus metrics endpoint at /metrics
+#   - Exposes request counts, latency histograms, error rates, etc.
+#   - Default: true
+enable_metrics: true
+
+# enable_health_check: Enable health check endpoint at /health
+#   - Returns JSON with component status and uptime
+#   - Useful for load balancers and Kubernetes probes
+#   - Default: true
+enable_health_check: true
+
+# enable_request_id: Enable X-Request-ID header propagation
+#   - Generates unique ID for each request if not provided by client
+#   - Useful for distributed tracing and debugging
+#   - Default: true
+enable_request_id: true
+
+# log_format: Log output format
+#   - "text": Human-readable format (default)
+#   - "json": Structured JSON format for log aggregation
+log_format: "text"
+
 # Example Production Configuration:
 # ----------------------------------
 # host: "0.0.0.0"
