@@ -74,7 +74,7 @@ jobs:
       run: |
         mkdir -p examples/static examples/lua examples/graphql
         echo "<html><body>Hello World</body></html>" > examples/static/index.html
-        cp config.example.json config.json
+        cp config.example.yaml zhttpd.yaml
     
     - name: Run benchmark
       run: |
