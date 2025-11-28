@@ -96,14 +96,26 @@ ip_whitelist: ""
 # Patterns are matched in order, so more specific patterns should come first
 # If not specified, default handlers are used based on feature flags
 #
+# RECOMMENDED: Use sequence format to preserve handler order:
+# handlers:
+#   - pattern: /health
+#     handler: Handler.HealthCheckHandler
+#   - pattern: /metrics
+#     handler: Handler.MetricsHandler
+#   - pattern: /ws
+#     handler: Handler.WebSocketHandler
+#   - pattern: /graphql/playground
+#     handler: Handler.GraphQLPlaygroundHandler
+#   - pattern: /graphql
+#     handler: Handler.GraphQLHandler
+#   - pattern: /api/*
+#     handler: Handler.LuaHandler
+#   - pattern: /*
+#     handler: Handler.StaticFileHandler
+#
+# Alternative: Map format (simpler but order not guaranteed):
 # handlers:
 #   /health: Handler.HealthCheckHandler
-#   /metrics: Handler.MetricsHandler
-#   /ws: Handler.WebSocketHandler
-#   /graphql/playground: Handler.GraphQLPlaygroundHandler
-#   /graphql/ws: Handler.WebSocketHandler
-#   /graphql: Handler.GraphQLHandler
 #   /api/*: Handler.LuaHandler
-#   /events: Handler.SSEHandler
 #   /*: Handler.StaticFileHandler
 

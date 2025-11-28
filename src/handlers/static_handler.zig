@@ -26,6 +26,14 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         return;
     }
 
+    // Check for URL-encoded path traversal attempts
+    // %2e = '.', %2f = '/', %5c = '\'
+    if (containsEncodedTraversal(clean_path)) {
+        res.status = 400;
+        res.body = "Bad Request";
+        return;
+    }
+
     // Check for backslash (Windows-style path separator)
     if (std.mem.indexOf(u8, clean_path, "\\") != null) {
         res.status = 400;
@@ -151,6 +159,38 @@ fn addSecurityHeaders(res: *httpz.Response) void {
     res.headers.add("Strict-Transport-Security", headers.hsts);
     res.headers.add("Referrer-Policy", headers.referrer_policy);
     res.headers.add("Permissions-Policy", headers.permissions_policy);
+}
+
+/// Check for URL-encoded path traversal attempts
+/// Detects common encoded patterns like %2e%2e (..),  %2f (/), %5c (\)
+fn containsEncodedTraversal(path: []const u8) bool {
+    var i: usize = 0;
+    while (i < path.len) : (i += 1) {
+        if (path[i] == '%' and i + 2 < path.len) {
+            const hex = path[i + 1 .. i + 3];
+            // Check for encoded '.' (%2e or %2E)
+            if (std.ascii.eqlIgnoreCase(hex, "2e")) {
+                // Look for pattern like %2e%2e or %2e. or .%2e
+                if (i + 5 < path.len and path[i + 3] == '%') {
+                    const hex2 = path[i + 4 .. i + 6];
+                    if (std.ascii.eqlIgnoreCase(hex2, "2e")) {
+                        return true; // Found %2e%2e
+                    }
+                }
+                if (i + 3 < path.len and path[i + 3] == '.') {
+                    return true; // Found %2e.
+                }
+                if (i >= 1 and path[i - 1] == '.') {
+                    return true; // Found .%2e
+                }
+            }
+            // Check for encoded '/' (%2f or %2F) or '\' (%5c or %5C)
+            if (std.ascii.eqlIgnoreCase(hex, "2f") or std.ascii.eqlIgnoreCase(hex, "5c")) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 // Tests

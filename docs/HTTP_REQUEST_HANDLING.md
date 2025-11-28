@@ -455,9 +455,21 @@ fn myHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void 
 }
 ```
 
-3. Configure in YAML:
+3. Configure in YAML (use sequence format to preserve order):
 
 ```yaml
+# Recommended: Sequence format preserves handler order
+handlers:
+  - pattern: /my-endpoint
+    handler: Handler.MyHandler
+  - pattern: /*
+    handler: Handler.StaticFileHandler
+```
+
+Or use map format (simpler but order not guaranteed):
+
+```yaml
+# Alternative: Map format (order may vary)
 handlers:
   /my-endpoint: Handler.MyHandler
   /*: Handler.StaticFileHandler

@@ -351,35 +351,56 @@ pub const HttpzServer = struct {
         const pattern = mapping.pattern;
         const handler_name = mapping.handler;
 
-        // Check feature flags and skip disabled handlers
+        // Check feature flags and skip disabled handlers with warning
         if (std.mem.eql(u8, handler_name, "Handler.HealthCheckHandler")) {
-            if (!self.context.config.enable_health_check) return;
+            if (!self.context.config.enable_health_check) {
+                self.context.logger.warn("Skipping {s} at {s} - health check feature is disabled", .{ handler_name, pattern });
+                return;
+            }
             router.get(pattern, healthHandler, .{});
             self.context.logger.debug("Registered HealthCheckHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.MetricsHandler")) {
-            if (!self.context.config.enable_metrics) return;
+            if (!self.context.config.enable_metrics) {
+                self.context.logger.warn("Skipping {s} at {s} - metrics feature is disabled", .{ handler_name, pattern });
+                return;
+            }
             router.get(pattern, metricsHandler, .{});
             self.context.logger.debug("Registered MetricsHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.WebSocketHandler")) {
-            if (!self.context.config.enable_websocket) return;
+            if (!self.context.config.enable_websocket) {
+                self.context.logger.warn("Skipping {s} at {s} - websocket feature is disabled", .{ handler_name, pattern });
+                return;
+            }
             router.get(pattern, websocketHandler, .{});
             self.context.logger.debug("Registered WebSocketHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLHandler")) {
-            if (!self.context.config.enable_graphql) return;
+            if (!self.context.config.enable_graphql) {
+                self.context.logger.warn("Skipping {s} at {s} - graphql feature is disabled", .{ handler_name, pattern });
+                return;
+            }
             router.get(pattern, graphqlGet, .{});
             router.post(pattern, graphqlPost, .{});
             self.context.logger.debug("Registered GraphQLHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLPlaygroundHandler")) {
-            if (!self.context.config.enable_graphql) return;
+            if (!self.context.config.enable_graphql) {
+                self.context.logger.warn("Skipping {s} at {s} - graphql feature is disabled", .{ handler_name, pattern });
+                return;
+            }
             router.get(pattern, graphqlPlayground, .{});
             self.context.logger.debug("Registered GraphQLPlaygroundHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.LuaHandler")) {
-            if (!self.context.config.enable_lua) return;
+            if (!self.context.config.enable_lua) {
+                self.context.logger.warn("Skipping {s} at {s} - lua feature is disabled", .{ handler_name, pattern });
+                return;
+            }
             router.get(pattern, luaApi, .{});
             router.post(pattern, luaApi, .{});
             self.context.logger.debug("Registered LuaHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.SSEHandler")) {
-            if (!self.context.config.enable_sse) return;
+            if (!self.context.config.enable_sse) {
+                self.context.logger.warn("Skipping {s} at {s} - sse feature is disabled", .{ handler_name, pattern });
+                return;
+            }
             router.get(pattern, sseHandler, .{});
             self.context.logger.debug("Registered SSEHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.StaticFileHandler")) {

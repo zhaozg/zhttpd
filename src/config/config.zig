@@ -153,13 +153,21 @@ pub fn getDefaultHandlers(allocator: std.mem.Allocator) ![]HandlerMapping {
     };
 
     var mappings = try allocator.alloc(HandlerMapping, default_mappings.len);
-    errdefer allocator.free(mappings);
+    var initialized: usize = 0;
+    errdefer {
+        for (mappings[0..initialized]) |mapping| {
+            allocator.free(mapping.pattern);
+            allocator.free(mapping.handler);
+        }
+        allocator.free(mappings);
+    }
 
     for (default_mappings, 0..) |dm, i| {
         mappings[i] = .{
             .pattern = try allocator.dupe(u8, dm.pattern),
             .handler = try allocator.dupe(u8, dm.handler),
         };
+        initialized = i + 1;
     }
     return mappings;
 }
@@ -342,12 +350,59 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
 }
 
 /// Parse handlers mapping from YAML document
+/// Supports both sequence format (ordered) and map format (unordered)
 fn parseHandlersFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml) ![]HandlerMapping {
     // Try to find the handlers section in the document
     if (y.docs.items.len > 0) {
         const doc = y.docs.items[0];
         if (doc.asMap()) |doc_map| {
             if (doc_map.get("handlers")) |handlers_val| {
+                // Try sequence format first (preserves order):
+                // handlers:
+                //   - pattern: /health
+                //     handler: Handler.HealthCheckHandler
+                if (handlers_val.asList()) |handlers_list| {
+                    // First pass: count valid handler entries
+                    var count: usize = 0;
+                    for (handlers_list) |item| {
+                        if (item.asMap()) |item_map| {
+                            if (item_map.get("pattern") != null and item_map.get("handler") != null) {
+                                count += 1;
+                            }
+                        }
+                    }
+
+                    // Second pass: allocate and populate mappings
+                    var mappings = try allocator.alloc(HandlerMapping, count);
+                    var initialized: usize = 0;
+                    errdefer {
+                        for (mappings[0..initialized]) |mapping| {
+                            allocator.free(mapping.pattern);
+                            allocator.free(mapping.handler);
+                        }
+                        allocator.free(mappings);
+                    }
+
+                    for (handlers_list) |item| {
+                        if (item.asMap()) |item_map| {
+                            const pattern_val = item_map.get("pattern") orelse continue;
+                            const handler_val = item_map.get("handler") orelse continue;
+                            const pattern = pattern_val.asScalar() orelse continue;
+                            const handler_name = handler_val.asScalar() orelse continue;
+
+                            mappings[initialized] = .{
+                                .pattern = try allocator.dupe(u8, pattern),
+                                .handler = try allocator.dupe(u8, handler_name),
+                            };
+                            initialized += 1;
+                        }
+                    }
+                    return mappings;
+                }
+
+                // Fall back to map format (order not guaranteed):
+                // handlers:
+                //   /health: Handler.HealthCheckHandler
                 if (handlers_val.asMap()) |handlers_map| {
                     // First pass: count valid handler entries
                     var count: usize = 0;
@@ -360,17 +415,23 @@ fn parseHandlersFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml) ![]Handler
 
                     // Second pass: allocate and populate mappings
                     var mappings = try allocator.alloc(HandlerMapping, count);
-                    errdefer allocator.free(mappings);
+                    var initialized: usize = 0;
+                    errdefer {
+                        for (mappings[0..initialized]) |mapping| {
+                            allocator.free(mapping.pattern);
+                            allocator.free(mapping.handler);
+                        }
+                        allocator.free(mappings);
+                    }
 
-                    var i: usize = 0;
                     const keys = handlers_map.keys();
                     for (keys, values) |pattern, handler_value| {
                         if (handler_value.asScalar()) |handler_name| {
-                            mappings[i] = .{
+                            mappings[initialized] = .{
                                 .pattern = try allocator.dupe(u8, pattern),
                                 .handler = try allocator.dupe(u8, handler_name),
                             };
-                            i += 1;
+                            initialized += 1;
                         }
                     }
                     return mappings;
@@ -436,10 +497,42 @@ test "yaml config parsing" {
     try testing.expect(cfg.handlers.len > 0);
 }
 
-test "yaml config with custom handlers" {
+test "yaml config with custom handlers using sequence format" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
+    // Use sequence format to guarantee handler order
+    const yaml_content =
+        \\host: "0.0.0.0"
+        \\port: 8080
+        \\static_dir: "./static"
+        \\lua_scripts_dir: "./lua"
+        \\handlers:
+        \\  - pattern: /api/*
+        \\    handler: Handler.LuaHandler
+        \\  - pattern: /*
+        \\    handler: Handler.StaticFileHandler
+    ;
+
+    const cfg = try parseYaml(allocator, yaml_content);
+    defer cfg.deinit();
+
+    // Should have 2 custom handlers
+    try testing.expect(cfg.handlers.len == 2);
+
+    // Sequence format preserves order - verify order is correct
+    try testing.expectEqualStrings("/api/*", cfg.handlers[0].pattern);
+    try testing.expectEqualStrings("Handler.LuaHandler", cfg.handlers[0].handler);
+
+    try testing.expectEqualStrings("/*", cfg.handlers[1].pattern);
+    try testing.expectEqualStrings("Handler.StaticFileHandler", cfg.handlers[1].handler);
+}
+
+test "yaml config with custom handlers using map format" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Map format - order is not guaranteed by YAML spec
     const yaml_content =
         \\host: "0.0.0.0"
         \\port: 8080
@@ -456,13 +549,19 @@ test "yaml config with custom handlers" {
     // Should have 2 custom handlers
     try testing.expect(cfg.handlers.len == 2);
 
-    // Check first handler
-    try testing.expectEqualStrings("/api/*", cfg.handlers[0].pattern);
-    try testing.expectEqualStrings("Handler.LuaHandler", cfg.handlers[0].handler);
-
-    // Check second handler
-    try testing.expectEqualStrings("/*", cfg.handlers[1].pattern);
-    try testing.expectEqualStrings("Handler.StaticFileHandler", cfg.handlers[1].handler);
+    // Map format - just verify both handlers exist (order not guaranteed)
+    var found_lua = false;
+    var found_static = false;
+    for (cfg.handlers) |h| {
+        if (std.mem.eql(u8, h.pattern, "/api/*") and std.mem.eql(u8, h.handler, "Handler.LuaHandler")) {
+            found_lua = true;
+        }
+        if (std.mem.eql(u8, h.pattern, "/*") and std.mem.eql(u8, h.handler, "Handler.StaticFileHandler")) {
+            found_static = true;
+        }
+    }
+    try testing.expect(found_lua);
+    try testing.expect(found_static);
 }
 
 test "default handlers" {
