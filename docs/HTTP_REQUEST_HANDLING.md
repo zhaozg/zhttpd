@@ -52,17 +52,37 @@ zhttpd follows an event-driven, modular architecture that processes HTTP request
 // In main.zig - Server initialization
 var server = try httpz_handlers.HttpzServer.init(allocator, cfg);
 
-// In AppContext.init() - Resource initialization
+// In AppContext.init() - Resource initialization with proper error handling
 pub fn init(allocator: std.mem.Allocator, config: Config) !AppContext {
-    // Initialize logger
-    var logger = try Logger.initWithFormat(...);
+    // Initialize logger with format from config
+    var logger = try Logger.initWithFormat(allocator, log_level, config.log_file, log_format);
+    errdefer logger.deinit();
     
-    // Initialize file cache
+    // Initialize file cache (shared across all handlers)
     const file_cache = try allocator.create(FileCache);
+    errdefer allocator.destroy(file_cache);
+    file_cache.* = FileCache.init(allocator, config.reload, config.max_cache_file_size);
+    errdefer file_cache.deinit();
+    
+    // Initialize context with handlers and middleware
+    var ctx = AppContext{
+        .allocator = allocator,
+        .config = config,
+        .file_cache = file_cache,
+        .logger = logger,
+        .start_time = std.time.timestamp(),
+    };
+    
+    // Initialize Lua handler if enabled
+    if (config.enable_lua) {
+        ctx.lua_handler = try LuaHandler.initWithConfig(allocator, config.lua_scripts_dir, ...);
+        errdefer if (ctx.lua_handler) |*lua| lua.deinit();
+    }
     
     // Initialize middleware (rate limiter, CORS, auth)
-    // Initialize handlers (Lua, GraphQL)
     // Initialize observability (metrics, health)
+    
+    return ctx;
 }
 ```
 
@@ -402,13 +422,19 @@ pub const MyMiddleware = struct {
         return .{ .config = config };
     }
 
+    /// Check if request should proceed
+    /// Returns true to continue, false to block
     pub fn check(self: *MyMiddleware, req: *Request, res: *Response) bool {
-        // Return true to continue, false to block
         if (self.shouldBlock(req)) {
             res.status = 403;
+            res.body = "Forbidden";
             return false;
         }
         return true;
+    }
+    
+    pub fn deinit(self: *MyMiddleware) void {
+        // Clean up resources
     }
 };
 ```
@@ -418,7 +444,39 @@ pub const MyMiddleware = struct {
 ```zig
 pub const AppContext = struct {
     // ...existing fields...
+    
+    // Note: Each middleware is optional to support configuration-driven enablement.
+    // For many middleware components, consider grouping related ones or using
+    // a middleware registry pattern for better scalability.
     my_middleware: ?MyMiddleware = null,
+};
+```
+
+**Alternative: Middleware Registry Pattern**
+
+For servers with many middleware components, consider a registry approach:
+
+```zig
+pub const MiddlewareRegistry = struct {
+    items: std.ArrayList(MiddlewareEntry),
+    
+    pub const MiddlewareEntry = struct {
+        name: []const u8,
+        priority: u32,  // Lower = earlier execution
+        check_fn: *const fn(req: *Request, res: *Response) bool,
+    };
+    
+    pub fn register(self: *MiddlewareRegistry, entry: MiddlewareEntry) !void {
+        try self.items.append(entry);
+        // Sort by priority
+    }
+    
+    pub fn apply(self: *MiddlewareRegistry, req: *Request, res: *Response) bool {
+        for (self.items.items) |entry| {
+            if (!entry.check_fn(req, res)) return false;
+        }
+        return true;
+    }
 };
 ```
 
