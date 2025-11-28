@@ -2,30 +2,30 @@
 
 This directory contains example Lua scripts that demonstrate dynamic content generation with zhttpd.
 
-## Per-Request Context API (New in v0.4)
+## Handler API
 
-zhttpd now supports a **Per-Request Context API** that provides direct access to httpz Request and Response objects. This is the preferred way to write new Lua handlers.
+zhttpd uses a clear three-parameter handler signature that provides direct access to httpz Request and Response objects.
 
-### Context-Based Handler
+### Handler Signature
 
 ```lua
-function handle(ctx)
+function handle(request, response, context)
     -- Access request data via methods
-    local method = ctx.req:method()
-    local path = ctx.req:path()
-    local header = ctx.req:header("content-type")
-    local body = ctx.req:body()
+    local method = request:method()
+    local path = request:path()
+    local header = request:header("content-type")
+    local body = request:body()
     
     -- Set response properties
-    ctx.res:status(200)
-    ctx.res:header("X-Custom-Header", "value")
-    ctx.res:content_type("application/json")
+    response:status(200)
+    response:header("X-Custom-Header", "value")
+    response:content_type("application/json")
     
     -- Use per-request data storage
-    ctx.data.user_id = "12345"
-    ctx.data.processed = true
+    context.user_id = "12345"
+    context.processed = true
     
-    return { status = "success", user = ctx.data.user_id }
+    return { status = "success", user = context.user_id }
 end
 
 return { handle = handle }
@@ -35,47 +35,31 @@ return { handle = handle }
 
 | Method | Description |
 |--------|-------------|
-| `ctx.req:method()` | Get HTTP method (GET, POST, etc.) |
-| `ctx.req:path()` | Get request path |
-| `ctx.req:url()` | Get full URL with query string |
-| `ctx.req:header(name)` | Get specific header value |
-| `ctx.req:headers()` | Get all headers as table |
-| `ctx.req:query(name)` | Get query parameter value |
-| `ctx.req:query_all()` | Get all query parameters as table |
-| `ctx.req:body()` | Get parsed JSON body or raw string |
-| `ctx.req:body_raw()` | Get raw body string |
-| `ctx.req:param(name)` | Get URL path parameter |
+| `request:method()` | Get HTTP method (GET, POST, etc.) |
+| `request:path()` | Get request path |
+| `request:url()` | Get full URL with query string |
+| `request:header(name)` | Get specific header value |
+| `request:headers()` | Get all headers as table |
+| `request:query(name)` | Get query parameter value |
+| `request:query_all()` | Get all query parameters as table |
+| `request:body()` | Get parsed JSON body or raw string |
+| `request:body_raw()` | Get raw body string |
+| `request:param(name)` | Get URL path parameter |
 
 ### Response Methods
 
 | Method | Description |
 |--------|-------------|
-| `ctx.res:status(code)` | Set HTTP status code |
-| `ctx.res:header(name, value)` | Set response header |
-| `ctx.res:content_type(type)` | Set Content-Type header |
-| `ctx.res:body(content)` | Set response body directly |
+| `response:status(code)` | Set/get HTTP status code |
+| `response:header(name, value)` | Set response header |
+| `response:content_type(type)` | Set/get Content-Type header |
+| `response:body(content)` | Set/get response body directly |
 
-### Per-Request Data
+### Context Data
 
-The `ctx.data` table is a Lua table for storing per-request data that persists throughout request processing.
+The `context` parameter is a Lua table for storing per-request data that persists throughout request processing.
 
 For complete documentation, see [docs/LUA_PROGRAMMING_GUIDE.md](../../docs/LUA_PROGRAMMING_GUIDE.md).
-
-## Legacy API (Still Supported)
-
-The legacy request table API is still supported for backward compatibility. Scripts can detect which API is being used:
-
-```lua
-function handle(ctx_or_request)
-    if ctx_or_request.req then
-        -- New context style
-        return handle_context(ctx_or_request)
-    else
-        -- Legacy style
-        return handle_legacy(ctx_or_request)
-    end
-end
-```
 
 ## Features
 

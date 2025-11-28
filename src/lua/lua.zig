@@ -482,6 +482,7 @@ pub const LuaHandler = struct {
         // Load the script
         lua.doString(script_z) catch |err| {
             std.debug.print("Error loading Lua script: {}\n", .{err});
+            lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua script load failed"}
@@ -490,6 +491,7 @@ pub const LuaHandler = struct {
 
         // The script should return a table with a 'handle' function
         if (lua.getTop() != 1) {
+            lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Script must return a table"}
@@ -499,18 +501,20 @@ pub const LuaHandler = struct {
         // Get the handle function from the table
         _ = lua.getField(1, "handle");
         if (lua.typeOf(-1) != .function) {
+            lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Script must export a 'handle' function"}
             );
         }
 
-        // Push the context object with req, res, and data
-        context.pushContext(lua, req, res, arena);
+        // Push handler arguments: request, response, context (3 arguments)
+        context.pushHandlerArgs(lua, req, res, arena);
 
-        // Call the handle function with context
-        lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
+        // Call the handle function with 3 arguments: handle(request, response, context)
+        lua.protectedCall(.{ .args = 3, .results = 1 }) catch |err| {
             std.debug.print("Error calling Lua handler: {}\n", .{err});
+            lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return try arena.dupe(u8,
                 \\{"status":"error","message":"Lua handler execution failed"}

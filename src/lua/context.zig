@@ -6,33 +6,33 @@
 //!
 //! ## Design
 //!
-//! The context module exposes three main objects to Lua:
-//! - `ctx.req`: Request object with methods to access request data
-//! - `ctx.res`: Response object with methods to set response data
-//! - `ctx.data`: A Lua table for storing per-request user data
+//! The handler function receives three separate parameters:
+//! - `request`: Request object with methods to access request data
+//! - `response`: Response object with methods to set response data
+//! - `context`: A Lua table for storing per-request user data
 //!
 //! ## Usage in Lua
 //!
 //! ```lua
-//! function handle(ctx)
+//! function handle(request, response, context)
 //!     -- Access request data
-//!     local method = ctx.req:method()
-//!     local path = ctx.req:path()
-//!     local header = ctx.req:header("content-type")
-//!     local query_param = ctx.req:query("page")
-//!     local body = ctx.req:body()
+//!     local method = request:method()
+//!     local path = request:path()
+//!     local header = request:header("content-type")
+//!     local query_param = request:query("page")
+//!     local body = request:body()
 //!
 //!     -- Set response data
-//!     ctx.res:status(200)
-//!     ctx.res:header("X-Custom-Header", "value")
-//!     ctx.res:content_type("application/json")
+//!     response:status(200)
+//!     response:header("X-Custom-Header", "value")
+//!     response:content_type("application/json")
 //!
 //!     -- Use per-request data storage
-//!     ctx.data.user_id = "12345"
-//!     ctx.data.processed = true
+//!     context.user_id = "12345"
+//!     context.processed = true
 //!
-//!     -- Return response body (can also use ctx.res:body())
-//!     return { status = "success", user = ctx.data.user_id }
+//!     -- Return response body
+//!     return { status = "success", user = context.user_id }
 //! end
 //!
 //! return { handle = handle }
@@ -155,11 +155,8 @@ fn registerResponseMetatable(lua: *ziglua.Lua) void {
 }
 
 /// Push a Request userdata onto the Lua stack
-pub fn pushRequest(lua: *ziglua.Lua, req: *httpz.Request, arena: std.mem.Allocator) void {
-    // Store in thread-local for access from methods
-    current_request = req;
-    current_arena = arena;
-
+/// Note: Thread-local storage should be set before calling this via setThreadLocalContext
+fn pushRequestInternal(lua: *ziglua.Lua, req: *httpz.Request) void {
     // Create a table to hold the request (using table instead of userdata for simpler access)
     lua.newTable();
 
@@ -173,11 +170,8 @@ pub fn pushRequest(lua: *ziglua.Lua, req: *httpz.Request, arena: std.mem.Allocat
 }
 
 /// Push a Response userdata onto the Lua stack
-pub fn pushResponse(lua: *ziglua.Lua, res: *httpz.Response, arena: std.mem.Allocator) void {
-    // Store in thread-local for access from methods
-    current_response = res;
-    current_arena = arena;
-
+/// Note: Thread-local storage should be set before calling this via setThreadLocalContext
+fn pushResponseInternal(lua: *ziglua.Lua, res: *httpz.Response) void {
     // Create a table to hold the response
     lua.newTable();
 
@@ -190,22 +184,28 @@ pub fn pushResponse(lua: *ziglua.Lua, res: *httpz.Response, arena: std.mem.Alloc
     lua.setMetatable(-2);
 }
 
-/// Create the full context table with req, res, and data
-pub fn pushContext(lua: *ziglua.Lua, req: *httpz.Request, res: *httpz.Response, arena: std.mem.Allocator) void {
-    // Create main context table
+/// Set thread-local context for the current request
+/// This should be called once before pushing request/response to Lua
+fn setThreadLocalContext(req: *httpz.Request, res: *httpz.Response, arena: std.mem.Allocator) void {
+    current_request = req;
+    current_response = res;
+    current_arena = arena;
+}
+
+/// Push the three handler arguments onto the Lua stack: request, response, context
+/// The handler signature is: function handle(request, response, context)
+pub fn pushHandlerArgs(lua: *ziglua.Lua, req: *httpz.Request, res: *httpz.Response, arena: std.mem.Allocator) void {
+    // Set thread-local storage once for all methods
+    setThreadLocalContext(req, res, arena);
+
+    // Push request object (first argument)
+    pushRequestInternal(lua, req);
+
+    // Push response object (second argument)
+    pushResponseInternal(lua, res);
+
+    // Push context table (third argument) - empty table for per-request user data
     lua.newTable();
-
-    // Add req field
-    pushRequest(lua, req, arena);
-    lua.setField(-2, "req");
-
-    // Add res field
-    pushResponse(lua, res, arena);
-    lua.setField(-2, "res");
-
-    // Add data field (empty table for per-request user data)
-    lua.newTable();
-    lua.setField(-2, "data");
 }
 
 /// Clear the thread-local context after request handling
@@ -526,8 +526,9 @@ fn resHeader(lua: *ziglua.Lua) i32 {
     return 0;
 }
 
-/// Set the Content-Type header
-/// Usage: ctx.res:content_type("application/json")
+/// Set or get the Content-Type header
+/// Usage: response:content_type("application/json") -- setter
+/// Usage: response:content_type() -- getter, returns current content type string
 fn resContentType(lua: *ziglua.Lua) i32 {
     const res = current_response orelse {
         _ = lua.pushString("no response context");
@@ -535,8 +536,29 @@ fn resContentType(lua: *ziglua.Lua) i32 {
     };
 
     if (lua.getTop() < 2) {
-        _ = lua.pushString("content_type requires a string argument");
-        lua.raiseError();
+        // Getter mode - return current content type as string
+        if (res.content_type) |ct| {
+            const ct_str = switch (ct) {
+                .JSON => "application/json",
+                .HTML => "text/html",
+                .TEXT => "text/plain",
+                .CSS => "text/css",
+                .JS => "application/javascript",
+                .XML => "application/xml",
+                .PNG => "image/png",
+                .JPG => "image/jpeg",
+                .GIF => "image/gif",
+                .SVG => "image/svg+xml",
+                .ICO => "image/x-icon",
+                .BINARY => "application/octet-stream",
+                .EVENTS => "text/event-stream",
+                else => "application/octet-stream",
+            };
+            _ = lua.pushString(ct_str);
+        } else {
+            lua.pushNil();
+        }
+        return 1;
     }
 
     const content_type_str = lua.toString(2) catch {

@@ -2,7 +2,7 @@
 -- Demonstrates GET and POST request handling with thread-safe execution
 -- This example implements a simple todo list API
 --
--- Supports both context-based and legacy calling conventions
+-- Handler signature: function handle(request, response, context)
 -- See docs/LUA_PROGRAMMING_GUIDE.md for API documentation
 
 -- In-memory storage (each Lua state has its own copy)
@@ -11,7 +11,7 @@ local todos = {}
 local next_id = 1
 
 -- Helper function to generate response
-local function response(status, data, message)
+local function make_response(status, data, message)
     return {
         status = status,
         data = data,
@@ -26,24 +26,23 @@ local function list_todos()
     for _, todo in pairs(todos) do
         table.insert(todo_list, todo)
     end
-    return response("success", { todos = todo_list })
+    return make_response("success", { todos = todo_list }), 200
 end
 
 -- GET /api/todo/:id - Get a specific todo
 local function get_todo(id)
     local todo = todos[id]
     if todo then
-        return response("success", todo)
+        return make_response("success", todo), 200
     else
-        return response("error", nil, "Todo not found")
+        return make_response("error", nil, "Todo not found"), 404
     end
 end
 
 -- POST /api/todo - Create a new todo
--- Returns: result table, status_code (for context handler to use)
 local function create_todo(body)
     if not body or not body.title then
-        return response("error", nil, "Title is required"), 400
+        return make_response("error", nil, "Title is required"), 400
     end
     
     local todo = {
@@ -57,7 +56,7 @@ local function create_todo(body)
     todos[next_id] = todo
     next_id = next_id + 1
     
-    return response("success", todo, "Todo created successfully"), 201
+    return make_response("success", todo, "Todo created successfully"), 201
 end
 
 -- POST /api/todo/:id/complete - Mark todo as completed
@@ -66,37 +65,34 @@ local function complete_todo(id)
     if todo then
         todo.completed = true
         todo.completed_at = os.time()
-        return response("success", todo, "Todo marked as completed")
+        return make_response("success", todo, "Todo marked as completed"), 200
     else
-        return response("error", nil, "Todo not found"), 404
+        return make_response("error", nil, "Todo not found"), 404
     end
 end
 
--- Context-based handler (preferred)
-local function handle_with_context(ctx)
-    local method = ctx.req:method()
-    local path = ctx.req:path()
-    local body = ctx.req:body()
+-- Handler with new signature: handle(request, response, context)
+function handle(request, response, context)
+    local method = request:method()
+    local path = request:path()
+    local body = request:body()
     
     -- Store request start time in context
-    ctx.data.start_time = os.time()
+    context.start_time = os.time()
     
     local result, status
     
     if method == "GET" then
         -- List all todos
         if path == "/api/todo" then
-            result = list_todos()
+            result, status = list_todos()
         else
             -- Get specific todo (match /api/todo/123)
             local id = path:match("/api/todo/(%d+)$")
             if id then
-                result = get_todo(tonumber(id))
-                if result.status == "error" then
-                    status = 404
-                end
+                result, status = get_todo(tonumber(id))
             else
-                result = response("error", nil, "Route not found")
+                result = make_response("error", nil, "Route not found")
                 status = 404
             end
         end
@@ -110,73 +106,24 @@ local function handle_with_context(ctx)
             if id then
                 result, status = complete_todo(tonumber(id))
             else
-                result = response("error", nil, "Route not found")
+                result = make_response("error", nil, "Route not found")
                 status = 404
             end
         end
     else
-        result = response("error", nil, "Method not allowed")
+        result = make_response("error", nil, "Method not allowed")
         status = 405
     end
     
-    -- Set response status if not 200
+    -- Set response status
     if status then
-        ctx.res:status(status)
+        response:status(status)
     end
     
     return result
 end
 
--- Legacy handler (for backward compatibility)
-local function handle_legacy(request)
-    local method = request.method
-    local path = request.path
-    local body = request.body
-    
-    -- Route the request
-    if method == "GET" then
-        -- List all todos
-        if path == "/api/todo" then
-            return list_todos()
-        end
-        
-        -- Get specific todo (match /api/todo/123)
-        local id = path:match("/api/todo/(%d+)$")
-        if id then
-            return get_todo(tonumber(id))
-        end
-        
-        return response("error", nil, "Route not found")
-        
-    elseif method == "POST" then
-        -- Create new todo
-        if path == "/api/todo" then
-            return create_todo(body)
-        end
-        
-        -- Complete todo (match /api/todo/123/complete)
-        local id = path:match("/api/todo/(%d+)/complete$")
-        if id then
-            return complete_todo(tonumber(id))
-        end
-        
-        return response("error", nil, "Route not found")
-        
-    else
-        return response("error", nil, "Method not allowed")
-    end
-end
-
--- Main request handler - detect calling convention
-function handle_request(ctx_or_request)
-    if ctx_or_request.req then
-        return handle_with_context(ctx_or_request)
-    else
-        return handle_legacy(ctx_or_request)
-    end
-end
-
 -- Export the handler
 return {
-    handle = handle_request
+    handle = handle
 }

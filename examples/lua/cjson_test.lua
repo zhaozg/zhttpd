@@ -2,9 +2,9 @@
 -- This tests the built-in cjson.encode and cjson.decode functions
 -- Including edge cases for special characters, empty values, and boundary conditions
 --
--- Supports both context-based and legacy calling conventions
+-- Handler signature: function handle(request, response, context)
 
-function handle_test(ctx_or_request)
+function handle(request, response, context)
     -- Test 1: Basic encode/decode
     local test_table = {
         name = "test",
@@ -92,26 +92,19 @@ function handle_test(ctx_or_request)
     -- Verify deep nesting
     local deep_valid = deep_decoded.level1.level2.level3.level4.value == "deep"
     
-    -- Check if we're in context mode and add some context-specific tests
-    local handler_mode = "legacy"
-    local context_tests = {}
+    -- Test request/response/context
+    local request_tests = {
+        method = request:method(),
+        path = request:path(),
+        has_context = context ~= nil
+    }
     
-    if ctx_or_request.req then
-        handler_mode = "context"
-        -- Test context-specific features
-        context_tests = {
-            method = ctx_or_request.req:method(),
-            path = ctx_or_request.req:path(),
-            has_data = ctx_or_request.data ~= nil
-        }
-        -- Store test result in context data
-        ctx_or_request.data.test_passed = true
-    end
+    -- Store test result in context
+    context.test_passed = true
     
     -- Return comprehensive test results
     return {
         status = "success",
-        handler_mode = handler_mode,
         encoded_sample = encoded,
         decoded_status = decoded.status,
         decoded_count = decoded.count,
@@ -125,11 +118,11 @@ function handle_test(ctx_or_request)
         deep_valid = deep_valid,
         large_encoded = large_encoded,
         float_encoded = float_encoded,
-        -- Context-specific tests (if applicable)
-        context_tests = context_tests
+        -- Request/response/context tests
+        request_tests = request_tests
     }
 end
 
 return {
-    handle = handle_test
+    handle = handle
 }

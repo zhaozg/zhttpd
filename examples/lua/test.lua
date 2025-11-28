@@ -1,92 +1,56 @@
 -- Example Lua handler for API requests
 -- This script handles requests to /api/test
 --
--- This script supports two calling conventions:
--- 1. New context-based style (ctx object with req, res, data)
--- 2. Legacy style (request table with method, path, headers, etc.)
+-- Handler signature: function handle(request, response, context)
 --
--- New Context-based API (preferred):
--- {
---   req = {
---     :method()    -- returns HTTP method (GET, POST, etc.)
---     :path()      -- returns request path
---     :url()       -- returns full URL with query string
---     :header(name) -- returns header value or nil
---     :headers()   -- returns all headers as table
---     :query(name) -- returns query parameter value or nil
---     :query_all() -- returns all query parameters as table
---     :body()      -- returns parsed JSON body or raw string
---     :body_raw()  -- returns raw body string
---   },
---   res = {
---     :status(code)         -- set HTTP status code
---     :header(name, value)  -- set response header
---     :content_type(type)   -- set Content-Type header
---     :body(content)        -- set response body
---   },
---   data = {}  -- per-request data storage (Lua table)
--- }
+-- Request object methods:
+--   request:method()    -- returns HTTP method (GET, POST, etc.)
+--   request:path()      -- returns request path
+--   request:url()       -- returns full URL with query string
+--   request:header(name) -- returns header value or nil
+--   request:headers()   -- returns all headers as table
+--   request:query(name) -- returns query parameter value or nil
+--   request:query_all() -- returns all query parameters as table
+--   request:body()      -- returns parsed JSON body or raw string
+--   request:body_raw()  -- returns raw body string
 --
--- Legacy request object structure (luvit/Node.js style):
--- {
---   method = "GET" or "POST" or ...,
---   path = "/api/test",
---   url = "/api/test",  -- alias for path
---   headers = {
---     ["content-type"] = "application/json",
---     ["user-agent"] = "...",
---     ...
---   },
---   query = {
---     param1 = "value1",
---     param2 = "value2",
---     ...
---   },
---   body = { ... }  -- parsed JSON body for POST/PUT
--- }
+-- Response object methods:
+--   response:status(code)         -- set HTTP status code
+--   response:header(name, value)  -- set response header
+--   response:content_type(type)   -- set/get Content-Type header
+--   response:body(content)        -- set/get response body
+--
+-- Context: a Lua table for per-request data storage
 
-function handle_request(ctx_or_request)
-    -- Detect which calling convention is being used
-    if ctx_or_request.req then
-        -- New context-based style
-        return handle_with_context(ctx_or_request)
-    else
-        -- Legacy style (request table)
-        return handle_legacy(ctx_or_request)
-    end
-end
-
--- New context-based handler
-function handle_with_context(ctx)
+function handle(request, response, context)
     -- Access request data via methods
-    local method = ctx.req:method()
-    local path = ctx.req:path()
-    local content_type = ctx.req:header("content-type") or "unknown"
-    local user_agent = ctx.req:header("user-agent") or "unknown"
+    local method = request:method()
+    local path = request:path()
+    local content_type = request:header("content-type") or "unknown"
+    local user_agent = request:header("user-agent") or "unknown"
     
     -- Access query parameters
-    local page = ctx.req:query("page") or "1"
-    local limit = ctx.req:query("limit") or "10"
+    local page = request:query("page") or "1"
+    local limit = request:query("limit") or "10"
     
     -- Access body (parsed JSON if valid)
-    local body = ctx.req:body() or {}
+    local body = request:body() or {}
     
     -- Store data in per-request context
-    ctx.data.processed_at = os.time()
-    ctx.data.handler_version = "2.0"
+    context.processed_at = os.time()
+    context.handler_version = "3.0"
     
     -- You can also set response properties directly:
-    -- ctx.res:status(200)
-    -- ctx.res:header("X-Processed-By", "zhttpd-lua")
+    -- response:status(200)
+    -- response:header("X-Processed-By", "zhttpd-lua")
     
     -- Build response
-    local response = {
+    local result = {
         status = "success",
-        message = "Hello from Lua! (context mode)",
+        message = "Hello from Lua!",
         received = body.message or "no message",
         timestamp = os.time(),
         server = "zhttpd with Lua",
-        handler_mode = "context",
         request_info = {
             method = method,
             path = path,
@@ -96,50 +60,15 @@ function handle_with_context(ctx)
             limit = limit
         },
         context_data = {
-            processed_at = ctx.data.processed_at,
-            handler_version = ctx.data.handler_version
+            processed_at = context.processed_at,
+            handler_version = context.handler_version
         }
     }
     
-    return response
-end
-
--- Legacy handler (for backward compatibility)
-function handle_legacy(request)
-    -- Parse request data
-    local data = request.body or {}
-    
-    -- Access headers (luvit/Node.js style)
-    local content_type = request.headers and request.headers["content-type"] or "unknown"
-    local user_agent = request.headers and request.headers["user-agent"] or "unknown"
-    
-    -- Access query parameters (luvit/Node.js style)
-    local page = request.query and request.query["page"] or "1"
-    local limit = request.query and request.query["limit"] or "10"
-    
-    -- Process the request
-    local response = {
-        status = "success",
-        message = "Hello from Lua! (legacy mode)",
-        received = data.message or "no message",
-        timestamp = os.time(),
-        server = "zhttpd with Lua",
-        handler_mode = "legacy",
-        request_info = {
-            method = request.method,
-            path = request.path,
-            content_type = content_type,
-            user_agent = user_agent,
-            page = page,
-            limit = limit
-        }
-    }
-    
-    -- Return JSON response
-    return response
+    return result
 end
 
 -- Export the handler
 return {
-    handle = handle_request
+    handle = handle
 }

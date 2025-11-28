@@ -7,7 +7,7 @@
 //!
 //! Context mode is preferred as it provides:
 //! - Direct access to httpz.Request and httpz.Response
-//! - Per-request context data storage (ctx.data)
+//! - Per-request context data storage
 //! - Ability to set response headers and status from Lua
 
 const std = @import("std");
@@ -20,29 +20,28 @@ const AppContext = @import("httpz_handlers.zig").AppContext;
 const MAX_HEADERS_FOR_LUA = 32; // Maximum number of headers to pass to Lua
 const MAX_QUERY_PARAMS_FOR_LUA = 32; // Maximum number of query params to pass to Lua
 
+/// Extract script name from path (/api/test -> test, /api/users -> users)
+fn extractScriptName(path: []const u8) []const u8 {
+    if (std.mem.startsWith(u8, path, "/api/")) {
+        const remaining = path[5..]; // Skip "/api/"
+        // Handle paths like /api/users/123 -> users
+        if (std.mem.indexOfScalar(u8, remaining, '/')) |slash_pos| {
+            return remaining[0..slash_pos];
+        }
+        return remaining;
+    }
+    return "test";
+}
+
 /// Handle Lua API requests using Per-Request Context
 /// This is the preferred method for new scripts
 pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     res.content_type = httpz.ContentType.JSON;
 
     if (ctx.lua_handler) |*handler| {
-        const path = req.url.path;
+        const script_name = extractScriptName(req.url.path);
 
-        // Extract script name from path (/api/test -> test, /api/users -> users)
-        const script_name = blk: {
-            if (std.mem.startsWith(u8, path, "/api/")) {
-                const remaining = path[5..]; // Skip "/api/"
-                // Handle paths like /api/users/123 -> users
-                if (std.mem.indexOfScalar(u8, remaining, '/')) |slash_pos| {
-                    break :blk remaining[0..slash_pos];
-                }
-                break :blk remaining;
-            }
-            break :blk "test";
-        };
-
-        // Try context-based execution first (new style)
-        // This passes the full httpz Request/Response to Lua
+        // Execute with context-based API: handle(request, response, context)
         const result = handler.executeScriptWithContext(script_name, req, res) catch |err| {
             ctx.logger.err("Lua execution error: {}", .{err});
             res.status = 500;
@@ -68,21 +67,8 @@ pub fn handleLegacy(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response)
     res.content_type = httpz.ContentType.JSON;
 
     if (ctx.lua_handler) |*handler| {
-        const path = req.url.path;
+        const script_name = extractScriptName(req.url.path);
         const method = @tagName(req.method);
-
-        // Extract script name from path (/api/test -> test, /api/users -> users)
-        const script_name = blk: {
-            if (std.mem.startsWith(u8, path, "/api/")) {
-                const remaining = path[5..]; // Skip "/api/"
-                // Handle paths like /api/users/123 -> users
-                if (std.mem.indexOfScalar(u8, remaining, '/')) |slash_pos| {
-                    break :blk remaining[0..slash_pos];
-                }
-                break :blk remaining;
-            }
-            break :blk "test";
-        };
 
         // Get request body
         const body = req.body() orelse "";
@@ -133,7 +119,7 @@ pub fn handleLegacy(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response)
 
         // Use the response arena allocator for per-request allocations
         // This ensures all allocations are automatically cleaned up after the response
-        const result = handler.executeScriptEx(res.arena, script_name, method, path, body, headers, query_params) catch |err| {
+        const result = handler.executeScriptEx(res.arena, script_name, method, req.url.path, body, headers, query_params) catch |err| {
             ctx.logger.err("Lua execution error: {}", .{err});
             res.status = 500;
             res.body =
