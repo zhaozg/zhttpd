@@ -138,12 +138,12 @@ const ThreadLocalLua = struct {
         lua.setGlobal("package");
 
         // Register built-in cjson module (safe, sandboxed JSON handling)
-        json.registerCjsonModule(lua, &getAllocator);
+        json.registerCjsonModule(lua, &getThreadLocalAllocator);
     }
 };
 
 /// Get allocator from thread-local storage for use by json module
-fn getAllocator() std.mem.Allocator {
+fn getThreadLocalAllocator() std.mem.Allocator {
     return if (tls_lua) |tl| tl.allocator else std.heap.page_allocator;
 }
 
