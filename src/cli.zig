@@ -131,25 +131,25 @@ fn loadConfigWithOverrides(allocator: std.mem.Allocator, options: CliOptions) !c
         }
     }
 
-    // Apply CLI overrides
+    // Apply CLI overrides - use cfg.allocator which is the same allocator used to create the config
     if (options.host) |host| {
-        allocator.free(cfg.host);
-        cfg.host = try allocator.dupe(u8, host);
+        cfg.allocator.free(cfg.host);
+        cfg.host = try cfg.allocator.dupe(u8, host);
     }
     if (options.port) |port| {
         cfg.port = port;
     }
     if (options.static_dir) |dir| {
-        allocator.free(cfg.static_dir);
-        cfg.static_dir = try allocator.dupe(u8, dir);
+        cfg.allocator.free(cfg.static_dir);
+        cfg.static_dir = try cfg.allocator.dupe(u8, dir);
     }
     if (options.lua_scripts_dir) |dir| {
-        allocator.free(cfg.lua_scripts_dir);
-        cfg.lua_scripts_dir = try allocator.dupe(u8, dir);
+        cfg.allocator.free(cfg.lua_scripts_dir);
+        cfg.lua_scripts_dir = try cfg.allocator.dupe(u8, dir);
     }
     if (options.log_level) |level| {
-        allocator.free(cfg.log_level);
-        cfg.log_level = try allocator.dupe(u8, level);
+        cfg.allocator.free(cfg.log_level);
+        cfg.log_level = try cfg.allocator.dupe(u8, level);
     }
     if (options.thread_pool_size) |threads| {
         cfg.thread_pool_size = threads;
