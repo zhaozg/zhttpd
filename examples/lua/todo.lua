@@ -74,8 +74,8 @@ function handle_request(request)
     local path = request.path
     local body = request.body
     
-    -- Log the request for debugging
-    print(string.format("[Lua] %s %s", method, path))
+    -- Note: Request logging is handled by the server's access log
+    -- Avoid print() here for performance in high-load scenarios
     
     -- Route the request
     if method == "GET" then
