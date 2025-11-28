@@ -15,6 +15,17 @@ pub fn build(b: *std.Build) void {
     // Note: LuaJIT may have build issues on some platforms (especially cross-compilation)
     const lua_lang = b.option(LuaLang, "lua-lang", "Lua language/engine to use (lua54 or luajit)") orelse .lua54;
 
+    // Warn about known LuaJIT issues on macOS
+    // See: https://github.com/zhaozg/zhttpd/issues/XX (upstream ziglua issue)
+    if (lua_lang == .luajit and target.result.os.tag.isDarwin()) {
+        std.log.warn(
+            \\LuaJIT on macOS may have linking issues due to an upstream ziglua bug.
+            \\The build might fail with "unexpected pointer encoding" error.
+            \\Consider using -Dlua-lang=lua54 (default) on macOS for now.
+            \\See: https://github.com/natecraddock/ziglua/issues for updates.
+        , .{});
+    }
+
     // Dependencies
     const httpz = b.dependency("httpz", .{
         .target = target,
