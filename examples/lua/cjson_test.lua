@@ -1,8 +1,10 @@
 -- Test script for cjson module
 -- This tests the built-in cjson.encode and cjson.decode functions
 -- Including edge cases for special characters, empty values, and boundary conditions
+--
+-- Supports both context-based and legacy calling conventions
 
-function handle_request(request)
+function handle_test(ctx_or_request)
     -- Test 1: Basic encode/decode
     local test_table = {
         name = "test",
@@ -90,9 +92,26 @@ function handle_request(request)
     -- Verify deep nesting
     local deep_valid = deep_decoded.level1.level2.level3.level4.value == "deep"
     
+    -- Check if we're in context mode and add some context-specific tests
+    local handler_mode = "legacy"
+    local context_tests = {}
+    
+    if ctx_or_request.req then
+        handler_mode = "context"
+        -- Test context-specific features
+        context_tests = {
+            method = ctx_or_request.req:method(),
+            path = ctx_or_request.req:path(),
+            has_data = ctx_or_request.data ~= nil
+        }
+        -- Store test result in context data
+        ctx_or_request.data.test_passed = true
+    end
+    
     -- Return comprehensive test results
     return {
         status = "success",
+        handler_mode = handler_mode,
         encoded_sample = encoded,
         decoded_status = decoded.status,
         decoded_count = decoded.count,
@@ -105,10 +124,12 @@ function handle_request(request)
         deep_encoded = deep_encoded,
         deep_valid = deep_valid,
         large_encoded = large_encoded,
-        float_encoded = float_encoded
+        float_encoded = float_encoded,
+        -- Context-specific tests (if applicable)
+        context_tests = context_tests
     }
 end
 
 return {
-    handle = handle_request
+    handle = handle_test
 }
