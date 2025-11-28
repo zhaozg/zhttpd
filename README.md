@@ -427,6 +427,9 @@ zig build -Dlua-lang=luajit
 zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # 生产构建
 ```
 
+> ⚠️ **macOS 用户注意**：由于上游 ziglua 库的问题，LuaJIT 在 macOS 上可能会出现链接错误（"unexpected pointer encoding"）。
+> 建议 macOS 用户暂时使用默认的 Lua 5.4 引擎。详见 [ziglua#issues](https://github.com/natecraddock/ziglua/issues)。
+
 #### 内置 cjson 模块
 
 zhttpd 内置了 cjson 兼容模块，提供 JSON 编解码功能：
@@ -755,6 +758,9 @@ Build with LuaJIT:
 zig build -Dlua-lang=luajit
 zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # Production build
 ```
+
+> ⚠️ **macOS Users Note**: Due to an upstream issue in the ziglua library, LuaJIT may fail to link on macOS with an "unexpected pointer encoding" error.
+> macOS users are recommended to use the default Lua 5.4 engine for now. See [ziglua#issues](https://github.com/natecraddock/ziglua/issues) for updates.
 
 #### Built-in cjson Module
 
