@@ -28,14 +28,15 @@ The following are **optional enhancements** that could be considered for future 
 
 **Priority:** Medium  
 **Effort:** Medium
-**Status:** ✅ Completed (v0.3.0)
+**Status:** ✅ Completed (v0.4.0)
 
 - [x] Pass complex request data structures to Lua scripts (headers, query parameters) - luvit/Node.js style API
 - [x] Lua script hot-reloading without server restart - via FileCache auto mode
 - [x] Lua script caching and precompilation - source caching with mtime validation (bytecode infrastructure added for future use)
 - [x] Sandboxing and resource limits for Lua scripts - instruction limits and dangerous function removal
-- [ ] Enhanced Lua response handling with full JSON support - deferred (use cjson in Lua)
-- [ ] Built-in Lua libraries for common tasks (JSON, HTTP client, database) - deferred (implement in Lua)
+- [x] LuaJIT support - optional build with `-Dlua-lang=luajit` for JIT compilation and better performance
+- [x] Built-in cjson module - cjson-compatible JSON encode/decode functions available in sandboxed scripts
+- [x] C module integration guide - documentation for using Lua C modules (see docs/LUA_C_MODULES.md)
 
 ### Phase 2: Full GraphQL Implementation
 
@@ -145,13 +146,14 @@ Community contributions are welcome! When proposing new features:
 
 ## Version Planning
 
-Current Version: **v0.1.0** (Production Ready)
+Current Version: **v0.4.0** (Production Ready)
 
 **Future versions will follow semantic versioning:**
 
 - **v0.2.x**: Minor enhancements and bug fixes
 - **v0.3.x**: Enhanced Lua integration (Phase 1)
-- **v0.4.x**: Full GraphQL implementation (Phase 2)
+- **v0.4.x**: LuaJIT support and cjson module (Phase 1 complete)
+- **v0.5.x**: Full GraphQL implementation (Phase 2)
 - **v1.0.0**: Stable API with backward compatibility guarantees
 
 ## Maintenance

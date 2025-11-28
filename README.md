@@ -413,6 +413,33 @@ zig fmt src
 zig build -Doptimize=ReleaseFast
 ```
 
+#### LuaJIT 支持
+
+zhttpd 支持两种 Lua 引擎：
+
+- **Lua 5.4**（默认）：标准 Lua 解释器，稳定可靠
+- **LuaJIT**：JIT 编译，性能更优
+
+使用 LuaJIT 构建：
+
+```bash
+zig build -Dlua-lang=luajit
+zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # 生产构建
+```
+
+#### 内置 cjson 模块
+
+zhttpd 内置了 cjson 兼容模块，提供 JSON 编解码功能：
+
+```lua
+-- 在 Lua 脚本中使用
+local data = {name = "test", value = 123}
+local json_str = cjson.encode(data)  -- 编码为 JSON
+local parsed = cjson.decode(json_str)  -- 解码 JSON
+```
+
+详细文档请参阅 [Lua C 模块集成指南](docs/LUA_C_MODULES.md)。
+
 ### 📊 性能基准
 
 使用 Apache Bench (ab) 和 h2load 进行基准测试，构建模式：ReleaseFast
@@ -471,9 +498,10 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 - ✅ JWT/OAuth 认证接口
 - ✅ WebSocket 支持 (Lua 消息处理)
 - ✅ GraphQL 订阅
+- ✅ LuaJIT 支持（可选构建选项）
+- ✅ 内置 cjson 模块
 
 未来的增强包括：
-- Lua 集成增强
 - 完整的 GraphQL 实现
 - 性能优化
 
@@ -685,9 +713,10 @@ Current version (v0.3.0) has completed all core features and advanced middleware
 - ✅ JWT/OAuth authentication interface
 - ✅ WebSocket support with Lua message handling
 - ✅ GraphQL subscriptions
+- ✅ LuaJIT support (optional build option)
+- ✅ Built-in cjson module
 
 Future enhancements include:
-- Enhanced Lua integration
 - Full GraphQL implementation
 - Performance optimizations
 
@@ -706,6 +735,33 @@ zig fmt src
 ```bash
 zig build -Doptimize=ReleaseFast
 ```
+
+#### LuaJIT Support
+
+zhttpd supports two Lua engines:
+
+- **Lua 5.4** (default): Standard Lua interpreter, stable and well-tested
+- **LuaJIT**: JIT compilation for better performance
+
+Build with LuaJIT:
+
+```bash
+zig build -Dlua-lang=luajit
+zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # Production build
+```
+
+#### Built-in cjson Module
+
+zhttpd includes a built-in cjson-compatible module for JSON encoding/decoding:
+
+```lua
+-- In Lua scripts
+local data = {name = "test", value = 123}
+local json_str = cjson.encode(data)  -- Encode to JSON
+local parsed = cjson.decode(json_str)  -- Decode JSON
+```
+
+See [Lua C Module Integration Guide](docs/LUA_C_MODULES.md) for details.
 
 ### 🤝 Contributing
 
