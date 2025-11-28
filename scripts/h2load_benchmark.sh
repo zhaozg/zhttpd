@@ -44,14 +44,14 @@ run_h2load_test() {
     local threads=$2
     local requests=$3
     local description=$4
-    
+
     echo ""
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}Test: ${description}${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo "Clients: $clients, Threads: $threads, Total Requests: $requests"
     echo ""
-    
+
     # Run h2load with HTTP/1.1
     h2load --h1 \
         -c "$clients" \
@@ -60,7 +60,7 @@ run_h2load_test() {
         -m 10 \
         --warm-up-time="$WARMUP" \
         "$SERVER_URL"
-    
+
     echo ""
 }
 
@@ -71,24 +71,24 @@ main() {
     echo "Duration: ${DURATION}s per test"
     echo "Warmup: ${WARMUP}s"
     echo ""
-    
+
     check_server
-    
+
     echo ""
     echo -e "${YELLOW}Starting benchmark tests...${NC}"
-    
+
     # Test 1: Low concurrency
     run_h2load_test 10 2 100000 "Low Concurrency (10 clients)"
-    
+
     # Test 2: Medium concurrency
     run_h2load_test 50 4 500000 "Medium Concurrency (50 clients)"
-    
+
     # Test 3: High concurrency
     run_h2load_test 100 8 1000000 "High Concurrency (100 clients)"
-    
+
     # Test 4: Very high concurrency
     run_h2load_test 200 8 2000000 "Very High Concurrency (200 clients)"
-    
+
     echo ""
     echo -e "${GREEN}=========================================="
     echo "Benchmark Complete!"

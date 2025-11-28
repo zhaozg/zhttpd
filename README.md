@@ -253,7 +253,7 @@ function handle_request(request)
     local event_type = request.type  -- "connect", "message", "disconnect"
     local connection_id = request.connection_id
     local data = request.data
-    
+
     if event_type == "connect" then
         return { type = "connected", message = "Welcome!" }
     elseif event_type == "message" then
@@ -401,9 +401,6 @@ ab -n 100000 -c 100 http://127.0.0.1:8080/
 # h2load
 h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 ```
-
-**关于 h2load 测试说明：**
-由于 httpz 为性能优化省略了 HTTP 状态行的原因短语（reason phrase），h2load 会将所有请求标记为"失败"，但实际上数据传输完全正常且性能卓越。这是 RFC 7230 允许的优化行为，不影响实际生产使用。Apache Bench 测试结果准确可靠。
 
 ### 🗺️ 项目规划
 
@@ -559,9 +556,6 @@ ab -n 100000 -c 100 http://127.0.0.1:8080/
 # h2load
 h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 ```
-
-**Note on h2load Testing:**
-Due to httpz omitting the HTTP reason phrase for performance optimization, h2load marks all requests as "failed" even though data transfer is fully functional and performance is excellent. This is an RFC 7230 compliant optimization behavior and doesn't affect production use. Apache Bench results are accurate and reliable.
 
 ### 🗺️ Roadmap
 
