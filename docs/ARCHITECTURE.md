@@ -306,7 +306,7 @@ The codebase follows [Zig's design philosophy](https://ziglang.org/documentation
 
 4. **Reduce to the essence**
    - Minimal dependencies
-   - Reuse std library and httpz features
+   - Reuse standard library and httpz features
 
 ### Code Organization Guidelines
 
