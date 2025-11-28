@@ -64,14 +64,6 @@ const observability = @import("../observability/observability.zig");
 const Metrics = observability.Metrics;
 const HealthCheck = observability.health.HealthCheck;
 const request_id = observability.request_id;
-// Individual handler modules
-const static_handler_mod = @import("static_handler.zig");
-const lua_handler_mod = @import("lua_handler.zig");
-const graphql_handler_mod = @import("graphql_handler.zig");
-const health_handler_mod = @import("health_handler.zig");
-const metrics_handler_mod = @import("metrics_handler.zig");
-const sse_handler_mod = @import("sse_handler.zig");
-const websocket_handler_mod = @import("websocket_handler.zig");
 
 // Constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size

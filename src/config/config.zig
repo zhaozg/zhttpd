@@ -120,112 +120,21 @@ pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config {
     const content = try file.readToEndAlloc(allocator, 1024 * 1024);
     defer allocator.free(content);
 
-    // Determine format based on file extension or content
+    // Only YAML configuration is supported
+    // Check file extension - only .yaml and .yml are valid
     const is_yaml = std.mem.endsWith(u8, path, ".yaml") or std.mem.endsWith(u8, path, ".yml");
 
-    if (is_yaml) {
-        return parseYaml(allocator, content) catch |err| {
-            std.debug.print("YAML parse error in '{s}': {}\n", .{ path, err });
-            std.debug.print("Using default configuration\n", .{});
-            return getDefaultConfig(allocator);
-        };
-    } else {
-        return parseJson(allocator, content) catch |err| {
-            std.debug.print("JSON parse error in '{s}': {}\n", .{ path, err });
-            std.debug.print("Using default configuration\n", .{});
-            return getDefaultConfig(allocator);
-        };
+    if (!is_yaml) {
+        std.debug.print("Warning: '{s}' does not have .yaml or .yml extension\n", .{path});
+        std.debug.print("Only YAML configuration files are supported. Using default configuration.\n", .{});
+        return getDefaultConfig(allocator);
     }
-}
 
-fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, content, .{});
-    defer parsed.deinit();
-
-    const root = parsed.value.object;
-
-    return Config{
-        .host = try allocator.dupe(u8, root.get("host").?.string),
-        .port = @intCast(root.get("port").?.integer),
-        .static_dir = try allocator.dupe(u8, root.get("static_dir").?.string),
-        .lua_scripts_dir = try allocator.dupe(u8, root.get("lua_scripts_dir").?.string),
-        .security_headers = root.get("security_headers").?.bool,
-        .max_body_size = @intCast(root.get("max_body_size").?.integer),
-        .timeout_seconds = @intCast(root.get("timeout_seconds").?.integer),
-        .thread_pool_size = @intCast(root.get("thread_pool_size").?.integer),
-        .max_connections = if (root.get("max_connections")) |mc| @intCast(mc.integer) else DEFAULT_MAX_CONNECTIONS,
-        .request_buffer_size = if (root.get("request_buffer_size")) |rbs| @intCast(rbs.integer) else DEFAULT_REQUEST_BUFFER_SIZE,
-        .enable_lua = root.get("enable_lua").?.bool,
-        .enable_graphql = root.get("enable_graphql").?.bool,
-        .graphql_endpoint = try allocator.dupe(u8, root.get("graphql_endpoint").?.string),
-        .log_level = if (root.get("log_level")) |ll| try allocator.dupe(u8, ll.string) else try allocator.dupe(u8, "info"),
-        .log_file = if (root.get("log_file")) |lf| try allocator.dupe(u8, lf.string) else null,
-        .access_log_file = if (root.get("access_log_file")) |alf| try allocator.dupe(u8, alf.string) else null,
-        .reload = if (root.get("reload")) |r| ReloadMode.fromString(r.string) else .auto,
-        .max_cache_file_size = if (root.get("max_cache_file_size")) |mcfs| @intCast(mcfs.integer) else DEFAULT_MAX_CACHE_FILE_SIZE,
-        .enable_etag = if (root.get("enable_etag")) |ee| ee.bool else true, // Default enabled
-        // Phase 3: Advanced httpz features
-        .enable_websocket = if (root.get("enable_websocket")) |ew| ew.bool else false,
-        .enable_sse = if (root.get("enable_sse")) |es| es.bool else false,
-        // Rate limiting
-        .enable_rate_limit = if (root.get("enable_rate_limit")) |erl| erl.bool else false,
-        .rate_limit_requests = if (root.get("rate_limit_requests")) |rlr| @intCast(rlr.integer) else 100,
-        .rate_limit_window = if (root.get("rate_limit_window")) |rlw| @intCast(rlw.integer) else 60,
-        // CORS
-        .enable_cors = if (root.get("enable_cors")) |ec| ec.bool else false,
-        .cors_origins = if (root.get("cors_origins")) |co| try allocator.dupe(u8, co.string) else try allocator.dupe(u8, "*"),
-        .cors_methods = if (root.get("cors_methods")) |cm| try allocator.dupe(u8, cm.string) else try allocator.dupe(u8, "GET, POST, PUT, DELETE, OPTIONS"),
-        .cors_headers = if (root.get("cors_headers")) |ch| try allocator.dupe(u8, ch.string) else try allocator.dupe(u8, "Content-Type, Authorization"),
-        // Authentication
-        .enable_auth = if (root.get("enable_auth")) |ea| ea.bool else false,
-        .auth_script = if (root.get("auth_script")) |as_val| try allocator.dupe(u8, as_val.string) else try allocator.dupe(u8, "auth"),
-        .auth_protected_paths = if (root.get("auth_protected_paths")) |app| try allocator.dupe(u8, app.string) else try allocator.dupe(u8, "/api/*"),
-        .auth_public_paths = if (root.get("auth_public_paths")) |apu| try allocator.dupe(u8, apu.string) else try allocator.dupe(u8, "/api/login, /api/register"),
-        // Lua sandbox configuration (safe defaults)
-        .lua_sandbox_enabled = if (root.get("lua_sandbox_enabled")) |lse| lse.bool else true,
-        .lua_max_instructions = if (root.get("lua_max_instructions")) |lmi| @intCast(lmi.integer) else 100_000,
-        // Phase 5: Observability configuration
-        .enable_metrics = if (root.get("enable_metrics")) |em| em.bool else true, // Default enabled
-        .enable_health_check = if (root.get("enable_health_check")) |ehc| ehc.bool else true, // Default enabled
-        .enable_request_id = if (root.get("enable_request_id")) |eri| eri.bool else true, // Default enabled
-        .log_format = if (root.get("log_format")) |lf_val| try allocator.dupe(u8, lf_val.string) else try allocator.dupe(u8, "text"),
-        // Phase 7: Security enhancements
-        .enable_ip_blacklist = if (root.get("enable_ip_blacklist")) |eib| eib.bool else false,
-        .ip_blacklist = if (root.get("ip_blacklist")) |ibl| try allocator.dupe(u8, ibl.string) else try allocator.dupe(u8, ""),
-        .ip_whitelist = if (root.get("ip_whitelist")) |iwl| try allocator.dupe(u8, iwl.string) else try allocator.dupe(u8, ""),
-        // Handler mappings - parse from JSON object
-        .handlers = try parseHandlersFromJson(allocator, root.get("handlers")),
-        .allocator = allocator,
+    return parseYaml(allocator, content) catch |err| {
+        std.debug.print("YAML parse error in '{s}': {}\n", .{ path, err });
+        std.debug.print("Using default configuration\n", .{});
+        return getDefaultConfig(allocator);
     };
-}
-
-/// Parse handlers mapping from JSON object
-fn parseHandlersFromJson(allocator: std.mem.Allocator, handlers_value: ?std.json.Value) ![]HandlerMapping {
-    if (handlers_value) |handlers_obj| {
-        if (handlers_obj == .object) {
-            const obj = handlers_obj.object;
-            var mappings = try allocator.alloc(HandlerMapping, obj.count());
-            errdefer allocator.free(mappings);
-            var i: usize = 0;
-            var it = obj.iterator();
-            while (it.next()) |entry| {
-                if (entry.value_ptr.* == .string) {
-                    mappings[i] = .{
-                        .pattern = try allocator.dupe(u8, entry.key_ptr.*),
-                        .handler = try allocator.dupe(u8, entry.value_ptr.string),
-                    };
-                    i += 1;
-                }
-            }
-            // Shrink to actual size if some entries were skipped
-            if (i < mappings.len) {
-                mappings = try allocator.realloc(mappings, i);
-            }
-            return mappings;
-        }
-    }
-    // Return default handlers if not specified
-    return try getDefaultHandlers(allocator);
 }
 
 /// Get default handler mappings

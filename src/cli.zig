@@ -117,18 +117,13 @@ fn loadConfigWithOverrides(allocator: std.mem.Allocator, options: CliOptions) !c
             std.debug.print("Loaded configuration from {s}\n", .{config_path});
             break :blk c;
         } else {
-            // Try default config files
+            // Try default YAML config file (JSON no longer supported)
             if (config.loadConfig(allocator, "zhttpd.yaml")) |c| {
                 std.debug.print("Loaded configuration from zhttpd.yaml\n", .{});
                 break :blk c;
             } else |_| {
-                if (config.loadConfig(allocator, "config.json")) |c| {
-                    std.debug.print("Loaded configuration from config.json\n", .{});
-                    break :blk c;
-                } else |_| {
-                    std.debug.print("Using default configuration\n", .{});
-                    break :blk try config.getDefaultConfig(allocator);
-                }
+                std.debug.print("Using default configuration\n", .{});
+                break :blk try config.getDefaultConfig(allocator);
             }
         }
     };
@@ -174,8 +169,8 @@ fn printHelp() void {
         \\OPTIONS:
         \\    -h, --help                 Print this help message and exit
         \\    -v, --version              Print version information and exit
-        \\    -c, --config <FILE>        Specify configuration file path
-        \\                               (default: zhttpd.yaml, then config.json)
+        \\    -c, --config <FILE>        Specify configuration file path (YAML only)
+        \\                               (default: zhttpd.yaml)
         \\    -p, --port <PORT>          Set server port (default: 8080)
         \\    -H, --host <HOST>          Set server bind address (default: 0.0.0.0)
         \\    -s, --static-dir <DIR>     Set static files directory
@@ -190,12 +185,19 @@ fn printHelp() void {
         \\
         \\CONFIGURATION FILE:
         \\    The server looks for configuration in the following order:
-        \\    1. File specified with --config
+        \\    1. File specified with --config (must be YAML, .yaml or .yml extension)
         \\    2. zhttpd.yaml in current directory
-        \\    3. config.json in current directory
-        \\    4. Built-in defaults
+        \\    3. Built-in defaults
         \\
         \\    Command-line options override configuration file settings.
+        \\
+        \\HANDLER CONFIGURATION:
+        \\    Handlers can be configured in the YAML file using the 'handlers' section:
+        \\    
+        \\    handlers:
+        \\      /health: Handler.HealthCheckHandler
+        \\      /api/*: Handler.LuaHandler
+        \\      /*: Handler.StaticFileHandler
         \\
         \\EXAMPLES:
         \\    zhttpd                         Start with default/config file settings
