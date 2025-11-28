@@ -43,10 +43,9 @@ pub fn appendJsonEscapedString(buf: *std.ArrayListUnmanaged(u8), allocator: std.
 /// Register the built-in cjson module
 /// Provides cjson-compatible API: cjson.encode() and cjson.decode()
 /// Note: This function is called once per thread when the Lua VM is initialized.
-/// The allocator_getter is stored in a file-level variable which is safe because
-/// each thread has its own Lua VM and the function pointer is immutable once set.
+/// The allocator_getter is threadlocal to avoid data races between worker threads.
 pub fn registerCjsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) void {
-    // Store the allocator getter - this is set once per Lua VM initialization
+    // Store the allocator getter in thread-local storage
     allocator_getter = getAllocator;
 
     // Create the cjson table
@@ -69,8 +68,8 @@ pub fn registerCjsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.
     lua.setGlobal("cjson");
 }
 
-/// File-level storage for allocator getter function
-var allocator_getter: ?*const fn () std.mem.Allocator = null;
+/// Thread-local storage for allocator getter function to avoid data races
+threadlocal var allocator_getter: ?*const fn () std.mem.Allocator = null;
 
 /// cjson.encode(value) - Convert Lua value to JSON string
 fn cjsonEncode(lua: *ziglua.Lua) i32 {
