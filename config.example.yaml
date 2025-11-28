@@ -90,3 +90,20 @@ enable_ip_blacklist: false
 ip_blacklist: ""
 ip_whitelist: ""
 
+# Handler Configuration
+# ---------------------
+# Map URL patterns to handler names
+# Patterns are matched in order, so more specific patterns should come first
+# If not specified, default handlers are used based on feature flags
+#
+# handlers:
+#   /health: Handler.HealthCheckHandler
+#   /metrics: Handler.MetricsHandler
+#   /ws: Handler.WebSocketHandler
+#   /graphql/playground: Handler.GraphQLPlaygroundHandler
+#   /graphql/ws: Handler.WebSocketHandler
+#   /graphql: Handler.GraphQLHandler
+#   /api/*: Handler.LuaHandler
+#   /events: Handler.SSEHandler
+#   /*: Handler.StaticFileHandler
+

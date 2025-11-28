@@ -37,7 +37,9 @@
 
 const std = @import("std");
 const httpz = @import("httpz");
-const Config = @import("../config/config.zig").Config;
+const config_mod = @import("../config/config.zig");
+const Config = config_mod.Config;
+const HandlerMapping = config_mod.HandlerMapping;
 const security = @import("../security/security.zig");
 const lua_mod = @import("../lua/lua.zig");
 const LuaHandler = lua_mod.LuaHandler;
@@ -62,6 +64,14 @@ const observability = @import("../observability/observability.zig");
 const Metrics = observability.Metrics;
 const HealthCheck = observability.health.HealthCheck;
 const request_id = observability.request_id;
+// Individual handler modules
+const static_handler_mod = @import("static_handler.zig");
+const lua_handler_mod = @import("lua_handler.zig");
+const graphql_handler_mod = @import("graphql_handler.zig");
+const health_handler_mod = @import("health_handler.zig");
+const metrics_handler_mod = @import("metrics_handler.zig");
+const sse_handler_mod = @import("sse_handler.zig");
+const websocket_handler_mod = @import("websocket_handler.zig");
 
 // Constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
@@ -329,48 +339,59 @@ pub const HttpzServer = struct {
     }
 
     pub fn setupRoutes(self: *HttpzServer) !void {
-        var router = try self.server.router(.{});
+        const router = try self.server.router(.{});
 
-        // Phase 5: Observability endpoints (must come before wildcard)
-        if (self.context.config.enable_health_check) {
-            router.get("/health", healthHandler, .{});
-        }
-        if (self.context.config.enable_metrics) {
-            router.get("/metrics", metricsHandler, .{});
+        // Register routes based on handler configuration
+        // Routes are processed in order, so more specific routes should come first
+        for (self.context.config.handlers) |mapping| {
+            self.registerHandler(router, mapping);
         }
 
-        // Register more specific routes before wildcard routes
-        // GraphQL endpoint (must come before wildcard)
-        if (self.context.config.enable_graphql) {
-            const endpoint = self.context.config.graphql_endpoint;
-            router.get(endpoint, graphqlGet, .{});
-            router.post(endpoint, graphqlPost, .{});
-            // GraphQL Playground UI - add /playground suffix
-            router.get("/graphql/playground", graphqlPlayground, .{});
-        }
+        // Log registered handlers
+        self.context.logger.info("Registered {d} handler mappings from configuration", .{self.context.config.handlers.len});
+    }
 
-        // WebSocket endpoint (if enabled)
-        if (self.context.config.enable_websocket) {
-            router.get("/ws", websocketHandler, .{});
-            // GraphQL subscriptions endpoint
-            if (self.context.config.enable_graphql) {
-                router.get("/graphql/ws", websocketHandler, .{});
-            }
-        }
+    /// Register a single handler mapping with the router
+    fn registerHandler(self: *HttpzServer, router: anytype, mapping: HandlerMapping) void {
+        const pattern = mapping.pattern;
+        const handler_name = mapping.handler;
 
-        // Lua API endpoints (must come before wildcard)
-        // Support both GET and POST for dynamic Lua handlers
-        if (self.context.config.enable_lua) {
-            router.get("/api/*", luaApi, .{});
-            router.post("/api/*", luaApi, .{});
-        }
-
-        // Static file routes (wildcard must come last)
-        router.get("/*", serveStatic, .{});
-
-        // SSE endpoint (if enabled)
-        if (self.context.config.enable_sse) {
-            router.get("/events", sseHandler, .{});
+        // Check feature flags and skip disabled handlers
+        if (std.mem.eql(u8, handler_name, "Handler.HealthCheckHandler")) {
+            if (!self.context.config.enable_health_check) return;
+            router.get(pattern, healthHandler, .{});
+            self.context.logger.debug("Registered HealthCheckHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.MetricsHandler")) {
+            if (!self.context.config.enable_metrics) return;
+            router.get(pattern, metricsHandler, .{});
+            self.context.logger.debug("Registered MetricsHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.WebSocketHandler")) {
+            if (!self.context.config.enable_websocket) return;
+            router.get(pattern, websocketHandler, .{});
+            self.context.logger.debug("Registered WebSocketHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLHandler")) {
+            if (!self.context.config.enable_graphql) return;
+            router.get(pattern, graphqlGet, .{});
+            router.post(pattern, graphqlPost, .{});
+            self.context.logger.debug("Registered GraphQLHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLPlaygroundHandler")) {
+            if (!self.context.config.enable_graphql) return;
+            router.get(pattern, graphqlPlayground, .{});
+            self.context.logger.debug("Registered GraphQLPlaygroundHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.LuaHandler")) {
+            if (!self.context.config.enable_lua) return;
+            router.get(pattern, luaApi, .{});
+            router.post(pattern, luaApi, .{});
+            self.context.logger.debug("Registered LuaHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.SSEHandler")) {
+            if (!self.context.config.enable_sse) return;
+            router.get(pattern, sseHandler, .{});
+            self.context.logger.debug("Registered SSEHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.StaticFileHandler")) {
+            router.get(pattern, serveStatic, .{});
+            self.context.logger.debug("Registered StaticFileHandler at {s}", .{pattern});
+        } else {
+            self.context.logger.warn("Unknown handler: {s} for pattern {s}", .{ handler_name, pattern });
         }
     }
 

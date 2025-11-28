@@ -18,6 +18,12 @@ pub const ReloadMode = enum {
     }
 };
 
+/// Handler mapping from URL pattern to handler name
+pub const HandlerMapping = struct {
+    pattern: []const u8,
+    handler: []const u8,
+};
+
 pub const Config = struct {
     host: []const u8,
     port: u16,
@@ -67,6 +73,8 @@ pub const Config = struct {
     enable_ip_blacklist: bool, // Enable IP blacklist/whitelist
     ip_blacklist: []const u8, // Comma-separated list of blocked IPs/CIDRs
     ip_whitelist: []const u8, // Comma-separated list of whitelisted IPs/CIDRs
+    // Handler mappings from URL pattern to handler name
+    handlers: []HandlerMapping,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -90,6 +98,12 @@ pub const Config = struct {
         self.allocator.free(self.log_format);
         self.allocator.free(self.ip_blacklist);
         self.allocator.free(self.ip_whitelist);
+        // Free handler mappings
+        for (self.handlers) |mapping| {
+            self.allocator.free(mapping.pattern);
+            self.allocator.free(mapping.handler);
+        }
+        self.allocator.free(self.handlers);
     }
 };
 
@@ -179,8 +193,66 @@ fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_ip_blacklist = if (root.get("enable_ip_blacklist")) |eib| eib.bool else false,
         .ip_blacklist = if (root.get("ip_blacklist")) |ibl| try allocator.dupe(u8, ibl.string) else try allocator.dupe(u8, ""),
         .ip_whitelist = if (root.get("ip_whitelist")) |iwl| try allocator.dupe(u8, iwl.string) else try allocator.dupe(u8, ""),
+        // Handler mappings - parse from JSON object
+        .handlers = try parseHandlersFromJson(allocator, root.get("handlers")),
         .allocator = allocator,
     };
+}
+
+/// Parse handlers mapping from JSON object
+fn parseHandlersFromJson(allocator: std.mem.Allocator, handlers_value: ?std.json.Value) ![]HandlerMapping {
+    if (handlers_value) |handlers_obj| {
+        if (handlers_obj == .object) {
+            const obj = handlers_obj.object;
+            var mappings = try allocator.alloc(HandlerMapping, obj.count());
+            errdefer allocator.free(mappings);
+            var i: usize = 0;
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.* == .string) {
+                    mappings[i] = .{
+                        .pattern = try allocator.dupe(u8, entry.key_ptr.*),
+                        .handler = try allocator.dupe(u8, entry.value_ptr.string),
+                    };
+                    i += 1;
+                }
+            }
+            // Shrink to actual size if some entries were skipped
+            if (i < mappings.len) {
+                mappings = try allocator.realloc(mappings, i);
+            }
+            return mappings;
+        }
+    }
+    // Return default handlers if not specified
+    return try getDefaultHandlers(allocator);
+}
+
+/// Get default handler mappings
+pub fn getDefaultHandlers(allocator: std.mem.Allocator) ![]HandlerMapping {
+    // Default handler configuration - order matters (more specific first)
+    const default_mappings = [_]struct { pattern: []const u8, handler: []const u8 }{
+        .{ .pattern = "/health", .handler = "Handler.HealthCheckHandler" },
+        .{ .pattern = "/metrics", .handler = "Handler.MetricsHandler" },
+        .{ .pattern = "/ws", .handler = "Handler.WebSocketHandler" },
+        .{ .pattern = "/graphql/playground", .handler = "Handler.GraphQLPlaygroundHandler" },
+        .{ .pattern = "/graphql/ws", .handler = "Handler.WebSocketHandler" },
+        .{ .pattern = "/graphql", .handler = "Handler.GraphQLHandler" },
+        .{ .pattern = "/api/*", .handler = "Handler.LuaHandler" },
+        .{ .pattern = "/events", .handler = "Handler.SSEHandler" },
+        .{ .pattern = "/*", .handler = "Handler.StaticFileHandler" },
+    };
+
+    var mappings = try allocator.alloc(HandlerMapping, default_mappings.len);
+    errdefer allocator.free(mappings);
+
+    for (default_mappings, 0..) |dm, i| {
+        mappings[i] = .{
+            .pattern = try allocator.dupe(u8, dm.pattern),
+            .handler = try allocator.dupe(u8, dm.handler),
+        };
+    }
+    return mappings;
 }
 
 pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
@@ -230,6 +302,8 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_ip_blacklist = false,
         .ip_blacklist = try allocator.dupe(u8, ""),
         .ip_whitelist = try allocator.dupe(u8, ""),
+        // Default handler mappings
+        .handlers = try getDefaultHandlers(allocator),
         .allocator = allocator,
     };
 }
@@ -352,8 +426,49 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_ip_blacklist = parsed.enable_ip_blacklist orelse false,
         .ip_blacklist = try allocator.dupe(u8, parsed.ip_blacklist orelse ""),
         .ip_whitelist = try allocator.dupe(u8, parsed.ip_whitelist orelse ""),
+        // Handler mappings - parse manually from raw YAML since zig-yaml doesn't support maps well
+        .handlers = try parseHandlersFromYaml(allocator, &y),
         .allocator = allocator,
     };
+}
+
+/// Parse handlers mapping from YAML document
+fn parseHandlersFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml) ![]HandlerMapping {
+    // Try to find the handlers section in the document
+    if (y.docs.items.len > 0) {
+        const doc = y.docs.items[0];
+        if (doc.asMap()) |doc_map| {
+            if (doc_map.get("handlers")) |handlers_val| {
+                if (handlers_val.asMap()) |handlers_map| {
+                    var mappings = try allocator.alloc(HandlerMapping, handlers_map.count());
+                    errdefer allocator.free(mappings);
+                    var count: usize = 0;
+                    const keys = handlers_map.keys();
+                    const values = handlers_map.values();
+                    for (keys, values) |pattern, handler_value| {
+                        const handler_name = handler_value.asScalar() orelse continue;
+                        mappings[count] = .{
+                            .pattern = try allocator.dupe(u8, pattern),
+                            .handler = try allocator.dupe(u8, handler_name),
+                        };
+                        count += 1;
+                    }
+                    // Shrink to actual size if some entries were skipped
+                    if (count < mappings.len) {
+                        // Free unused entries
+                        for (mappings[count..]) |m| {
+                            allocator.free(m.pattern);
+                            allocator.free(m.handler);
+                        }
+                        mappings = try allocator.realloc(mappings, count);
+                    }
+                    return mappings;
+                }
+            }
+        }
+    }
+    // Return default handlers if not specified
+    return try getDefaultHandlers(allocator);
 }
 
 test "config loading with defaults" {
@@ -406,4 +521,62 @@ test "yaml config parsing" {
     try testing.expect(cfg.enable_graphql == false);
     try testing.expectEqualStrings("/gql", cfg.graphql_endpoint);
     try testing.expectEqualStrings("debug", cfg.log_level);
+    // Default handlers should be present when no handlers section is specified
+    try testing.expect(cfg.handlers.len > 0);
+}
+
+test "yaml config with custom handlers" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const yaml_content =
+        \\host: "0.0.0.0"
+        \\port: 8080
+        \\static_dir: "./static"
+        \\lua_scripts_dir: "./lua"
+        \\handlers:
+        \\  /api/*: Handler.LuaHandler
+        \\  /*: Handler.StaticFileHandler
+    ;
+
+    const cfg = try parseYaml(allocator, yaml_content);
+    defer cfg.deinit();
+
+    // Should have 2 custom handlers
+    try testing.expect(cfg.handlers.len == 2);
+
+    // Check first handler
+    try testing.expectEqualStrings("/api/*", cfg.handlers[0].pattern);
+    try testing.expectEqualStrings("Handler.LuaHandler", cfg.handlers[0].handler);
+
+    // Check second handler
+    try testing.expectEqualStrings("/*", cfg.handlers[1].pattern);
+    try testing.expectEqualStrings("Handler.StaticFileHandler", cfg.handlers[1].handler);
+}
+
+test "default handlers" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const handlers = try getDefaultHandlers(allocator);
+    defer {
+        for (handlers) |m| {
+            allocator.free(m.pattern);
+            allocator.free(m.handler);
+        }
+        allocator.free(handlers);
+    }
+
+    // Verify default handlers are created
+    try testing.expect(handlers.len > 0);
+
+    // Verify some expected defaults exist
+    var has_static = false;
+    var has_health = false;
+    for (handlers) |h| {
+        if (std.mem.eql(u8, h.handler, "Handler.StaticFileHandler")) has_static = true;
+        if (std.mem.eql(u8, h.handler, "Handler.HealthCheckHandler")) has_health = true;
+    }
+    try testing.expect(has_static);
+    try testing.expect(has_health);
 }
