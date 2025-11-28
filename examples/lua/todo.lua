@@ -40,6 +40,7 @@ local function get_todo(id)
 end
 
 -- POST /api/todo - Create a new todo
+-- Returns: result table, status_code (for context handler to use)
 local function create_todo(body)
     if not body or not body.title then
         return response("error", nil, "Title is required"), 400

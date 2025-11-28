@@ -314,6 +314,26 @@ fn reqHeaders(lua: *ziglua.Lua) i32 {
     return 1;
 }
 
+/// Helper function to find a query parameter value by name
+/// Returns the value if found, null otherwise
+fn findQueryParam(query_string: []const u8, param_name: []const u8) ?[]const u8 {
+    if (query_string.len == 0) return null;
+
+    var query_iter = std.mem.splitScalar(u8, query_string, '&');
+    while (query_iter.next()) |param| {
+        if (std.mem.indexOfScalar(u8, param, '=')) |eq_pos| {
+            const key = param[0..eq_pos];
+            if (std.mem.eql(u8, key, param_name)) {
+                return if (eq_pos + 1 < param.len) param[eq_pos + 1 ..] else "";
+            }
+        } else if (param.len > 0 and std.mem.eql(u8, param, param_name)) {
+            // Flag-style parameter (e.g., ?debug)
+            return "";
+        }
+    }
+    return null;
+}
+
 /// Get a query parameter value
 /// Usage: ctx.req:query("page")
 fn reqQuery(lua: *ziglua.Lua) i32 {
@@ -333,22 +353,12 @@ fn reqQuery(lua: *ziglua.Lua) i32 {
         return 1;
     };
 
-    // Parse query string if not already done
-    if (req.url.query.len > 0) {
-        var query_iter = std.mem.splitScalar(u8, req.url.query, '&');
-        while (query_iter.next()) |param| {
-            if (std.mem.indexOfScalar(u8, param, '=')) |eq_pos| {
-                const key = param[0..eq_pos];
-                const value = if (eq_pos + 1 < param.len) param[eq_pos + 1 ..] else "";
-                if (std.mem.eql(u8, key, param_name)) {
-                    _ = lua.pushString(value);
-                    return 1;
-                }
-            }
-        }
+    // Use helper to find query parameter
+    if (findQueryParam(req.url.query, param_name)) |value| {
+        _ = lua.pushString(value);
+    } else {
+        lua.pushNil();
     }
-
-    lua.pushNil();
     return 1;
 }
 
@@ -583,9 +593,14 @@ fn resBody(lua: *ziglua.Lua) i32 {
 // =============================================================================
 
 /// Helper to push a key and set field in table
+/// If key is longer than MAX_KEY_SIZE, it will be truncated with a warning logged
 fn pushKeyToTable(lua: *ziglua.Lua, key: []const u8) void {
     var key_buf: [MAX_KEY_SIZE]u8 = undefined;
     const key_len = @min(key.len, key_buf.len - 1);
+    if (key.len >= key_buf.len) {
+        // Key truncation warning - log but continue to avoid breaking request processing
+        std.debug.print("Warning: Key truncated from {d} to {d} bytes\n", .{ key.len, key_len });
+    }
     @memcpy(key_buf[0..key_len], key[0..key_len]);
     key_buf[key_len] = 0;
     lua.setField(-2, key_buf[0..key_len :0]);
