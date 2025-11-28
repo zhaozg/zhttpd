@@ -2,17 +2,82 @@
 
 This directory contains example Lua scripts that demonstrate dynamic content generation with zhttpd.
 
-## Phase 1 Enhanced Features
+## Per-Request Context API (New in v0.4)
 
-zhttpd now includes enhanced Lua integration with the following features:
+zhttpd now supports a **Per-Request Context API** that provides direct access to httpz Request and Response objects. This is the preferred way to write new Lua handlers.
 
-### Complex Request Data Structures (luvit/Node.js Style)
+### Context-Based Handler
 
-Lua scripts now receive full request information including:
-- HTTP headers
-- Query parameters  
-- Request body
-- Method and path
+```lua
+function handle(ctx)
+    -- Access request data via methods
+    local method = ctx.req:method()
+    local path = ctx.req:path()
+    local header = ctx.req:header("content-type")
+    local body = ctx.req:body()
+    
+    -- Set response properties
+    ctx.res:status(200)
+    ctx.res:header("X-Custom-Header", "value")
+    ctx.res:content_type("application/json")
+    
+    -- Use per-request data storage
+    ctx.data.user_id = "12345"
+    ctx.data.processed = true
+    
+    return { status = "success", user = ctx.data.user_id }
+end
+
+return { handle = handle }
+```
+
+### Request Methods
+
+| Method | Description |
+|--------|-------------|
+| `ctx.req:method()` | Get HTTP method (GET, POST, etc.) |
+| `ctx.req:path()` | Get request path |
+| `ctx.req:url()` | Get full URL with query string |
+| `ctx.req:header(name)` | Get specific header value |
+| `ctx.req:headers()` | Get all headers as table |
+| `ctx.req:query(name)` | Get query parameter value |
+| `ctx.req:query_all()` | Get all query parameters as table |
+| `ctx.req:body()` | Get parsed JSON body or raw string |
+| `ctx.req:body_raw()` | Get raw body string |
+| `ctx.req:param(name)` | Get URL path parameter |
+
+### Response Methods
+
+| Method | Description |
+|--------|-------------|
+| `ctx.res:status(code)` | Set HTTP status code |
+| `ctx.res:header(name, value)` | Set response header |
+| `ctx.res:content_type(type)` | Set Content-Type header |
+| `ctx.res:body(content)` | Set response body directly |
+
+### Per-Request Data
+
+The `ctx.data` table is a Lua table for storing per-request data that persists throughout request processing.
+
+For complete documentation, see [docs/LUA_PROGRAMMING_GUIDE.md](../../docs/LUA_PROGRAMMING_GUIDE.md).
+
+## Legacy API (Still Supported)
+
+The legacy request table API is still supported for backward compatibility. Scripts can detect which API is being used:
+
+```lua
+function handle(ctx_or_request)
+    if ctx_or_request.req then
+        -- New context style
+        return handle_context(ctx_or_request)
+    else
+        -- Legacy style
+        return handle_legacy(ctx_or_request)
+    end
+end
+```
+
+## Features
 
 ### Script Hot-Reloading
 
@@ -43,9 +108,9 @@ Each HTTP worker thread has its own **dedicated Lua VM** via thread-local storag
 - Lua states are automatically initialized on first use per thread
 - This allows efficient multi-threaded, multi-connection concurrent processing
 
-## Request Structure
+## Legacy Request Structure
 
-Each Lua handler receives a request table with the following structure (luvit/Node.js style):
+When using the legacy API, each Lua handler receives a request table with the following structure (luvit/Node.js style):
 
 ```lua
 request = {
