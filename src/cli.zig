@@ -101,35 +101,37 @@ pub fn parseArgs(allocator: std.mem.Allocator) !CliResult {
 
 /// Load configuration from file (or default) and apply CLI overrides
 fn loadConfigWithOverrides(allocator: std.mem.Allocator, options: CliOptions) !config.Config {
-    // Determine config file to use
-    var cfg: config.Config = undefined;
-    var config_source: []const u8 = "default";
-
-    if (options.config_file) |config_path| {
-        // User specified a config file
-        cfg = config.loadConfig(allocator, config_path) catch |err| {
-            std.debug.print("Error: Failed to load config file '{s}': {}\n", .{ config_path, err });
-            return err;
-        };
-        config_source = config_path;
-        std.debug.print("Loaded configuration from {s}\n", .{config_source});
-    } else {
-        // Try default config files
-        if (config.loadConfig(allocator, "zhttpd.yaml")) |c| {
-            cfg = c;
-            config_source = "zhttpd.yaml";
-            std.debug.print("Loaded configuration from {s}\n", .{config_source});
-        } else |_| {
-            if (config.loadConfig(allocator, "config.json")) |c| {
-                cfg = c;
-                config_source = "config.json";
-                std.debug.print("Loaded configuration from {s}\n", .{config_source});
+    // Load configuration using block expression to avoid undefined state
+    var cfg = blk: {
+        if (options.config_file) |config_path| {
+            // User specified a config file - verify it exists first
+            std.fs.cwd().access(config_path, .{}) catch |err| {
+                std.debug.print("Error: Config file '{s}' not accessible: {}\n", .{ config_path, err });
+                return error.ConfigLoadFailed;
+            };
+            // File exists, load it
+            const c = config.loadConfig(allocator, config_path) catch |err| {
+                std.debug.print("Error: Failed to parse config file '{s}': {}\n", .{ config_path, err });
+                return error.ConfigLoadFailed;
+            };
+            std.debug.print("Loaded configuration from {s}\n", .{config_path});
+            break :blk c;
+        } else {
+            // Try default config files
+            if (config.loadConfig(allocator, "zhttpd.yaml")) |c| {
+                std.debug.print("Loaded configuration from zhttpd.yaml\n", .{});
+                break :blk c;
             } else |_| {
-                cfg = try config.getDefaultConfig(allocator);
-                std.debug.print("Using default configuration\n", .{});
+                if (config.loadConfig(allocator, "config.json")) |c| {
+                    std.debug.print("Loaded configuration from config.json\n", .{});
+                    break :blk c;
+                } else |_| {
+                    std.debug.print("Using default configuration\n", .{});
+                    break :blk try config.getDefaultConfig(allocator);
+                }
             }
         }
-    }
+    };
 
     // Apply CLI overrides - use cfg.allocator which is the same allocator used to create the config
     if (options.host) |host| {
@@ -216,19 +218,138 @@ fn printVersion() void {
 }
 
 // Tests
-test "parseArgs help flag" {
-    // Note: Can't easily test args parsing directly without mocking
-    // Just verify the module compiles and functions exist
-    const testing = std.testing;
-    _ = testing;
+test "CliOptions default values" {
+    const options = CliOptions{};
+    try std.testing.expect(options.config_file == null);
+    try std.testing.expect(options.host == null);
+    try std.testing.expect(options.port == null);
+    try std.testing.expect(options.static_dir == null);
+    try std.testing.expect(options.lua_scripts_dir == null);
+    try std.testing.expect(options.log_level == null);
+    try std.testing.expect(options.thread_pool_size == null);
+    try std.testing.expect(options.security_headers == null);
 }
 
-test "printHelp compiles" {
-    // Just verify it compiles - don't actually print during tests
-    _ = printHelp;
+test "CliOptions with values" {
+    const options = CliOptions{
+        .config_file = "test.yaml",
+        .host = "127.0.0.1",
+        .port = 3000,
+        .static_dir = "./static",
+        .lua_scripts_dir = "./lua",
+        .log_level = "debug",
+        .thread_pool_size = 8,
+        .security_headers = false,
+    };
+    try std.testing.expectEqualStrings("test.yaml", options.config_file.?);
+    try std.testing.expectEqualStrings("127.0.0.1", options.host.?);
+    try std.testing.expect(options.port.? == 3000);
+    try std.testing.expectEqualStrings("./static", options.static_dir.?);
+    try std.testing.expectEqualStrings("./lua", options.lua_scripts_dir.?);
+    try std.testing.expectEqualStrings("debug", options.log_level.?);
+    try std.testing.expect(options.thread_pool_size.? == 8);
+    try std.testing.expect(options.security_headers.? == false);
 }
 
-test "printVersion compiles" {
-    // Just verify it compiles - don't actually print during tests
-    _ = printVersion;
+test "CliResult union" {
+    // Test exit variant
+    const exit_result = CliResult{ .exit = 0 };
+    switch (exit_result) {
+        .exit => |code| try std.testing.expect(code == 0),
+        .run => unreachable,
+    }
+
+    // Test that run variant can hold a config (compilation check)
+    _ = CliResult.run;
+}
+
+test "VERSION constant" {
+    try std.testing.expect(VERSION.len > 0);
+    // Version should be in semver format (contains dots)
+    try std.testing.expect(std.mem.indexOfScalar(u8, VERSION, '.') != null);
+}
+
+test "loadConfigWithOverrides applies CLI overrides" {
+    const allocator = std.testing.allocator;
+
+    // Test with no CLI overrides - should use defaults
+    const options = CliOptions{};
+    const cfg = loadConfigWithOverrides(allocator, options) catch |err| {
+        // Config load may fail if no config file exists, which is fine for this test
+        if (err == error.ConfigLoadFailed) {
+            return; // Skip test if config load fails
+        }
+        return err;
+    };
+    defer cfg.deinit();
+
+    // Verify default config was loaded
+    try std.testing.expect(cfg.port == 8080);
+    try std.testing.expectEqualStrings("0.0.0.0", cfg.host);
+}
+
+test "loadConfigWithOverrides with port override" {
+    const allocator = std.testing.allocator;
+
+    const options = CliOptions{
+        .port = 9999,
+    };
+    const cfg = loadConfigWithOverrides(allocator, options) catch |err| {
+        if (err == error.ConfigLoadFailed) {
+            return;
+        }
+        return err;
+    };
+    defer cfg.deinit();
+
+    // Verify port was overridden
+    try std.testing.expect(cfg.port == 9999);
+}
+
+test "loadConfigWithOverrides with host override" {
+    const allocator = std.testing.allocator;
+
+    const options = CliOptions{
+        .host = "192.168.1.1",
+    };
+    const cfg = loadConfigWithOverrides(allocator, options) catch |err| {
+        if (err == error.ConfigLoadFailed) {
+            return;
+        }
+        return err;
+    };
+    defer cfg.deinit();
+
+    // Verify host was overridden
+    try std.testing.expectEqualStrings("192.168.1.1", cfg.host);
+}
+
+test "loadConfigWithOverrides with security_headers override" {
+    const allocator = std.testing.allocator;
+
+    const options = CliOptions{
+        .security_headers = false,
+    };
+    const cfg = loadConfigWithOverrides(allocator, options) catch |err| {
+        if (err == error.ConfigLoadFailed) {
+            return;
+        }
+        return err;
+    };
+    defer cfg.deinit();
+
+    // Verify security_headers was overridden
+    try std.testing.expect(cfg.security_headers == false);
+}
+
+test "loadConfigWithOverrides with invalid config file" {
+    const allocator = std.testing.allocator;
+
+    const options = CliOptions{
+        .config_file = "/nonexistent/path/config.yaml",
+    };
+
+    // Should return ConfigLoadFailed error
+    const result = loadConfigWithOverrides(allocator, options);
+    try std.testing.expectError(error.ConfigLoadFailed, result);
 }
