@@ -53,6 +53,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const yaml = b.dependency("yaml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Build configuration options to expose to the runtime
     const build_options = b.addOptions();
     build_options.addOption(LuaLang, "lua_lang", lua_lang);
@@ -75,6 +80,7 @@ pub fn build(b: *std.Build) void {
     // Note: ziglua's internal module is named "zlua"; we import it as "ziglua" in our code
     exe.root_module.addImport("ziglua", ziglua.module("zlua"));
     exe.root_module.addImport("grapzig", grapzig.module("grapzig"));
+    exe.root_module.addImport("yaml", yaml.module("yaml"));
 
     b.installArtifact(exe);
 

@@ -1,69 +1,92 @@
+# zhttpd Example Configuration File
+# This file demonstrates all available configuration options
+
+# Server Binding
 host: "0.0.0.0"
 port: 8080
+
+# Static files directory
 static_dir: "./examples/static"
+
+# Lua scripts directory
 lua_scripts_dir: "./examples/lua"
+
+# Security
 security_headers: true
-max_body_size: 10485760  # 10MB
+
+# Maximum request body size (10MB)
+max_body_size: 10485760
 timeout_seconds: 30
 thread_pool_size: 4
-max_connections: 512  # Maximum concurrent connections
-request_buffer_size: 65536  # Request/response buffer size (64KB)
+
+# Maximum concurrent connections
+max_connections: 512
+
+# Request/response buffer size (64KB)
+request_buffer_size: 65536
+
 enable_lua: true
 enable_graphql: true
 graphql_endpoint: "/graphql"
 log_level: "info"
 log_file: "zhttpd.log"
 access_log_file: "access.log"
-reload: "auto"  # Script reload mode: never, auto, or force
-max_cache_file_size: 1048576  # Maximum file size to cache (1MB)
-enable_etag: true  # Enable ETag caching for static files
+
+# Script reload mode: never, auto, or force
+reload: "auto"
+
+# Maximum file size to cache (1MB)
+max_cache_file_size: 1048576
+
+# Enable ETag caching for static files
+enable_etag: true
 
 # Phase 3: Advanced httpz Features
 # ---------------------------------
 
 # WebSocket Support
-enable_websocket: false  # Enable WebSocket support
+enable_websocket: false
 
 # Server-Sent Events (SSE)
-enable_sse: false  # Enable SSE endpoint at /events
+enable_sse: false
 
 # Rate Limiting
-enable_rate_limit: false  # Enable rate limiting middleware
-rate_limit_requests: 100  # Maximum requests per window
-rate_limit_window: 60  # Window size in seconds
+enable_rate_limit: false
+rate_limit_requests: 100
+rate_limit_window: 60
 
 # CORS (Cross-Origin Resource Sharing)
-enable_cors: false  # Enable CORS headers
-cors_origins: "*"  # Allowed origins (* for any, or comma-separated list)
-cors_methods: "GET, POST, PUT, DELETE, OPTIONS"  # Allowed HTTP methods
-cors_headers: "Content-Type, Authorization"  # Allowed request headers
+enable_cors: false
+cors_origins: "*"
+cors_methods: "GET, POST, PUT, DELETE, OPTIONS"
+cors_headers: "Content-Type, Authorization"
 
 # Authentication (delegated to Lua scripts)
-enable_auth: false  # Enable authentication middleware
-auth_script: "auth"  # Lua script name for token validation
-auth_protected_paths: "/api/*"  # Paths requiring authentication
-auth_public_paths: "/api/login, /api/register"  # Always public paths
+enable_auth: false
+auth_script: "auth"
+auth_protected_paths: "/api/*"
+auth_public_paths: "/api/login, /api/register"
 
 # Phase 5: Observability
 # -----------------------
 
 # Prometheus Metrics
-enable_metrics: true  # Enable Prometheus metrics endpoint at /metrics
+enable_metrics: true
 
 # Health Check
-enable_health_check: true  # Enable health check endpoint at /health
+enable_health_check: true
 
 # Request ID Propagation
-enable_request_id: true  # Enable X-Request-ID header propagation
+enable_request_id: true
 
-# Structured Logging
-log_format: "text"  # Log format: "text" or "json" (JSON enables structured logging)
+# Structured Logging (text or json)
+log_format: "text"
 
 # Phase 7: Security Enhancements
 # ------------------------------
 
 # IP Access Control (blacklist/whitelist)
-enable_ip_blacklist: false  # Enable IP access control
-ip_blacklist: ""  # Comma-separated list of blocked IPs/CIDRs (e.g., "10.0.0.0/8, 192.168.1.100")
-ip_whitelist: ""  # Comma-separated list of whitelisted IPs/CIDRs (bypass rate limiting)
+enable_ip_blacklist: false
+ip_blacklist: ""
+ip_whitelist: ""
 

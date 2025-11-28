@@ -1,4 +1,5 @@
 const std = @import("std");
+const yaml = @import("yaml");
 
 // Default configuration values
 pub const DEFAULT_MAX_CONNECTIONS: u32 = 512;
@@ -233,158 +234,126 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
     };
 }
 
-/// Parse boolean value from YAML
-/// Accepts: true/false, yes/no, 1/0 (case-insensitive)
-fn parseBool(value: []const u8) bool {
-    if (std.ascii.eqlIgnoreCase(value, "true")) return true;
-    if (std.ascii.eqlIgnoreCase(value, "yes")) return true;
-    if (std.ascii.eqlIgnoreCase(value, "1")) return true;
-    return false;
-}
+/// YAML configuration structure for typed parsing
+/// All fields are optional with default values to match getDefaultConfig behavior
+const YamlConfig = struct {
+    host: ?[]const u8 = null,
+    port: ?u16 = null,
+    static_dir: ?[]const u8 = null,
+    lua_scripts_dir: ?[]const u8 = null,
+    security_headers: ?bool = null,
+    max_body_size: ?usize = null,
+    timeout_seconds: ?u32 = null,
+    thread_pool_size: ?u32 = null,
+    max_connections: ?u32 = null,
+    request_buffer_size: ?usize = null,
+    enable_lua: ?bool = null,
+    enable_graphql: ?bool = null,
+    graphql_endpoint: ?[]const u8 = null,
+    log_level: ?[]const u8 = null,
+    log_file: ?[]const u8 = null,
+    access_log_file: ?[]const u8 = null,
+    reload: ?[]const u8 = null,
+    max_cache_file_size: ?usize = null,
+    enable_etag: ?bool = null,
+    // Phase 3: Advanced httpz features
+    enable_websocket: ?bool = null,
+    enable_sse: ?bool = null,
+    enable_rate_limit: ?bool = null,
+    rate_limit_requests: ?u32 = null,
+    rate_limit_window: ?u32 = null,
+    enable_cors: ?bool = null,
+    cors_origins: ?[]const u8 = null,
+    cors_methods: ?[]const u8 = null,
+    cors_headers: ?[]const u8 = null,
+    enable_auth: ?bool = null,
+    auth_script: ?[]const u8 = null,
+    auth_protected_paths: ?[]const u8 = null,
+    auth_public_paths: ?[]const u8 = null,
+    // Lua sandbox configuration
+    lua_sandbox_enabled: ?bool = null,
+    lua_max_instructions: ?u32 = null,
+    // Phase 5: Observability configuration
+    enable_metrics: ?bool = null,
+    enable_health_check: ?bool = null,
+    enable_request_id: ?bool = null,
+    log_format: ?[]const u8 = null,
+    // Phase 7: Security enhancements
+    enable_ip_blacklist: ?bool = null,
+    ip_blacklist: ?[]const u8 = null,
+    ip_whitelist: ?[]const u8 = null,
+};
 
-/// Simple YAML parser for basic key-value config
-/// Supports: string, integer values, and boolean values (true/false, yes/no, 1/0)
-/// Comments starting with # are supported
+/// Parse YAML content using zig-yaml library
 fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
-    // Start with default config (all strings are heap-allocated)
-    var config = try getDefaultConfig(allocator);
-    var lines = std.mem.splitScalar(u8, content, '\n');
+    // Use arena allocator for YAML parsing intermediate results
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len == 0 or trimmed[0] == '#') continue;
+    var y: yaml.Yaml = .{ .source = content };
+    defer y.deinit(arena.allocator());
 
-        // Find the colon separator
-        const colon_pos = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
-        if (colon_pos == 0) continue;
+    y.load(arena.allocator()) catch |err| switch (err) {
+        error.ParseFailure => {
+            if (y.parse_errors.errorMessageCount() > 0) {
+                y.parse_errors.renderToStdErr(.{ .ttyconf = .no_color });
+            }
+            return error.ParseFailure;
+        },
+        else => return err,
+    };
 
-        const key = std.mem.trim(u8, trimmed[0..colon_pos], " \t");
-        var value_part = std.mem.trim(u8, trimmed[colon_pos + 1 ..], " \t");
+    const parsed = try y.parse(arena.allocator(), YamlConfig);
 
-        // Remove inline comments
-        if (std.mem.indexOfScalar(u8, value_part, '#')) |comment_pos| {
-            value_part = std.mem.trim(u8, value_part[0..comment_pos], " \t");
-        }
-
-        // Remove quotes if present
-        const value = if (value_part.len >= 2 and
-            ((value_part[0] == '"' and value_part[value_part.len - 1] == '"') or
-                (value_part[0] == '\'' and value_part[value_part.len - 1] == '\'')))
-            value_part[1 .. value_part.len - 1]
-        else
-            value_part;
-
-        // Parse the value based on the key
-        if (std.mem.eql(u8, key, "host")) {
-            allocator.free(config.host); // Safe: allocated by getDefaultConfig
-            config.host = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "port")) {
-            config.port = try std.fmt.parseInt(u16, value, 10);
-        } else if (std.mem.eql(u8, key, "static_dir")) {
-            allocator.free(config.static_dir);
-            config.static_dir = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "lua_scripts_dir")) {
-            allocator.free(config.lua_scripts_dir);
-            config.lua_scripts_dir = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "security_headers")) {
-            config.security_headers = parseBool(value);
-        } else if (std.mem.eql(u8, key, "max_body_size")) {
-            config.max_body_size = try std.fmt.parseInt(usize, value, 10);
-        } else if (std.mem.eql(u8, key, "timeout_seconds")) {
-            config.timeout_seconds = try std.fmt.parseInt(u32, value, 10);
-        } else if (std.mem.eql(u8, key, "thread_pool_size")) {
-            config.thread_pool_size = try std.fmt.parseInt(u32, value, 10);
-        } else if (std.mem.eql(u8, key, "enable_lua")) {
-            config.enable_lua = parseBool(value);
-        } else if (std.mem.eql(u8, key, "enable_graphql")) {
-            config.enable_graphql = parseBool(value);
-        } else if (std.mem.eql(u8, key, "graphql_endpoint")) {
-            allocator.free(config.graphql_endpoint);
-            config.graphql_endpoint = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "log_level")) {
-            allocator.free(config.log_level);
-            config.log_level = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "log_file")) {
-            if (config.log_file) |lf| allocator.free(lf);
-            config.log_file = if (value.len > 0) try allocator.dupe(u8, value) else null;
-        } else if (std.mem.eql(u8, key, "access_log_file")) {
-            if (config.access_log_file) |alf| allocator.free(alf);
-            config.access_log_file = if (value.len > 0) try allocator.dupe(u8, value) else null;
-        } else if (std.mem.eql(u8, key, "reload")) {
-            config.reload = ReloadMode.fromString(value);
-        } else if (std.mem.eql(u8, key, "max_cache_file_size")) {
-            config.max_cache_file_size = try std.fmt.parseInt(usize, value, 10);
-        } else if (std.mem.eql(u8, key, "enable_etag")) {
-            config.enable_etag = parseBool(value);
-        } else if (std.mem.eql(u8, key, "max_connections")) {
-            config.max_connections = try std.fmt.parseInt(u32, value, 10);
-        } else if (std.mem.eql(u8, key, "request_buffer_size")) {
-            config.request_buffer_size = try std.fmt.parseInt(usize, value, 10);
-        }
+    // Convert parsed YAML to Config with proper memory ownership
+    return Config{
+        .host = try allocator.dupe(u8, parsed.host orelse "0.0.0.0"),
+        .port = parsed.port orelse 8080,
+        .static_dir = try allocator.dupe(u8, parsed.static_dir orelse "./examples/static"),
+        .lua_scripts_dir = try allocator.dupe(u8, parsed.lua_scripts_dir orelse "./examples/lua"),
+        .security_headers = parsed.security_headers orelse true,
+        .max_body_size = parsed.max_body_size orelse (1024 * 1024 * 10), // 10MB
+        .timeout_seconds = parsed.timeout_seconds orelse 30,
+        .thread_pool_size = parsed.thread_pool_size orelse 4,
+        .max_connections = parsed.max_connections orelse DEFAULT_MAX_CONNECTIONS,
+        .request_buffer_size = parsed.request_buffer_size orelse DEFAULT_REQUEST_BUFFER_SIZE,
+        .enable_lua = parsed.enable_lua orelse true,
+        .enable_graphql = parsed.enable_graphql orelse true,
+        .graphql_endpoint = try allocator.dupe(u8, parsed.graphql_endpoint orelse "/graphql"),
+        .log_level = try allocator.dupe(u8, parsed.log_level orelse "info"),
+        .log_file = if (parsed.log_file) |lf| try allocator.dupe(u8, lf) else null,
+        .access_log_file = if (parsed.access_log_file) |alf| try allocator.dupe(u8, alf) else null,
+        .reload = if (parsed.reload) |r| ReloadMode.fromString(r) else .auto,
+        .max_cache_file_size = parsed.max_cache_file_size orelse DEFAULT_MAX_CACHE_FILE_SIZE,
+        .enable_etag = parsed.enable_etag orelse true,
         // Phase 3: Advanced httpz features
-        else if (std.mem.eql(u8, key, "enable_websocket")) {
-            config.enable_websocket = parseBool(value);
-        } else if (std.mem.eql(u8, key, "enable_sse")) {
-            config.enable_sse = parseBool(value);
-        } else if (std.mem.eql(u8, key, "enable_rate_limit")) {
-            config.enable_rate_limit = parseBool(value);
-        } else if (std.mem.eql(u8, key, "rate_limit_requests")) {
-            config.rate_limit_requests = try std.fmt.parseInt(u32, value, 10);
-        } else if (std.mem.eql(u8, key, "rate_limit_window")) {
-            config.rate_limit_window = try std.fmt.parseInt(u32, value, 10);
-        } else if (std.mem.eql(u8, key, "enable_cors")) {
-            config.enable_cors = parseBool(value);
-        } else if (std.mem.eql(u8, key, "cors_origins")) {
-            allocator.free(config.cors_origins);
-            config.cors_origins = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "cors_methods")) {
-            allocator.free(config.cors_methods);
-            config.cors_methods = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "cors_headers")) {
-            allocator.free(config.cors_headers);
-            config.cors_headers = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "enable_auth")) {
-            config.enable_auth = parseBool(value);
-        } else if (std.mem.eql(u8, key, "auth_script")) {
-            allocator.free(config.auth_script);
-            config.auth_script = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "auth_protected_paths")) {
-            allocator.free(config.auth_protected_paths);
-            config.auth_protected_paths = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "auth_public_paths")) {
-            allocator.free(config.auth_public_paths);
-            config.auth_public_paths = try allocator.dupe(u8, value);
-        }
+        .enable_websocket = parsed.enable_websocket orelse false,
+        .enable_sse = parsed.enable_sse orelse false,
+        .enable_rate_limit = parsed.enable_rate_limit orelse false,
+        .rate_limit_requests = parsed.rate_limit_requests orelse 100,
+        .rate_limit_window = parsed.rate_limit_window orelse 60,
+        .enable_cors = parsed.enable_cors orelse false,
+        .cors_origins = try allocator.dupe(u8, parsed.cors_origins orelse "*"),
+        .cors_methods = try allocator.dupe(u8, parsed.cors_methods orelse "GET, POST, PUT, DELETE, OPTIONS"),
+        .cors_headers = try allocator.dupe(u8, parsed.cors_headers orelse "Content-Type, Authorization"),
+        .enable_auth = parsed.enable_auth orelse false,
+        .auth_script = try allocator.dupe(u8, parsed.auth_script orelse "auth"),
+        .auth_protected_paths = try allocator.dupe(u8, parsed.auth_protected_paths orelse "/api/*"),
+        .auth_public_paths = try allocator.dupe(u8, parsed.auth_public_paths orelse "/api/login, /api/register"),
         // Lua sandbox configuration
-        else if (std.mem.eql(u8, key, "lua_sandbox_enabled")) {
-            config.lua_sandbox_enabled = parseBool(value);
-        } else if (std.mem.eql(u8, key, "lua_max_instructions")) {
-            config.lua_max_instructions = try std.fmt.parseInt(u32, value, 10);
-        }
+        .lua_sandbox_enabled = parsed.lua_sandbox_enabled orelse true,
+        .lua_max_instructions = parsed.lua_max_instructions orelse 100_000,
         // Phase 5: Observability configuration
-        else if (std.mem.eql(u8, key, "enable_metrics")) {
-            config.enable_metrics = parseBool(value);
-        } else if (std.mem.eql(u8, key, "enable_health_check")) {
-            config.enable_health_check = parseBool(value);
-        } else if (std.mem.eql(u8, key, "enable_request_id")) {
-            config.enable_request_id = parseBool(value);
-        } else if (std.mem.eql(u8, key, "log_format")) {
-            allocator.free(config.log_format);
-            config.log_format = try allocator.dupe(u8, value);
-        }
+        .enable_metrics = parsed.enable_metrics orelse true,
+        .enable_health_check = parsed.enable_health_check orelse true,
+        .enable_request_id = parsed.enable_request_id orelse true,
+        .log_format = try allocator.dupe(u8, parsed.log_format orelse "text"),
         // Phase 7: Security enhancements
-        else if (std.mem.eql(u8, key, "enable_ip_blacklist")) {
-            config.enable_ip_blacklist = parseBool(value);
-        } else if (std.mem.eql(u8, key, "ip_blacklist")) {
-            allocator.free(config.ip_blacklist);
-            config.ip_blacklist = try allocator.dupe(u8, value);
-        } else if (std.mem.eql(u8, key, "ip_whitelist")) {
-            allocator.free(config.ip_whitelist);
-            config.ip_whitelist = try allocator.dupe(u8, value);
-        }
-    }
-
-    return config;
+        .enable_ip_blacklist = parsed.enable_ip_blacklist orelse false,
+        .ip_blacklist = try allocator.dupe(u8, parsed.ip_blacklist orelse ""),
+        .ip_whitelist = try allocator.dupe(u8, parsed.ip_whitelist orelse ""),
+        .allocator = allocator,
+    };
 }
 
 test "config loading with defaults" {
