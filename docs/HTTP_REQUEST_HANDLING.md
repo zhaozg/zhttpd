@@ -50,7 +50,7 @@ zhttpd follows an event-driven, modular architecture that processes HTTP request
 
 ```zig
 // In main.zig - Server initialization
-var server = try httpz_handlers.HttpzServer.init(allocator, cfg);
+var server = try httpz_handlers.HttpzServer.init(allocator, config);
 
 // In AppContext.init() - Resource initialization with proper error handling
 pub fn init(allocator: std.mem.Allocator, config: Config) !AppContext {
@@ -441,20 +441,9 @@ pub const MyMiddleware = struct {
 
 2. Add to `AppContext`:
 
-```zig
-pub const AppContext = struct {
-    // ...existing fields...
-    
-    // Note: Each middleware is optional to support configuration-driven enablement.
-    // For many middleware components, consider grouping related ones or using
-    // a middleware registry pattern for better scalability.
-    my_middleware: ?MyMiddleware = null,
-};
-```
+**Recommended: Middleware Registry Pattern (Scalable)**
 
-**Alternative: Middleware Registry Pattern**
-
-For servers with many middleware components, consider a registry approach:
+For servers with many middleware components, use a registry approach:
 
 ```zig
 pub const MiddlewareRegistry = struct {
@@ -477,6 +466,20 @@ pub const MiddlewareRegistry = struct {
         }
         return true;
     }
+};
+```
+
+**Alternative: Direct Field Approach (Simple, but limited scalability)**
+
+For a small number of middleware, you can add optional fields directly:
+
+```zig
+pub const AppContext = struct {
+    // ...existing fields...
+    
+    // Note: This approach is simpler but doesn't scale well beyond a few
+    // middleware components. Use the registry pattern for many middleware.
+    my_middleware: ?MyMiddleware = null,
 };
 ```
 
