@@ -38,6 +38,29 @@ const MAX_KEY_SIZE: usize = 256;
 const JSON_MAX_SAFE_INTEGER: f64 = 9007199254740992;
 const JSON_MIN_SAFE_INTEGER: f64 = -9007199254740992;
 
+/// Escape a string for JSON output, appending the escaped content to the buffer
+/// Handles quotes, backslashes, and control characters according to RFC 8259
+fn appendJsonEscapedString(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(allocator, "\\\""),
+            '\\' => try buf.appendSlice(allocator, "\\\\"),
+            '\n' => try buf.appendSlice(allocator, "\\n"),
+            '\r' => try buf.appendSlice(allocator, "\\r"),
+            '\t' => try buf.appendSlice(allocator, "\\t"),
+            0x08 => try buf.appendSlice(allocator, "\\b"), // backspace
+            0x0c => try buf.appendSlice(allocator, "\\f"), // form feed
+            0x00...0x07, 0x0b, 0x0e...0x1f => {
+                // Escape other control characters as \uXXXX
+                try buf.appendSlice(allocator, "\\u00");
+                try buf.append(allocator, "0123456789abcdef"[c >> 4]);
+                try buf.append(allocator, "0123456789abcdef"[c & 0x0f]);
+            },
+            else => try buf.append(allocator, c),
+        }
+    }
+}
+
 /// Configuration for Lua sandbox limits
 /// All settings have safe defaults that can be overridden via configuration
 pub const SandboxConfig = struct {
@@ -290,22 +313,7 @@ const ThreadLocalLua = struct {
                 var buf = std.ArrayListUnmanaged(u8){};
                 defer buf.deinit(allocator);
                 try buf.append(allocator, '"');
-                for (s) |c| {
-                    switch (c) {
-                        '"' => try buf.appendSlice(allocator, "\\\""),
-                        '\\' => try buf.appendSlice(allocator, "\\\\"),
-                        '\n' => try buf.appendSlice(allocator, "\\n"),
-                        '\r' => try buf.appendSlice(allocator, "\\r"),
-                        '\t' => try buf.appendSlice(allocator, "\\t"),
-                        0x00...0x07, 0x0b, 0x0e...0x1f => {
-                            // Escape other control characters as \uXXXX
-                            try buf.appendSlice(allocator, "\\u00");
-                            try buf.append(allocator, "0123456789abcdef"[c >> 4]);
-                            try buf.append(allocator, "0123456789abcdef"[c & 0x0f]);
-                        },
-                        else => try buf.append(allocator, c),
-                    }
-                }
+                try appendJsonEscapedString(&buf, allocator, s);
                 try buf.append(allocator, '"');
                 return try buf.toOwnedSlice(allocator);
             },
@@ -356,7 +364,7 @@ const ThreadLocalLua = struct {
 
                         if (key.len > 0) {
                             try buf.append(allocator, '"');
-                            try buf.appendSlice(allocator, key);
+                            try appendJsonEscapedString(&buf, allocator, key);
                             try buf.appendSlice(allocator, "\":");
 
                             const value_json = try luaValueToJsonStatic(allocator, lua, -1);
@@ -719,22 +727,7 @@ pub const LuaHandler = struct {
                 var buf = std.ArrayListUnmanaged(u8){};
                 defer buf.deinit(allocator);
                 try buf.append(allocator, '"');
-                for (s) |c| {
-                    switch (c) {
-                        '"' => try buf.appendSlice(allocator, "\\\""),
-                        '\\' => try buf.appendSlice(allocator, "\\\\"),
-                        '\n' => try buf.appendSlice(allocator, "\\n"),
-                        '\r' => try buf.appendSlice(allocator, "\\r"),
-                        '\t' => try buf.appendSlice(allocator, "\\t"),
-                        0x00...0x07, 0x0b, 0x0e...0x1f => {
-                            // Escape other control characters as \uXXXX
-                            try buf.appendSlice(allocator, "\\u00");
-                            try buf.append(allocator, "0123456789abcdef"[c >> 4]);
-                            try buf.append(allocator, "0123456789abcdef"[c & 0x0f]);
-                        },
-                        else => try buf.append(allocator, c),
-                    }
-                }
+                try appendJsonEscapedString(&buf, allocator, s);
                 try buf.append(allocator, '"');
                 return try buf.toOwnedSlice(allocator);
             },
@@ -786,7 +779,7 @@ pub const LuaHandler = struct {
 
                         if (key.len > 0) {
                             try buf.append(allocator, '"');
-                            try buf.appendSlice(allocator, key);
+                            try appendJsonEscapedString(&buf, allocator, key);
                             try buf.appendSlice(allocator, "\":");
 
                             // Get value
@@ -944,6 +937,86 @@ test "cjson module encode and decode" {
     // Verify cjson was available
     try testing.expect(std.mem.indexOf(u8, result, "cjson_available") != null);
     try testing.expect(std.mem.indexOf(u8, result, "true") != null);
+    // Verify special character escaping works
+    try testing.expect(std.mem.indexOf(u8, result, "special_chars_valid") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "deep_valid") != null);
+}
+
+test "appendJsonEscapedString handles special characters" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test escaping quotes
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "hello \"world\"");
+        try testing.expectEqualStrings("hello \\\"world\\\"", buf.items);
+    }
+
+    // Test escaping backslashes
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "path\\to\\file");
+        try testing.expectEqualStrings("path\\\\to\\\\file", buf.items);
+    }
+
+    // Test escaping newlines
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "line1\nline2");
+        try testing.expectEqualStrings("line1\\nline2", buf.items);
+    }
+
+    // Test escaping tabs
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "col1\tcol2");
+        try testing.expectEqualStrings("col1\\tcol2", buf.items);
+    }
+
+    // Test escaping carriage return
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "before\rafter");
+        try testing.expectEqualStrings("before\\rafter", buf.items);
+    }
+
+    // Test escaping backspace
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "before\x08after");
+        try testing.expectEqualStrings("before\\bafter", buf.items);
+    }
+
+    // Test escaping form feed
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "before\x0cafter");
+        try testing.expectEqualStrings("before\\fafter", buf.items);
+    }
+
+    // Test escaping null character
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "before\x00after");
+        try testing.expectEqualStrings("before\\u0000after", buf.items);
+    }
+
+    // Test escaping other control characters (e.g., 0x01)
+    {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try appendJsonEscapedString(&buf, allocator, "before\x01after");
+        try testing.expectEqualStrings("before\\u0001after", buf.items);
+    }
 }
 
 test "getLuaEngineName returns correct engine name" {
