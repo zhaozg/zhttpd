@@ -18,6 +18,12 @@ pub const ReloadMode = enum {
     }
 };
 
+/// Handler mapping from URL pattern to handler name
+pub const HandlerMapping = struct {
+    pattern: []const u8,
+    handler: []const u8,
+};
+
 pub const Config = struct {
     host: []const u8,
     port: u16,
@@ -67,6 +73,8 @@ pub const Config = struct {
     enable_ip_blacklist: bool, // Enable IP blacklist/whitelist
     ip_blacklist: []const u8, // Comma-separated list of blocked IPs/CIDRs
     ip_whitelist: []const u8, // Comma-separated list of whitelisted IPs/CIDRs
+    // Handler mappings from URL pattern to handler name
+    handlers: []HandlerMapping,
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: Config) void {
@@ -90,6 +98,12 @@ pub const Config = struct {
         self.allocator.free(self.log_format);
         self.allocator.free(self.ip_blacklist);
         self.allocator.free(self.ip_whitelist);
+        // Free handler mappings
+        for (self.handlers) |mapping| {
+            self.allocator.free(mapping.pattern);
+            self.allocator.free(mapping.handler);
+        }
+        self.allocator.free(self.handlers);
     }
 };
 
@@ -106,81 +120,56 @@ pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config {
     const content = try file.readToEndAlloc(allocator, 1024 * 1024);
     defer allocator.free(content);
 
-    // Determine format based on file extension or content
+    // Only YAML configuration is supported
+    // Check file extension - only .yaml and .yml are valid
     const is_yaml = std.mem.endsWith(u8, path, ".yaml") or std.mem.endsWith(u8, path, ".yml");
 
-    if (is_yaml) {
-        return parseYaml(allocator, content) catch |err| {
-            std.debug.print("YAML parse error in '{s}': {}\n", .{ path, err });
-            std.debug.print("Using default configuration\n", .{});
-            return getDefaultConfig(allocator);
-        };
-    } else {
-        return parseJson(allocator, content) catch |err| {
-            std.debug.print("JSON parse error in '{s}': {}\n", .{ path, err });
-            std.debug.print("Using default configuration\n", .{});
-            return getDefaultConfig(allocator);
-        };
+    if (!is_yaml) {
+        std.debug.print("Warning: '{s}' does not have .yaml or .yml extension\n", .{path});
+        std.debug.print("Only YAML configuration files are supported. Using default configuration.\n", .{});
+        return getDefaultConfig(allocator);
     }
+
+    return parseYaml(allocator, content) catch |err| {
+        std.debug.print("YAML parse error in '{s}': {}\n", .{ path, err });
+        std.debug.print("Using default configuration\n", .{});
+        return getDefaultConfig(allocator);
+    };
 }
 
-fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Config {
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, content, .{});
-    defer parsed.deinit();
-
-    const root = parsed.value.object;
-
-    return Config{
-        .host = try allocator.dupe(u8, root.get("host").?.string),
-        .port = @intCast(root.get("port").?.integer),
-        .static_dir = try allocator.dupe(u8, root.get("static_dir").?.string),
-        .lua_scripts_dir = try allocator.dupe(u8, root.get("lua_scripts_dir").?.string),
-        .security_headers = root.get("security_headers").?.bool,
-        .max_body_size = @intCast(root.get("max_body_size").?.integer),
-        .timeout_seconds = @intCast(root.get("timeout_seconds").?.integer),
-        .thread_pool_size = @intCast(root.get("thread_pool_size").?.integer),
-        .max_connections = if (root.get("max_connections")) |mc| @intCast(mc.integer) else DEFAULT_MAX_CONNECTIONS,
-        .request_buffer_size = if (root.get("request_buffer_size")) |rbs| @intCast(rbs.integer) else DEFAULT_REQUEST_BUFFER_SIZE,
-        .enable_lua = root.get("enable_lua").?.bool,
-        .enable_graphql = root.get("enable_graphql").?.bool,
-        .graphql_endpoint = try allocator.dupe(u8, root.get("graphql_endpoint").?.string),
-        .log_level = if (root.get("log_level")) |ll| try allocator.dupe(u8, ll.string) else try allocator.dupe(u8, "info"),
-        .log_file = if (root.get("log_file")) |lf| try allocator.dupe(u8, lf.string) else null,
-        .access_log_file = if (root.get("access_log_file")) |alf| try allocator.dupe(u8, alf.string) else null,
-        .reload = if (root.get("reload")) |r| ReloadMode.fromString(r.string) else .auto,
-        .max_cache_file_size = if (root.get("max_cache_file_size")) |mcfs| @intCast(mcfs.integer) else DEFAULT_MAX_CACHE_FILE_SIZE,
-        .enable_etag = if (root.get("enable_etag")) |ee| ee.bool else true, // Default enabled
-        // Phase 3: Advanced httpz features
-        .enable_websocket = if (root.get("enable_websocket")) |ew| ew.bool else false,
-        .enable_sse = if (root.get("enable_sse")) |es| es.bool else false,
-        // Rate limiting
-        .enable_rate_limit = if (root.get("enable_rate_limit")) |erl| erl.bool else false,
-        .rate_limit_requests = if (root.get("rate_limit_requests")) |rlr| @intCast(rlr.integer) else 100,
-        .rate_limit_window = if (root.get("rate_limit_window")) |rlw| @intCast(rlw.integer) else 60,
-        // CORS
-        .enable_cors = if (root.get("enable_cors")) |ec| ec.bool else false,
-        .cors_origins = if (root.get("cors_origins")) |co| try allocator.dupe(u8, co.string) else try allocator.dupe(u8, "*"),
-        .cors_methods = if (root.get("cors_methods")) |cm| try allocator.dupe(u8, cm.string) else try allocator.dupe(u8, "GET, POST, PUT, DELETE, OPTIONS"),
-        .cors_headers = if (root.get("cors_headers")) |ch| try allocator.dupe(u8, ch.string) else try allocator.dupe(u8, "Content-Type, Authorization"),
-        // Authentication
-        .enable_auth = if (root.get("enable_auth")) |ea| ea.bool else false,
-        .auth_script = if (root.get("auth_script")) |as_val| try allocator.dupe(u8, as_val.string) else try allocator.dupe(u8, "auth"),
-        .auth_protected_paths = if (root.get("auth_protected_paths")) |app| try allocator.dupe(u8, app.string) else try allocator.dupe(u8, "/api/*"),
-        .auth_public_paths = if (root.get("auth_public_paths")) |apu| try allocator.dupe(u8, apu.string) else try allocator.dupe(u8, "/api/login, /api/register"),
-        // Lua sandbox configuration (safe defaults)
-        .lua_sandbox_enabled = if (root.get("lua_sandbox_enabled")) |lse| lse.bool else true,
-        .lua_max_instructions = if (root.get("lua_max_instructions")) |lmi| @intCast(lmi.integer) else 100_000,
-        // Phase 5: Observability configuration
-        .enable_metrics = if (root.get("enable_metrics")) |em| em.bool else true, // Default enabled
-        .enable_health_check = if (root.get("enable_health_check")) |ehc| ehc.bool else true, // Default enabled
-        .enable_request_id = if (root.get("enable_request_id")) |eri| eri.bool else true, // Default enabled
-        .log_format = if (root.get("log_format")) |lf_val| try allocator.dupe(u8, lf_val.string) else try allocator.dupe(u8, "text"),
-        // Phase 7: Security enhancements
-        .enable_ip_blacklist = if (root.get("enable_ip_blacklist")) |eib| eib.bool else false,
-        .ip_blacklist = if (root.get("ip_blacklist")) |ibl| try allocator.dupe(u8, ibl.string) else try allocator.dupe(u8, ""),
-        .ip_whitelist = if (root.get("ip_whitelist")) |iwl| try allocator.dupe(u8, iwl.string) else try allocator.dupe(u8, ""),
-        .allocator = allocator,
+/// Get default handler mappings
+pub fn getDefaultHandlers(allocator: std.mem.Allocator) ![]HandlerMapping {
+    // Default handler configuration - order matters (more specific first)
+    const default_mappings = [_]struct { pattern: []const u8, handler: []const u8 }{
+        .{ .pattern = "/health", .handler = "Handler.HealthCheckHandler" },
+        .{ .pattern = "/metrics", .handler = "Handler.MetricsHandler" },
+        .{ .pattern = "/ws", .handler = "Handler.WebSocketHandler" },
+        .{ .pattern = "/graphql/playground", .handler = "Handler.GraphQLPlaygroundHandler" },
+        .{ .pattern = "/graphql/ws", .handler = "Handler.WebSocketHandler" },
+        .{ .pattern = "/graphql", .handler = "Handler.GraphQLHandler" },
+        .{ .pattern = "/api/*", .handler = "Handler.LuaHandler" },
+        .{ .pattern = "/events", .handler = "Handler.SSEHandler" },
+        .{ .pattern = "/*", .handler = "Handler.StaticFileHandler" },
     };
+
+    var mappings = try allocator.alloc(HandlerMapping, default_mappings.len);
+    var initialized: usize = 0;
+    errdefer {
+        for (mappings[0..initialized]) |mapping| {
+            allocator.free(mapping.pattern);
+            allocator.free(mapping.handler);
+        }
+        allocator.free(mappings);
+    }
+
+    for (default_mappings, 0..) |dm, i| {
+        mappings[i] = .{
+            .pattern = try allocator.dupe(u8, dm.pattern),
+            .handler = try allocator.dupe(u8, dm.handler),
+        };
+        initialized = i + 1;
+    }
+    return mappings;
 }
 
 pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
@@ -230,6 +219,8 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_ip_blacklist = false,
         .ip_blacklist = try allocator.dupe(u8, ""),
         .ip_whitelist = try allocator.dupe(u8, ""),
+        // Default handler mappings
+        .handlers = try getDefaultHandlers(allocator),
         .allocator = allocator,
     };
 }
@@ -352,8 +343,104 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_ip_blacklist = parsed.enable_ip_blacklist orelse false,
         .ip_blacklist = try allocator.dupe(u8, parsed.ip_blacklist orelse ""),
         .ip_whitelist = try allocator.dupe(u8, parsed.ip_whitelist orelse ""),
+        // Handler mappings - parse manually from raw YAML since zig-yaml doesn't support maps well
+        .handlers = try parseHandlersFromYaml(allocator, &y),
         .allocator = allocator,
     };
+}
+
+/// Parse handlers mapping from YAML document
+/// Supports both sequence format (ordered) and map format (unordered)
+fn parseHandlersFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml) ![]HandlerMapping {
+    // Try to find the handlers section in the document
+    if (y.docs.items.len > 0) {
+        const doc = y.docs.items[0];
+        if (doc.asMap()) |doc_map| {
+            if (doc_map.get("handlers")) |handlers_val| {
+                // Try sequence format first (preserves order):
+                // handlers:
+                //   - pattern: /health
+                //     handler: Handler.HealthCheckHandler
+                if (handlers_val.asList()) |handlers_list| {
+                    // First pass: count valid handler entries
+                    var count: usize = 0;
+                    for (handlers_list) |item| {
+                        if (item.asMap()) |item_map| {
+                            if (item_map.get("pattern") != null and item_map.get("handler") != null) {
+                                count += 1;
+                            }
+                        }
+                    }
+
+                    // Second pass: allocate and populate mappings
+                    var mappings = try allocator.alloc(HandlerMapping, count);
+                    var initialized: usize = 0;
+                    errdefer {
+                        for (mappings[0..initialized]) |mapping| {
+                            allocator.free(mapping.pattern);
+                            allocator.free(mapping.handler);
+                        }
+                        allocator.free(mappings);
+                    }
+
+                    for (handlers_list) |item| {
+                        if (item.asMap()) |item_map| {
+                            const pattern_val = item_map.get("pattern") orelse continue;
+                            const handler_val = item_map.get("handler") orelse continue;
+                            const pattern = pattern_val.asScalar() orelse continue;
+                            const handler_name = handler_val.asScalar() orelse continue;
+
+                            mappings[initialized] = .{
+                                .pattern = try allocator.dupe(u8, pattern),
+                                .handler = try allocator.dupe(u8, handler_name),
+                            };
+                            initialized += 1;
+                        }
+                    }
+                    return mappings;
+                }
+
+                // Fall back to map format (order not guaranteed):
+                // handlers:
+                //   /health: Handler.HealthCheckHandler
+                if (handlers_val.asMap()) |handlers_map| {
+                    // First pass: count valid handler entries
+                    var count: usize = 0;
+                    const values = handlers_map.values();
+                    for (values) |handler_value| {
+                        if (handler_value.asScalar()) |_| {
+                            count += 1;
+                        }
+                    }
+
+                    // Second pass: allocate and populate mappings
+                    var mappings = try allocator.alloc(HandlerMapping, count);
+                    var initialized: usize = 0;
+                    errdefer {
+                        for (mappings[0..initialized]) |mapping| {
+                            allocator.free(mapping.pattern);
+                            allocator.free(mapping.handler);
+                        }
+                        allocator.free(mappings);
+                    }
+
+                    const keys = handlers_map.keys();
+                    for (keys, values) |pattern, handler_value| {
+                        if (handler_value.asScalar()) |handler_name| {
+                            mappings[initialized] = .{
+                                .pattern = try allocator.dupe(u8, pattern),
+                                .handler = try allocator.dupe(u8, handler_name),
+                            };
+                            initialized += 1;
+                        }
+                    }
+                    return mappings;
+                }
+            }
+        }
+    }
+    // Return default handlers if not specified
+    return try getDefaultHandlers(allocator);
 }
 
 test "config loading with defaults" {
@@ -406,4 +493,100 @@ test "yaml config parsing" {
     try testing.expect(cfg.enable_graphql == false);
     try testing.expectEqualStrings("/gql", cfg.graphql_endpoint);
     try testing.expectEqualStrings("debug", cfg.log_level);
+    // Default handlers should be present when no handlers section is specified
+    try testing.expect(cfg.handlers.len > 0);
+}
+
+test "yaml config with custom handlers using sequence format" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Use sequence format to guarantee handler order
+    const yaml_content =
+        \\host: "0.0.0.0"
+        \\port: 8080
+        \\static_dir: "./static"
+        \\lua_scripts_dir: "./lua"
+        \\handlers:
+        \\  - pattern: /api/*
+        \\    handler: Handler.LuaHandler
+        \\  - pattern: /*
+        \\    handler: Handler.StaticFileHandler
+    ;
+
+    const cfg = try parseYaml(allocator, yaml_content);
+    defer cfg.deinit();
+
+    // Should have 2 custom handlers
+    try testing.expect(cfg.handlers.len == 2);
+
+    // Sequence format preserves order - verify order is correct
+    try testing.expectEqualStrings("/api/*", cfg.handlers[0].pattern);
+    try testing.expectEqualStrings("Handler.LuaHandler", cfg.handlers[0].handler);
+
+    try testing.expectEqualStrings("/*", cfg.handlers[1].pattern);
+    try testing.expectEqualStrings("Handler.StaticFileHandler", cfg.handlers[1].handler);
+}
+
+test "yaml config with custom handlers using map format" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Map format - order is not guaranteed by YAML spec
+    const yaml_content =
+        \\host: "0.0.0.0"
+        \\port: 8080
+        \\static_dir: "./static"
+        \\lua_scripts_dir: "./lua"
+        \\handlers:
+        \\  /api/*: Handler.LuaHandler
+        \\  /*: Handler.StaticFileHandler
+    ;
+
+    const cfg = try parseYaml(allocator, yaml_content);
+    defer cfg.deinit();
+
+    // Should have 2 custom handlers
+    try testing.expect(cfg.handlers.len == 2);
+
+    // Map format - just verify both handlers exist (order not guaranteed)
+    var found_lua = false;
+    var found_static = false;
+    for (cfg.handlers) |h| {
+        if (std.mem.eql(u8, h.pattern, "/api/*") and std.mem.eql(u8, h.handler, "Handler.LuaHandler")) {
+            found_lua = true;
+        }
+        if (std.mem.eql(u8, h.pattern, "/*") and std.mem.eql(u8, h.handler, "Handler.StaticFileHandler")) {
+            found_static = true;
+        }
+    }
+    try testing.expect(found_lua);
+    try testing.expect(found_static);
+}
+
+test "default handlers" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const handlers = try getDefaultHandlers(allocator);
+    defer {
+        for (handlers) |m| {
+            allocator.free(m.pattern);
+            allocator.free(m.handler);
+        }
+        allocator.free(handlers);
+    }
+
+    // Verify default handlers are created
+    try testing.expect(handlers.len > 0);
+
+    // Verify some expected defaults exist
+    var has_static = false;
+    var has_health = false;
+    for (handlers) |h| {
+        if (std.mem.eql(u8, h.handler, "Handler.StaticFileHandler")) has_static = true;
+        if (std.mem.eql(u8, h.handler, "Handler.HealthCheckHandler")) has_health = true;
+    }
+    try testing.expect(has_static);
+    try testing.expect(has_health);
 }

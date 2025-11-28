@@ -257,20 +257,44 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
 
 #### Phase 6: Route Matching
 
+Routes are now configured via the `handlers` section in the YAML configuration file.
+This allows for flexible route-to-handler mapping without code changes.
+
+```yaml
+# Example configuration in zhttpd.yaml
+handlers:
+  /health: Handler.HealthCheckHandler
+  /metrics: Handler.MetricsHandler
+  /ws: Handler.WebSocketHandler
+  /graphql/playground: Handler.GraphQLPlaygroundHandler
+  /graphql/ws: Handler.WebSocketHandler
+  /graphql: Handler.GraphQLHandler
+  /api/*: Handler.LuaHandler
+  /events: Handler.SSEHandler
+  /*: Handler.StaticFileHandler
+```
+
 ```zig
 // In HttpzServer.setupRoutes()
 pub fn setupRoutes(self: *HttpzServer) !void {
-    var router = try self.server.router(.{});
+    const router = try self.server.router(.{});
 
-    // Priority order (most specific first)
-    router.get("/health", healthHandler, .{});
-    router.get("/metrics", metricsHandler, .{});
-    router.get("/ws", websocketHandler, .{});
-    router.get("/graphql", graphqlGet, .{});
-    router.post("/graphql", graphqlPost, .{});
-    router.get("/api/*", luaApi, .{});
-    router.post("/api/*", luaApi, .{});
-    router.get("/*", serveStatic, .{});  // Wildcard last
+    // Register routes based on handler configuration
+    // Routes are processed in order, so more specific routes should come first
+    for (self.context.config.handlers) |mapping| {
+        self.registerHandler(router, mapping);
+    }
+}
+
+fn registerHandler(self: *HttpzServer, router: anytype, mapping: HandlerMapping) void {
+    // Match handler name to actual handler function
+    if (std.mem.eql(u8, mapping.handler, "Handler.StaticFileHandler")) {
+        router.get(mapping.pattern, serveStatic, .{});
+    } else if (std.mem.eql(u8, mapping.handler, "Handler.LuaHandler")) {
+        router.get(mapping.pattern, luaApi, .{});
+        router.post(mapping.pattern, luaApi, .{});
+    }
+    // ... etc
 }
 ```
 
@@ -385,10 +409,33 @@ const sandbox_config = lua_mod.SandboxConfig{
 
 ### Adding a New Handler
 
-1. Create handler function in `httpz_handlers.zig`:
+1. Create handler module in `src/handlers/` (e.g., `my_handler.zig`):
 
 ```zig
-fn myNewHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+//! My Custom Handler
+//!
+//! Description of what this handler does.
+
+const std = @import("std");
+const httpz = @import("httpz");
+const AppContext = @import("httpz_handlers.zig").AppContext;
+
+/// Handle custom requests
+pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+    // Your handler logic here
+    res.body = "Hello from my handler!";
+    res.content_type = httpz.ContentType.TEXT;
+}
+```
+
+2. Import and register in `httpz_handlers.zig`:
+
+```zig
+// Add import at the top with other handler imports
+const my_handler = @import("my_handler.zig");
+
+// Create wrapper function for the dispatcher
+fn myHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     const start_time = std.time.microTimestamp();
     defer {
         const duration = std.time.microTimestamp() - start_time;
@@ -398,16 +445,34 @@ fn myNewHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !vo
     addRequestIdHeader(ctx, req, res);
     if (!applyMiddleware(ctx, req, res)) return;
 
-    // Your handler logic here
-    res.body = "Hello from my handler!";
-    res.content_type = httpz.ContentType.TEXT;
+    // Delegate to the modular handler
+    try my_handler.handle(ctx, req, res);
+}
+
+// Add to registerHandler function
+} else if (std.mem.eql(u8, handler_name, "Handler.MyHandler")) {
+    router.get(pattern, myHandler, .{});
 }
 ```
 
-2. Register route in `setupRoutes()`:
+3. Configure in YAML (use sequence format to preserve order):
 
-```zig
-router.get("/my-endpoint", myNewHandler, .{});
+```yaml
+# Recommended: Sequence format preserves handler order
+handlers:
+  - pattern: /my-endpoint
+    handler: Handler.MyHandler
+  - pattern: /*
+    handler: Handler.StaticFileHandler
+```
+
+Or use map format (simpler but order not guaranteed):
+
+```yaml
+# Alternative: Map format (order may vary)
+handlers:
+  /my-endpoint: Handler.MyHandler
+  /*: Handler.StaticFileHandler
 ```
 
 ### Adding New Middleware

@@ -242,6 +242,47 @@ enable_request_id: true
 #   - "json": Structured JSON format for log aggregation
 log_format: "text"
 
+# Handler Configuration
+# ---------------------
+# handlers: Define URL pattern to handler mappings
+#   - Patterns are matched in order, so more specific patterns should come first
+#   - Use "/*" for wildcard matching (catches all remaining paths)
+#   - Handler names must match the built-in handler names:
+#     - Handler.StaticFileHandler: Serves static files
+#     - Handler.LuaHandler: Executes Lua scripts
+#     - Handler.GraphQLHandler: Handles GraphQL requests
+#     - Handler.GraphQLPlaygroundHandler: GraphQL Playground UI
+#     - Handler.WebSocketHandler: Handles WebSocket connections
+#     - Handler.HealthCheckHandler: Returns health status
+#     - Handler.MetricsHandler: Returns Prometheus metrics
+#     - Handler.SSEHandler: Handles Server-Sent Events
+#
+# RECOMMENDED: Use sequence format to preserve order (important for routing):
+# handlers:
+#   - pattern: /health
+#     handler: Handler.HealthCheckHandler
+#   - pattern: /metrics
+#     handler: Handler.MetricsHandler
+#   - pattern: /ws
+#     handler: Handler.WebSocketHandler
+#   - pattern: /graphql/playground
+#     handler: Handler.GraphQLPlaygroundHandler
+#   - pattern: /graphql
+#     handler: Handler.GraphQLHandler
+#   - pattern: /api/*
+#     handler: Handler.LuaHandler
+#   - pattern: /*
+#     handler: Handler.StaticFileHandler
+#
+# Alternative: Map format (simpler but order not guaranteed):
+# handlers:
+#   /health: Handler.HealthCheckHandler
+#   /api/*: Handler.LuaHandler
+#   /*: Handler.StaticFileHandler
+#
+# Note: If handlers section is not specified, default handlers are used based on
+# feature flags (enable_lua, enable_graphql, enable_websocket, etc.)
+
 # Example Production Configuration:
 # ----------------------------------
 # host: "0.0.0.0"

@@ -37,7 +37,9 @@
 
 const std = @import("std");
 const httpz = @import("httpz");
-const Config = @import("../config/config.zig").Config;
+const config_mod = @import("../config/config.zig");
+const Config = config_mod.Config;
+const HandlerMapping = config_mod.HandlerMapping;
 const security = @import("../security/security.zig");
 const lua_mod = @import("../lua/lua.zig");
 const LuaHandler = lua_mod.LuaHandler;
@@ -62,11 +64,14 @@ const observability = @import("../observability/observability.zig");
 const Metrics = observability.Metrics;
 const HealthCheck = observability.health.HealthCheck;
 const request_id = observability.request_id;
-
-// Constants
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
-const MAX_HEADERS_FOR_LUA = 32; // Maximum number of headers to pass to Lua
-const MAX_QUERY_PARAMS_FOR_LUA = 32; // Maximum number of query params to pass to Lua
+// Individual handler modules
+const static_handler = @import("static_handler.zig");
+const lua_handler = @import("lua_handler.zig");
+const graphql_handler = @import("graphql_handler.zig");
+const health_handler = @import("health_handler.zig");
+const metrics_handler = @import("metrics_handler.zig");
+const sse_handler = @import("sse_handler.zig");
+const websocket_handler = @import("websocket_handler.zig");
 
 /// Application context holding shared state for all request handlers.
 ///
@@ -329,48 +334,80 @@ pub const HttpzServer = struct {
     }
 
     pub fn setupRoutes(self: *HttpzServer) !void {
-        var router = try self.server.router(.{});
+        const router = try self.server.router(.{});
 
-        // Phase 5: Observability endpoints (must come before wildcard)
-        if (self.context.config.enable_health_check) {
-            router.get("/health", healthHandler, .{});
-        }
-        if (self.context.config.enable_metrics) {
-            router.get("/metrics", metricsHandler, .{});
+        // Register routes based on handler configuration
+        // Routes are processed in order, so more specific routes should come first
+        for (self.context.config.handlers) |mapping| {
+            self.registerHandler(router, mapping);
         }
 
-        // Register more specific routes before wildcard routes
-        // GraphQL endpoint (must come before wildcard)
-        if (self.context.config.enable_graphql) {
-            const endpoint = self.context.config.graphql_endpoint;
-            router.get(endpoint, graphqlGet, .{});
-            router.post(endpoint, graphqlPost, .{});
-            // GraphQL Playground UI - add /playground suffix
-            router.get("/graphql/playground", graphqlPlayground, .{});
-        }
+        // Log registered handlers
+        self.context.logger.info("Registered {d} handler mappings from configuration", .{self.context.config.handlers.len});
+    }
 
-        // WebSocket endpoint (if enabled)
-        if (self.context.config.enable_websocket) {
-            router.get("/ws", websocketHandler, .{});
-            // GraphQL subscriptions endpoint
-            if (self.context.config.enable_graphql) {
-                router.get("/graphql/ws", websocketHandler, .{});
+    /// Register a single handler mapping with the router
+    fn registerHandler(self: *HttpzServer, router: anytype, mapping: HandlerMapping) void {
+        const pattern = mapping.pattern;
+        const handler_name = mapping.handler;
+
+        // Check feature flags and skip disabled handlers with warning
+        if (std.mem.eql(u8, handler_name, "Handler.HealthCheckHandler")) {
+            if (!self.context.config.enable_health_check) {
+                self.context.logger.warn("Skipping {s} at {s} - health check feature is disabled", .{ handler_name, pattern });
+                return;
             }
-        }
-
-        // Lua API endpoints (must come before wildcard)
-        // Support both GET and POST for dynamic Lua handlers
-        if (self.context.config.enable_lua) {
-            router.get("/api/*", luaApi, .{});
-            router.post("/api/*", luaApi, .{});
-        }
-
-        // Static file routes (wildcard must come last)
-        router.get("/*", serveStatic, .{});
-
-        // SSE endpoint (if enabled)
-        if (self.context.config.enable_sse) {
-            router.get("/events", sseHandler, .{});
+            router.get(pattern, healthHandler, .{});
+            self.context.logger.debug("Registered HealthCheckHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.MetricsHandler")) {
+            if (!self.context.config.enable_metrics) {
+                self.context.logger.warn("Skipping {s} at {s} - metrics feature is disabled", .{ handler_name, pattern });
+                return;
+            }
+            router.get(pattern, metricsHandler, .{});
+            self.context.logger.debug("Registered MetricsHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.WebSocketHandler")) {
+            if (!self.context.config.enable_websocket) {
+                self.context.logger.warn("Skipping {s} at {s} - websocket feature is disabled", .{ handler_name, pattern });
+                return;
+            }
+            router.get(pattern, websocketHandler, .{});
+            self.context.logger.debug("Registered WebSocketHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLHandler")) {
+            if (!self.context.config.enable_graphql) {
+                self.context.logger.warn("Skipping {s} at {s} - graphql feature is disabled", .{ handler_name, pattern });
+                return;
+            }
+            router.get(pattern, graphqlGet, .{});
+            router.post(pattern, graphqlPost, .{});
+            self.context.logger.debug("Registered GraphQLHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLPlaygroundHandler")) {
+            if (!self.context.config.enable_graphql) {
+                self.context.logger.warn("Skipping {s} at {s} - graphql feature is disabled", .{ handler_name, pattern });
+                return;
+            }
+            router.get(pattern, graphqlPlayground, .{});
+            self.context.logger.debug("Registered GraphQLPlaygroundHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.LuaHandler")) {
+            if (!self.context.config.enable_lua) {
+                self.context.logger.warn("Skipping {s} at {s} - lua feature is disabled", .{ handler_name, pattern });
+                return;
+            }
+            router.get(pattern, luaApi, .{});
+            router.post(pattern, luaApi, .{});
+            self.context.logger.debug("Registered LuaHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.SSEHandler")) {
+            if (!self.context.config.enable_sse) {
+                self.context.logger.warn("Skipping {s} at {s} - sse feature is disabled", .{ handler_name, pattern });
+                return;
+            }
+            router.get(pattern, sseHandler, .{});
+            self.context.logger.debug("Registered SSEHandler at {s}", .{pattern});
+        } else if (std.mem.eql(u8, handler_name, "Handler.StaticFileHandler")) {
+            router.get(pattern, serveStatic, .{});
+            self.context.logger.debug("Registered StaticFileHandler at {s}", .{pattern});
+        } else {
+            self.context.logger.warn("Unknown handler: {s} for pattern {s}", .{ handler_name, pattern });
         }
     }
 
@@ -643,23 +680,8 @@ fn healthHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !v
     // Add request ID header
     addRequestIdHeader(ctx, req, res);
 
-    // Generate health check
-    var health = observability.health.check(
-        ctx.start_time,
-        ctx.config.enable_lua,
-        ctx.config.enable_graphql,
-    );
-
-    const status = health.httpStatusCode();
-    res.status = status;
-
-    // Return detailed JSON response
-    const json = try health.toJson(res.arena);
-    res.body = json;
-    res.content_type = httpz.ContentType.JSON;
-
-    // Add cache control headers - health checks shouldn't be cached
-    res.headers.add("Cache-Control", "no-cache, no-store, must-revalidate");
+    // Delegate to the modular health handler
+    try health_handler.handle(ctx, req, res);
 }
 
 /// Prometheus metrics endpoint handler
@@ -669,18 +691,8 @@ fn metricsHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !
     // Add request ID header
     addRequestIdHeader(ctx, req, res);
 
-    if (ctx.metrics) |metrics| {
-        const output = try metrics.toPrometheus(res.arena);
-        res.body = output;
-        // Prometheus text format content type
-        res.headers.add("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
-    } else {
-        res.status = 503;
-        res.body = "Metrics not enabled";
-    }
-
-    // Add cache control headers - metrics should be fresh
-    res.headers.add("Cache-Control", "no-cache, no-store, must-revalidate");
+    // Delegate to the modular metrics handler
+    try metrics_handler.handle(ctx, req, res);
 }
 
 /// Server-Sent Events (SSE) handler
@@ -691,71 +703,20 @@ fn sseHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         return;
     }
 
-    ctx.logger.debug("SSE connection established from client", .{});
-
-    // Start event stream (synchronous mode for simpler handling)
-    const stream = res.startEventStreamSync() catch |err| {
-        ctx.logger.err("Failed to start SSE stream: {}", .{err});
-        res.status = 500;
-        res.body = "Failed to start event stream";
-        return;
-    };
-
-    // Send a welcome event
-    _ = stream.write("event: connected\ndata: {\"status\":\"connected\",\"message\":\"SSE stream established\"}\n\n") catch |err| {
-        ctx.logger.warn("Failed to write SSE welcome event: {}", .{err});
-        return;
-    };
-
-    // Send a heartbeat event with actual timestamp
-    var heartbeat_buf: [128]u8 = undefined;
-    const timestamp = std.time.timestamp();
-    const heartbeat_data = std.fmt.bufPrint(&heartbeat_buf, "event: heartbeat\ndata: {{\"timestamp\":{d}}}\n\n", .{timestamp}) catch {
-        ctx.logger.warn("Failed to format SSE heartbeat", .{});
-        return;
-    };
-    _ = stream.write(heartbeat_data) catch |err| {
-        ctx.logger.warn("Failed to write SSE heartbeat: {}", .{err});
-        return;
-    };
-
-    ctx.logger.debug("SSE events sent successfully", .{});
+    // Delegate to the modular SSE handler
+    try sse_handler.handle(ctx, req, res);
 }
 
 /// WebSocket upgrade handler
 /// Handles WebSocket upgrade requests and delegates to WebSocketHandler
 fn websocketHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    ctx.logger.debug("WebSocket upgrade request received", .{});
-
     // Apply middleware (rate limiting, CORS, auth) before accepting WebSocket connection
     if (!applyMiddleware(ctx, req, res)) {
         return;
     }
 
-    // Get a mutable pointer to lua_handler if it exists
-    const lua_handler_ptr: ?*LuaHandler = if (ctx.lua_handler != null) blk: {
-        // We need to get a pointer to the optional's value
-        // This is safe because ctx.lua_handler is stored in AppContext which outlives the request
-        break :blk @constCast(&ctx.lua_handler.?);
-    } else null;
-
-    // Create WebSocket context with Lua handler
-    // Note: The path from req.url.path is stored in WebSocketContext. Since httpz manages
-    // the request lifetime and WebSocket connections are handled synchronously within the
-    // request context by httpz, the path reference remains valid during the upgrade process.
-    // After upgrade, WebSocketHandler stores its own copy of connection metadata.
-    const ws_ctx = WebSocketContext.init(req.url.path, lua_handler_ptr);
-
-    // Attempt to upgrade the connection to WebSocket
-    if (try httpz.upgradeWebsocket(WebSocketHandler, req, res, &ws_ctx) == false) {
-        ctx.logger.warn("WebSocket upgrade failed - invalid request", .{});
-        res.status = 400;
-        res.body = "{\"error\":\"Invalid WebSocket request\"}";
-        res.content_type = httpz.ContentType.JSON;
-    } else {
-        ctx.logger.info("WebSocket connection established: id={d}, path={s}", .{ ws_ctx.connection_id, req.url.path });
-    }
-    // After successful upgrade, the request and response are no longer valid
+    // Delegate to the modular WebSocket handler
+    try websocket_handler.handle(ctx, req, res);
 }
 
 fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
@@ -773,75 +734,8 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         return;
     }
 
-    const path = req.url.path;
-
-    // Normalize path
-    const clean_path = if (std.mem.eql(u8, path, "/")) "/index.html" else path;
-
-    // Security: Prevent path traversal attacks
-    if (std.mem.indexOf(u8, clean_path, "..") != null) {
-        res.status = 400;
-        res.body = "Bad Request";
-        return;
-    }
-
-    var file_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const file_path = try std.fmt.bufPrint(&file_path_buf, "{s}{s}", .{ ctx.config.static_dir, clean_path });
-
-    // Try to open the file
-    const file = std.fs.cwd().openFile(file_path, .{}) catch {
-        res.status = 404;
-        res.body = "File Not Found";
-        return;
-    };
-    defer file.close();
-
-    // Get file size and modification time
-    const stat = try file.stat();
-    const file_size = stat.size;
-    const file_mtime = stat.mtime;
-
-    if (file_size > MAX_FILE_SIZE) {
-        res.status = 413;
-        res.body = "File too large";
-        return;
-    }
-
-    // Generate ETag if enabled
-    if (ctx.config.enable_etag) {
-        const etag = try FileCache.generateETag(res.arena, file_size, file_mtime);
-
-        // Check If-None-Match header for conditional requests
-        if (req.headers.get("if-none-match")) |client_etag| {
-            if (std.mem.eql(u8, client_etag, etag)) {
-                // File hasn't changed, return 304 Not Modified
-                res.status = 304;
-                res.headers.add("ETag", etag);
-                res.body = "";
-                return;
-            }
-        }
-
-        // Add ETag header to response
-        res.headers.add("ETag", etag);
-        // Add Cache-Control header for better caching
-        res.headers.add("Cache-Control", "public, max-age=3600");
-    }
-
-    // Use the response arena allocator directly - more efficient
-    const content = try res.arena.alloc(u8, file_size);
-    const bytes_read = try file.readAll(content);
-
-    // Set content type
-    res.content_type = getContentType(file_path);
-
-    // Add security headers if enabled
-    if (ctx.config.security_headers) {
-        addSecurityHeaders(res);
-    }
-
-    // Set response body
-    res.body = content[0..bytes_read];
+    // Delegate to the modular static file handler
+    try static_handler.handle(ctx, req, res);
 }
 
 fn graphqlGet(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
@@ -859,10 +753,8 @@ fn graphqlGet(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         return;
     }
 
-    res.content_type = httpz.ContentType.JSON;
-    res.body =
-        \\{"data":{"message":"GraphQL endpoint - use POST for queries"}}
-    ;
+    // Delegate to the modular GraphQL handler
+    try graphql_handler.handleGet(ctx, req, res);
 }
 
 fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
@@ -880,130 +772,8 @@ fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
         return;
     }
 
-    res.content_type = httpz.ContentType.JSON;
-
-    if (ctx.graphql_handler) |*handler| {
-        // Get request body
-        const body = req.body() orelse {
-            res.status = 400;
-            res.body =
-                \\{"errors":[{"message":"Missing request body"}]}
-            ;
-            return;
-        };
-
-        // Parse JSON body
-        const parsed = std.json.parseFromSlice(std.json.Value, res.arena, body, .{}) catch |err| {
-            ctx.logger.err("GraphQL JSON parse error: {}", .{err});
-            res.status = 400;
-            res.body =
-                \\{"errors":[{"message":"Invalid JSON in request body"}]}
-            ;
-            return;
-        };
-        // No defer needed for arena-allocated memory
-
-        // Extract query field with type checking
-        const query = if (parsed.value.object.get("query")) |q| blk: {
-            if (q != .string) {
-                res.status = 400;
-                res.body =
-                    \\{"errors":[{"message":"'query' field must be a string"}]}
-                ;
-                return;
-            }
-            break :blk q.string;
-        } else {
-            res.status = 400;
-            res.body =
-                \\{"errors":[{"message":"Missing 'query' field"}]}
-            ;
-            return;
-        };
-
-        // Extract variables field (optional) and serialize to JSON string
-        const variables = if (parsed.value.object.get("variables")) |v| blk: {
-            // Serialize variables to JSON string using std.json.Stringify
-            const serialized = std.json.Stringify.valueAlloc(res.arena, v, .{}) catch {
-                break :blk "{}";
-            };
-            break :blk serialized;
-        } else "{}";
-
-        // Phase 2: If Lua handler is available, delegate to Lua resolver
-        if (ctx.lua_handler) |*lua_handler| {
-            // Parse the GraphQL query first
-            var parsed_op = handler.parseQuery(res.arena, query) catch |err| {
-                res.body = std.fmt.allocPrint(res.arena,
-                    \\{{"errors":[{{"message":"Parse error: {s}"}}]}}
-                , .{@errorName(err)}) catch
-                    \\{"errors":[{"message":"Parse error"}]}
-                ;
-                return;
-            };
-            defer parsed_op.deinit(res.arena);
-
-            // Convert operation to JSON for Lua
-            const op_json = handler.operationToJson(res.arena, &parsed_op) catch {
-                res.status = 500;
-                res.body =
-                    \\{"errors":[{"message":"Failed to serialize operation"}]}
-                ;
-                return;
-            };
-
-            // Build request data with operation and variables
-            // We only pass the parsed operation JSON, since the original query string from the request may contain unescaped quotes
-            const request_data = std.fmt.allocPrint(res.arena,
-                \\{{"operation":{s},"variables":{s}}}
-            , .{ op_json, variables }) catch {
-                res.status = 500;
-                res.body =
-                    \\{"errors":[{"message":"Failed to build request"}]}
-                ;
-                return;
-            };
-
-            // Execute Lua graphql resolver script
-            const result = lua_handler.executeScript(res.arena, "graphql", "POST", "/graphql", request_data) catch |err| {
-                // If graphql.lua doesn't exist, fall back to default handler
-                if (err == error.InvalidScriptName or err == error.FileNotFound) {
-                    const default_result = handler.executeQuery(res.arena, query) catch {
-                        res.status = 500;
-                        res.body =
-                            \\{"errors":[{"message":"Query execution failed"}]}
-                        ;
-                        return;
-                    };
-                    res.body = default_result;
-                    return;
-                }
-                ctx.logger.err("GraphQL Lua resolver error: {}", .{err});
-                res.status = 500;
-                res.body =
-                    \\{"errors":[{"message":"Resolver execution failed"}]}
-                ;
-                return;
-            };
-
-            res.body = result;
-        } else {
-            // No Lua handler, use default execution
-            const result = handler.executeQuery(res.arena, query) catch {
-                res.status = 500;
-                res.body =
-                    \\{"errors":[{"message":"Query execution failed"}]}
-                ;
-                return;
-            };
-            res.body = result;
-        }
-    } else {
-        res.status = 503;
-        res.body =
-            \\{"errors":[{"message":"GraphQL handler not initialized"}]}
-        ;
-    }
+    // Delegate to the modular GraphQL handler
+    try graphql_handler.handlePost(ctx, req, res);
 }
 
 /// GraphQL Playground UI handler
@@ -1022,19 +792,8 @@ fn graphqlPlayground(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response
         return;
     }
 
-    res.content_type = httpz.ContentType.HTML;
-
-    if (ctx.graphql_handler) |*handler| {
-        const html = handler.getPlaygroundHtml(res.arena, ctx.config.graphql_endpoint) catch {
-            res.status = 500;
-            res.body = "Failed to generate playground HTML";
-            return;
-        };
-        res.body = html;
-    } else {
-        res.status = 503;
-        res.body = "GraphQL handler not initialized";
-    }
+    // Delegate to the modular GraphQL Playground handler
+    try graphql_handler.handlePlayground(ctx, req, res);
 }
 
 fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
@@ -1052,90 +811,8 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
         return;
     }
 
-    res.content_type = httpz.ContentType.JSON;
-
-    if (ctx.lua_handler) |*handler| {
-        const path = req.url.path;
-        const method = @tagName(req.method);
-
-        // Extract script name from path (/api/test -> test, /api/users -> users)
-        const script_name = blk: {
-            if (std.mem.startsWith(u8, path, "/api/")) {
-                const remaining = path[5..]; // Skip "/api/"
-                // Handle paths like /api/users/123 -> users
-                if (std.mem.indexOfScalar(u8, remaining, '/')) |slash_pos| {
-                    break :blk remaining[0..slash_pos];
-                }
-                break :blk remaining;
-            }
-            break :blk "test";
-        };
-
-        // Get request body
-        const body = req.body() orelse "";
-
-        // Extract headers for Lua (luvit/Node.js style)
-        var headers_buf: [MAX_HEADERS_FOR_LUA]KeyValue = undefined;
-        var headers_count: usize = 0;
-        var header_iter = req.headers.iterator();
-        while (header_iter.next()) |entry| {
-            if (headers_count >= MAX_HEADERS_FOR_LUA) break;
-            headers_buf[headers_count] = KeyValue{
-                .key = entry.key,
-                .value = entry.value,
-            };
-            headers_count += 1;
-        }
-        const headers = headers_buf[0..headers_count];
-
-        // Extract query parameters for Lua (luvit/Node.js style)
-        // Note: URL decoding is not performed here - parameters with encoded
-        // characters (like %20 for spaces) will remain encoded. Full URL decoding
-        // should be implemented in a future enhancement if needed.
-        var query_buf: [MAX_QUERY_PARAMS_FOR_LUA]KeyValue = undefined;
-        var query_count: usize = 0;
-
-        // Parse query string from URL if present
-        if (req.url.query.len > 0) {
-            var query_iter = std.mem.splitScalar(u8, req.url.query, '&');
-            while (query_iter.next()) |param| {
-                if (query_count >= MAX_QUERY_PARAMS_FOR_LUA) break;
-                if (std.mem.indexOfScalar(u8, param, '=')) |eq_pos| {
-                    query_buf[query_count] = KeyValue{
-                        .key = param[0..eq_pos],
-                        .value = if (eq_pos + 1 < param.len) param[eq_pos + 1 ..] else "",
-                    };
-                    query_count += 1;
-                } else if (param.len > 0) {
-                    // Handle flag-style parameters (e.g., ?flag&debug)
-                    query_buf[query_count] = KeyValue{
-                        .key = param,
-                        .value = "",
-                    };
-                    query_count += 1;
-                }
-            }
-        }
-        const query_params = query_buf[0..query_count];
-
-        // Use the response arena allocator for per-request allocations
-        // This ensures all allocations are automatically cleaned up after the response
-        const result = handler.executeScriptEx(res.arena, script_name, method, path, body, headers, query_params) catch |err| {
-            ctx.logger.err("Lua execution error: {}", .{err});
-            res.status = 500;
-            res.body =
-                \\{"status":"error","message":"Script execution failed"}
-            ;
-            return;
-        };
-
-        res.body = result;
-    } else {
-        res.status = 503;
-        res.body =
-            \\{"status":"error","message":"Lua handler not initialized"}
-        ;
-    }
+    // Delegate to the modular Lua handler
+    try lua_handler.handle(ctx, req, res);
 }
 
 /// Get content type for a file path using httpz's built-in MIME type detection
