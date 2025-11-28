@@ -326,6 +326,7 @@ The codebase follows [Zig's design philosophy](https://ziglang.org/documentation
 
 ## Related Documentation
 
+- [HTTP Request Handling](HTTP_REQUEST_HANDLING.md) - Request lifecycle and handler chain design
 - [Security Features](SECURITY.md) - Detailed security configuration
 - [TLS Setup](TLS_SETUP.md) - HTTPS configuration guide
 - [OWASP Compliance](OWASP_COMPLIANCE.md) - Security compliance checklist

@@ -1,3 +1,40 @@
+//! zhttpd HTTP Request Handlers
+//!
+//! This module implements the core HTTP request handling logic for zhttpd.
+//! It follows an event-driven, middleware-based architecture inspired by
+//! Apache httpd, Nginx, and OpenResty.
+//!
+//! ## Architecture Overview
+//!
+//! Request processing follows this flow:
+//! 1. Request ID generation/propagation
+//! 2. IP access control (blacklist/whitelist)
+//! 3. Rate limiting (token bucket)
+//! 4. CORS handling
+//! 5. Authentication (Lua-delegated)
+//! 6. Route matching
+//! 7. Handler execution
+//! 8. Security headers
+//! 9. Access logging & metrics
+//!
+//! ## Key Components
+//!
+//! - `AppContext`: Shared application state (handlers, caches, middleware)
+//! - `HttpzServer`: Server wrapper with route configuration
+//! - `applyMiddleware`: Middleware chain execution
+//! - Route handlers: Static files, Lua API, GraphQL, WebSocket, SSE
+//!
+//! ## Extension Points
+//!
+//! To add a new handler:
+//! 1. Create a handler function following the pattern:
+//!    ```zig
+//!    fn myHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
+//!    ```
+//! 2. Register the route in `setupRoutes()`
+//!
+//! See `docs/HTTP_REQUEST_HANDLING.md` for detailed design documentation.
+
 const std = @import("std");
 const httpz = @import("httpz");
 const Config = @import("../config/config.zig").Config;
@@ -31,7 +68,16 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
 const MAX_HEADERS_FOR_LUA = 32; // Maximum number of headers to pass to Lua
 const MAX_QUERY_PARAMS_FOR_LUA = 32; // Maximum number of query params to pass to Lua
 
-// Application context that holds our handlers
+/// Application context holding shared state for all request handlers.
+///
+/// This struct is initialized once during server startup and shared across
+/// all worker threads. Thread-safe components (e.g., RateLimiter) use internal
+/// mutex protection. Per-request allocations use the response arena allocator.
+///
+/// ## Lifecycle
+/// - Created in `HttpzServer.init()`
+/// - Passed to all route handlers via httpz context mechanism
+/// - Cleaned up in `HttpzServer.deinit()`
 pub const AppContext = struct {
     allocator: std.mem.Allocator,
     config: Config,
