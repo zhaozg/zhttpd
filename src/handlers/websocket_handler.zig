@@ -9,11 +9,10 @@ const LuaHandler = lua_mod.LuaHandler;
 const ws_mod = @import("websocket.zig");
 const WebSocketHandler = ws_mod.WebSocketHandler;
 const WebSocketContext = ws_mod.WebSocketContext;
+const AppContext = @import("httpz_handlers.zig").AppContext;
 
 /// Handle WebSocket upgrade requests
-pub fn handle(ctx_ptr: *anyopaque, req: *httpz.Request, res: *httpz.Response) !void {
-    const ctx = @as(*@import("httpz_handlers.zig").AppContext, @ptrCast(@alignCast(ctx_ptr)));
-
+pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     ctx.logger.debug("WebSocket upgrade request received", .{});
 
     // Get a mutable pointer to lua_handler if it exists

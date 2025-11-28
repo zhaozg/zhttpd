@@ -7,31 +7,78 @@ const std = @import("std");
 const httpz = @import("httpz");
 const security = @import("../security/security.zig");
 const FileCache = @import("../cache/file_cache.zig").FileCache;
-const handler = @import("handler.zig");
+const AppContext = @import("httpz_handlers.zig").AppContext;
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
 
 /// Serve static files from the configured directory
-pub fn handle(ctx_ptr: *anyopaque, req: *httpz.Request, res: *httpz.Response) !void {
-    const ctx = @as(*@import("httpz_handlers.zig").AppContext, @ptrCast(@alignCast(ctx_ptr)));
-
+pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     const path = req.url.path;
 
     // Normalize path
     const clean_path = if (std.mem.eql(u8, path, "/")) "/index.html" else path;
 
-    // Security: Prevent path traversal attacks
+    // Security: Prevent path traversal attacks with comprehensive checks
+    // Check for ".." sequences (both encoded and unencoded)
     if (std.mem.indexOf(u8, clean_path, "..") != null) {
         res.status = 400;
         res.body = "Bad Request";
         return;
     }
 
-    var file_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const file_path = try std.fmt.bufPrint(&file_path_buf, "{s}{s}", .{ ctx.config.static_dir, clean_path });
+    // Check for backslash (Windows-style path separator)
+    if (std.mem.indexOf(u8, clean_path, "\\") != null) {
+        res.status = 400;
+        res.body = "Bad Request";
+        return;
+    }
 
-    // Try to open the file
-    const file = std.fs.cwd().openFile(file_path, .{}) catch {
+    // Check for null bytes (could bypass checks)
+    if (std.mem.indexOf(u8, clean_path, "\x00") != null) {
+        res.status = 400;
+        res.body = "Bad Request";
+        return;
+    }
+
+    // Get the absolute path of static directory
+    const static_dir_abs = std.fs.cwd().realpathAlloc(res.arena, ctx.config.static_dir) catch {
+        res.status = 500;
+        res.body = "Internal Server Error";
+        return;
+    };
+
+    // Build the target file path (strip leading slash from clean_path)
+    const rel_path = if (clean_path.len > 0 and clean_path[0] == '/') clean_path[1..] else clean_path;
+    const joined_path = std.fs.path.join(res.arena, &[_][]const u8{ static_dir_abs, rel_path }) catch {
+        res.status = 500;
+        res.body = "Internal Server Error";
+        return;
+    };
+
+    // Resolve the full path and verify it stays within static_dir
+    const target_abs = std.fs.cwd().realpathAlloc(res.arena, joined_path) catch {
+        // File doesn't exist or can't be resolved
+        res.status = 404;
+        res.body = "File Not Found";
+        return;
+    };
+
+    // Verify the resolved path is within static_dir (prevent traversal via symlinks)
+    if (!std.mem.startsWith(u8, target_abs, static_dir_abs)) {
+        res.status = 400;
+        res.body = "Bad Request";
+        return;
+    }
+
+    // Additional check: ensure there's a path separator after static_dir (or exact match)
+    if (target_abs.len > static_dir_abs.len and target_abs[static_dir_abs.len] != std.fs.path.sep) {
+        res.status = 400;
+        res.body = "Bad Request";
+        return;
+    }
+
+    // Try to open the file using the verified absolute path
+    const file = std.fs.cwd().openFile(target_abs, .{}) catch {
         res.status = 404;
         res.body = "File Not Found";
         return;
@@ -75,7 +122,7 @@ pub fn handle(ctx_ptr: *anyopaque, req: *httpz.Request, res: *httpz.Response) !v
     const bytes_read = try file.readAll(content);
 
     // Set content type
-    res.content_type = getContentType(file_path);
+    res.content_type = getContentType(target_abs);
 
     // Add security headers if enabled
     if (ctx.config.security_headers) {

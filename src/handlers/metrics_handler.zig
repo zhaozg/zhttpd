@@ -5,11 +5,10 @@
 
 const std = @import("std");
 const httpz = @import("httpz");
+const AppContext = @import("httpz_handlers.zig").AppContext;
 
 /// Handle metrics requests
-pub fn handle(ctx_ptr: *anyopaque, _: *httpz.Request, res: *httpz.Response) !void {
-    const ctx = @as(*@import("httpz_handlers.zig").AppContext, @ptrCast(@alignCast(ctx_ptr)));
-
+pub fn handle(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     if (ctx.metrics) |metrics| {
         const output = try metrics.toPrometheus(res.arena);
         res.body = output;

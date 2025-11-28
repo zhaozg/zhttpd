@@ -249,7 +249,7 @@ log_format: "text"
 #   - Use "/*" for wildcard matching (catches all remaining paths)
 #   - Handler names must match the built-in handler names:
 #     - Handler.StaticFileHandler: Serves static files
-#     - Handler.LuaHandler: Executes Lua scripts  
+#     - Handler.LuaHandler: Executes Lua scripts
 #     - Handler.GraphQLHandler: Handles GraphQL requests
 #     - Handler.GraphQLPlaygroundHandler: GraphQL Playground UI
 #     - Handler.WebSocketHandler: Handles WebSocket connections

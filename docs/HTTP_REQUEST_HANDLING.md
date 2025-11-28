@@ -412,13 +412,16 @@ const sandbox_config = lua_mod.SandboxConfig{
 1. Create handler module in `src/handlers/` (e.g., `my_handler.zig`):
 
 ```zig
+//! My Custom Handler
+//!
+//! Description of what this handler does.
+
 const std = @import("std");
 const httpz = @import("httpz");
+const AppContext = @import("httpz_handlers.zig").AppContext;
 
 /// Handle custom requests
-pub fn handle(ctx_ptr: *anyopaque, req: *httpz.Request, res: *httpz.Response) !void {
-    const ctx = @as(*@import("httpz_handlers.zig").AppContext, @ptrCast(@alignCast(ctx_ptr)));
-    
+pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     // Your handler logic here
     res.body = "Hello from my handler!";
     res.content_type = httpz.ContentType.TEXT;
@@ -428,12 +431,27 @@ pub fn handle(ctx_ptr: *anyopaque, req: *httpz.Request, res: *httpz.Response) !v
 2. Import and register in `httpz_handlers.zig`:
 
 ```zig
-// Add import
-const my_handler_mod = @import("my_handler.zig");
+// Add import at the top with other handler imports
+const my_handler = @import("my_handler.zig");
+
+// Create wrapper function for the dispatcher
+fn myHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+    const start_time = std.time.microTimestamp();
+    defer {
+        const duration = std.time.microTimestamp() - start_time;
+        logAccess(ctx, req, res, duration);
+    }
+
+    addRequestIdHeader(ctx, req, res);
+    if (!applyMiddleware(ctx, req, res)) return;
+
+    // Delegate to the modular handler
+    try my_handler.handle(ctx, req, res);
+}
 
 // Add to registerHandler function
 } else if (std.mem.eql(u8, handler_name, "Handler.MyHandler")) {
-    router.get(pattern, my_handler_mod.handle, .{});
+    router.get(pattern, myHandler, .{});
 }
 ```
 

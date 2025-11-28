@@ -4,11 +4,10 @@
 
 const std = @import("std");
 const httpz = @import("httpz");
+const AppContext = @import("httpz_handlers.zig").AppContext;
 
 /// Handle SSE requests
-pub fn handle(ctx_ptr: *anyopaque, _: *httpz.Request, res: *httpz.Response) !void {
-    const ctx = @as(*@import("httpz_handlers.zig").AppContext, @ptrCast(@alignCast(ctx_ptr)));
-
+pub fn handle(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     ctx.logger.debug("SSE connection established from client", .{});
 
     // Start event stream (synchronous mode for simpler handling)

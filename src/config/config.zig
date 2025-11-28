@@ -349,27 +349,29 @@ fn parseHandlersFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml) ![]Handler
         if (doc.asMap()) |doc_map| {
             if (doc_map.get("handlers")) |handlers_val| {
                 if (handlers_val.asMap()) |handlers_map| {
-                    var mappings = try allocator.alloc(HandlerMapping, handlers_map.count());
-                    errdefer allocator.free(mappings);
+                    // First pass: count valid handler entries
                     var count: usize = 0;
-                    const keys = handlers_map.keys();
                     const values = handlers_map.values();
-                    for (keys, values) |pattern, handler_value| {
-                        const handler_name = handler_value.asScalar() orelse continue;
-                        mappings[count] = .{
-                            .pattern = try allocator.dupe(u8, pattern),
-                            .handler = try allocator.dupe(u8, handler_name),
-                        };
-                        count += 1;
-                    }
-                    // Shrink to actual size if some entries were skipped
-                    if (count < mappings.len) {
-                        // Free unused entries
-                        for (mappings[count..]) |m| {
-                            allocator.free(m.pattern);
-                            allocator.free(m.handler);
+                    for (values) |handler_value| {
+                        if (handler_value.asScalar()) |_| {
+                            count += 1;
                         }
-                        mappings = try allocator.realloc(mappings, count);
+                    }
+
+                    // Second pass: allocate and populate mappings
+                    var mappings = try allocator.alloc(HandlerMapping, count);
+                    errdefer allocator.free(mappings);
+
+                    var i: usize = 0;
+                    const keys = handlers_map.keys();
+                    for (keys, values) |pattern, handler_value| {
+                        if (handler_value.asScalar()) |handler_name| {
+                            mappings[i] = .{
+                                .pattern = try allocator.dupe(u8, pattern),
+                                .handler = try allocator.dupe(u8, handler_name),
+                            };
+                            i += 1;
+                        }
                     }
                     return mappings;
                 }

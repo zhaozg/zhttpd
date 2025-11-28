@@ -5,10 +5,11 @@
 
 const std = @import("std");
 const httpz = @import("httpz");
+const AppContext = @import("httpz_handlers.zig").AppContext;
 
 /// Handle GraphQL GET requests
-pub fn handleGet(ctx_ptr: *anyopaque, _: *httpz.Request, res: *httpz.Response) !void {
-    _ = ctx_ptr;
+pub fn handleGet(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
+    _ = ctx;
     res.content_type = httpz.ContentType.JSON;
     res.body =
         \\{"data":{"message":"GraphQL endpoint - use POST for queries"}}
@@ -16,9 +17,7 @@ pub fn handleGet(ctx_ptr: *anyopaque, _: *httpz.Request, res: *httpz.Response) !
 }
 
 /// Handle GraphQL POST requests
-pub fn handlePost(ctx_ptr: *anyopaque, req: *httpz.Request, res: *httpz.Response) !void {
-    const ctx = @as(*@import("httpz_handlers.zig").AppContext, @ptrCast(@alignCast(ctx_ptr)));
-
+pub fn handlePost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     res.content_type = httpz.ContentType.JSON;
 
     if (ctx.graphql_handler) |*handler| {
@@ -146,9 +145,7 @@ pub fn handlePost(ctx_ptr: *anyopaque, req: *httpz.Request, res: *httpz.Response
 }
 
 /// Handle GraphQL Playground UI requests
-pub fn handlePlayground(ctx_ptr: *anyopaque, _: *httpz.Request, res: *httpz.Response) !void {
-    const ctx = @as(*@import("httpz_handlers.zig").AppContext, @ptrCast(@alignCast(ctx_ptr)));
-
+pub fn handlePlayground(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     res.content_type = httpz.ContentType.HTML;
 
     if (ctx.graphql_handler) |*handler| {
