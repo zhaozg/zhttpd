@@ -98,9 +98,68 @@ graphql_endpoint: "/graphql"
 zig build run
 ```
 
+或者直接运行编译后的可执行文件：
+
+```bash
+./zig-out/bin/zhttpd
+```
+
 #### 3. 访问服务器
 
 在浏览器中打开 http://localhost:8080
+
+### 🖥️ 命令行参数
+
+zhttpd 支持丰富的命令行参数，方便开发和生产环境的灵活配置：
+
+```bash
+zhttpd [选项]
+```
+
+**选项列表：**
+
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `-h, --help` | 显示帮助信息并退出 | - |
+| `-v, --version` | 显示版本信息并退出 | - |
+| `-c, --config <FILE>` | 指定配置文件路径 | zhttpd.yaml 或 config.json |
+| `-p, --port <PORT>` | 设置服务器端口 | 8080 |
+| `-H, --host <HOST>` | 设置绑定地址 | 0.0.0.0 |
+| `-s, --static-dir <DIR>` | 设置静态文件目录 | ./examples/static |
+| `-l, --lua-dir <DIR>` | 设置 Lua 脚本目录 | ./examples/lua |
+| `--log-level <LEVEL>` | 设置日志级别 (debug, info, warn, error) | info |
+| `-t, --threads <N>` | 设置线程池大小 | 4 |
+| `--security-headers` | 启用 HTTP 安全头部 | 默认启用 |
+| `--no-security-headers` | 禁用 HTTP 安全头部 | - |
+
+**配置优先级：**
+
+1. 命令行参数（最高优先级）
+2. 指定的配置文件（`--config`）
+3. 默认配置文件（zhttpd.yaml → config.json）
+4. 内置默认值
+
+**使用示例：**
+
+```bash
+# 显示帮助
+zhttpd --help
+
+# 在 3000 端口启动
+zhttpd -p 3000
+
+# 使用自定义配置文件
+zhttpd -c /etc/zhttpd/config.yaml
+
+# 仅绑定本地回环地址
+zhttpd -H 127.0.0.1 -p 8000
+
+# 开启调试日志
+zhttpd --log-level debug
+
+# 生产环境启动（8线程）
+zhttpd -t 8 -p 80 -H 0.0.0.0
+```
 
 ### 📖 使用指南
 
@@ -493,9 +552,68 @@ See configuration examples in the Chinese section above.
 zig build run
 ```
 
+Or run the compiled binary directly:
+
+```bash
+./zig-out/bin/zhttpd
+```
+
 #### 3. Access the Server
 
 Open http://localhost:8080 in your browser
+
+### 🖥️ Command-Line Arguments
+
+zhttpd supports rich command-line options for flexible configuration in development and production:
+
+```bash
+zhttpd [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-h, --help` | Print help message and exit | - |
+| `-v, --version` | Print version info and exit | - |
+| `-c, --config <FILE>` | Specify config file path | zhttpd.yaml or config.json |
+| `-p, --port <PORT>` | Set server port | 8080 |
+| `-H, --host <HOST>` | Set bind address | 0.0.0.0 |
+| `-s, --static-dir <DIR>` | Set static files directory | ./examples/static |
+| `-l, --lua-dir <DIR>` | Set Lua scripts directory | ./examples/lua |
+| `--log-level <LEVEL>` | Set log level (debug, info, warn, error) | info |
+| `-t, --threads <N>` | Set thread pool size | 4 |
+| `--security-headers` | Enable HTTP security headers | enabled by default |
+| `--no-security-headers` | Disable HTTP security headers | - |
+
+**Configuration Priority:**
+
+1. Command-line arguments (highest priority)
+2. Specified config file (`--config`)
+3. Default config files (zhttpd.yaml → config.json)
+4. Built-in defaults
+
+**Examples:**
+
+```bash
+# Show help
+zhttpd --help
+
+# Start on port 3000
+zhttpd -p 3000
+
+# Use custom config file
+zhttpd -c /etc/zhttpd/config.yaml
+
+# Bind to localhost only
+zhttpd -H 127.0.0.1 -p 8000
+
+# Enable debug logging
+zhttpd --log-level debug
+
+# Production startup (8 threads)
+zhttpd -t 8 -p 80 -H 0.0.0.0
+```
 
 ### 📖 Usage Guide
 
