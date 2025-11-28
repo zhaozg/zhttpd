@@ -445,29 +445,32 @@ local parsed = cjson.decode(json_str)  -- 解码 JSON
 使用 Apache Bench (ab) 和 h2load 进行基准测试，构建模式：ReleaseFast
 
 **测试环境：**
-- 系统：Linux x86_64
+- 系统：Linux x86_64 (AMD EPYC 7763 64-Core Processor)
+- CPU：2 vCPU
+- 内存：8 GB
 - Zig 版本：0.15.2
 - HTTP 服务器：httpz (http.zig)
 - 构建模式：ReleaseFast
+- 线程池：2 线程
 
 **Apache Bench 测试结果：**
 
 | 测试场景 | 并发连接 | 总请求数 | RPS (请求/秒) | 传输速率 | 平均延迟 |
 |---------|---------|---------|--------------|---------|----------|
-| 低并发   | 10      | 10,000  | 10,821       | 43.4 MB/s | 0.924 ms |
-| 中并发   | 50      | 50,000  | 10,752       | 43.2 MB/s | 4.650 ms |
-| 高并发   | 100     | 100,000 | 10,679       | 43.1 MB/s | 9.241 ms |
+| 低并发   | 10      | 10,000  | ~10,100      | ~42.9 MB/s | ~1.0 ms |
+| 中并发   | 50      | 50,000  | ~10,600      | ~45.0 MB/s | ~4.7 ms |
+| 高并发   | 100     | 100,000 | ~10,500      | ~44.5 MB/s | ~9.5 ms |
 
 **h2load 性能测试（数据传输成功）：**
 
 | 测试场景 | 并发连接 | 总请求数 | RPS (请求/秒) | 传输速率 | 平均延迟 |
 |---------|---------|---------|--------------|---------|----------|
-| 高并发   | 100     | 100,000 | 47,392       | 191.5 MB/s | 2.08 ms |
+| 高并发   | 100     | 100,000 | ~46,000      | ~190 MB/s | ~2.1 ms |
 
 **关键性能指标：**
-- 峰值吞吐量：**~10,700 请求/秒** (Apache Bench)
-- 超高吞吐量：**~47,400 请求/秒** (h2load 实际传输)
-- 平均传输速率：**~43 MB/s** (Apache Bench)
+- 峰值吞吐量：**~10,500 请求/秒** (Apache Bench)
+- 超高吞吐量：**~46,000 请求/秒** (h2load 实际传输)
+- 平均传输速率：**~45 MB/s** (Apache Bench)
 - 超低延迟：< 10ms (100并发)
 - 零失败请求 (Apache Bench)
 
@@ -660,29 +663,32 @@ zig build test
 Benchmarked with Apache Bench (ab) and h2load, Build Mode: ReleaseFast
 
 **Test Environment:**
-- System: Linux x86_64
+- System: Linux x86_64 (AMD EPYC 7763 64-Core Processor)
+- CPU: 2 vCPU
+- Memory: 8 GB
 - Zig Version: 0.15.2
 - HTTP Server: httpz (http.zig)
 - Build Mode: ReleaseFast
+- Thread Pool: 2 threads
 
 **Apache Bench Results:**
 
 | Test Scenario | Concurrency | Total Requests | RPS     | Transfer Rate | Avg Latency |
 |--------------|-------------|----------------|---------|---------------|-------------|
-| Low          | 10          | 10,000         | 10,821  | 43.4 MB/s     | 0.924 ms    |
-| Medium       | 50          | 50,000         | 10,752  | 43.2 MB/s     | 4.650 ms    |
-| High         | 100         | 100,000        | 10,679  | 43.1 MB/s     | 9.241 ms    |
+| Low          | 10          | 10,000         | ~10,100 | ~42.9 MB/s    | ~1.0 ms     |
+| Medium       | 50          | 50,000         | ~10,600 | ~45.0 MB/s    | ~4.7 ms     |
+| High         | 100         | 100,000        | ~10,500 | ~44.5 MB/s    | ~9.5 ms     |
 
 **h2load Performance (actual data transfer successful):**
 
 | Test Scenario | Concurrency | Total Requests | RPS     | Transfer Rate | Avg Latency |
 |--------------|-------------|----------------|---------|---------------|-------------|
-| High         | 100         | 100,000        | 47,392  | 191.5 MB/s    | 2.08 ms     |
+| High         | 100         | 100,000        | ~46,000 | ~190 MB/s     | ~2.1 ms     |
 
 **Key Metrics:**
-- Peak Throughput: **~10,700 req/s** (Apache Bench)
-- Ultra-high Throughput: **~47,400 req/s** (h2load actual transfer)
-- Average Transfer Rate: **~43 MB/s** (Apache Bench)
+- Peak Throughput: **~10,500 req/s** (Apache Bench)
+- Ultra-high Throughput: **~46,000 req/s** (h2load actual transfer)
+- Average Transfer Rate: **~45 MB/s** (Apache Bench)
 - Ultra-low Latency: < 10ms (100 concurrent)
 - Zero Failed Requests (Apache Bench)
 
