@@ -33,6 +33,11 @@ pub fn getLuaEngineName() []const u8 {
 /// Maximum size for header/query parameter keys when passing to Lua
 const MAX_KEY_SIZE: usize = 256;
 
+/// Maximum safe integer value for JSON compatibility (JavaScript Number.MAX_SAFE_INTEGER)
+/// Values beyond this range may lose precision when parsed by JavaScript
+const JSON_MAX_SAFE_INTEGER: f64 = 9007199254740992;
+const JSON_MIN_SAFE_INTEGER: f64 = -9007199254740992;
+
 /// Configuration for Lua sandbox limits
 /// All settings have safe defaults that can be overridden via configuration
 pub const SandboxConfig = struct {
@@ -272,7 +277,7 @@ const ThreadLocalLua = struct {
             },
             .number => {
                 const n = lua.toNumber(index) catch 0.0;
-                const is_whole_number = @floor(n) == n and n >= -9007199254740992 and n <= 9007199254740992;
+                const is_whole_number = @floor(n) == n and n >= JSON_MIN_SAFE_INTEGER and n <= JSON_MAX_SAFE_INTEGER;
                 if (is_whole_number) {
                     const i: i64 = @intFromFloat(n);
                     return try std.fmt.allocPrint(allocator, "{d}", .{i});
@@ -292,6 +297,12 @@ const ThreadLocalLua = struct {
                         '\n' => try buf.appendSlice(allocator, "\\n"),
                         '\r' => try buf.appendSlice(allocator, "\\r"),
                         '\t' => try buf.appendSlice(allocator, "\\t"),
+                        0x00...0x07, 0x0b, 0x0e...0x1f => {
+                            // Escape other control characters as \uXXXX
+                            try buf.appendSlice(allocator, "\\u00");
+                            try buf.append(allocator, "0123456789abcdef"[c >> 4]);
+                            try buf.append(allocator, "0123456789abcdef"[c & 0x0f]);
+                        },
                         else => try buf.append(allocator, c),
                     }
                 }
@@ -299,6 +310,12 @@ const ThreadLocalLua = struct {
                 return try buf.toOwnedSlice(allocator);
             },
             .table => {
+                // Determine if table is an array (sequence) or object.
+                // We use rawLen() which returns the length of the sequence part.
+                // A table is treated as an array if rawLen > 0, matching cjson behavior.
+                // Note: Mixed tables (with both integer and string keys) will serialize
+                // only the sequence part when treated as array. For pure objects, use
+                // tables with only string keys.
                 const len = lua.rawLen(index);
                 const is_array = len > 0;
 
@@ -324,13 +341,33 @@ const ThreadLocalLua = struct {
                         if (!first) try buf.append(allocator, ',');
                         first = false;
 
-                        const key = lua.toString(-2) catch "unknown";
-                        try buf.append(allocator, '"');
-                        try buf.appendSlice(allocator, key);
-                        try buf.appendSlice(allocator, "\":");
+                        // JSON object keys must be strings
+                        const key_type = lua.typeOf(-2);
+                        const key = if (key_type == .string)
+                            lua.toString(-2) catch ""
+                        else if (key_type == .number)
+                            // Convert numeric keys to string (common in Lua)
+                            blk: {
+                                const n = lua.toNumber(-2) catch 0.0;
+                                break :blk std.fmt.allocPrint(allocator, "{d}", .{n}) catch "";
+                            } else
+                            // Skip non-serializable keys
+                            "";
 
-                        const value_json = try luaValueToJsonStatic(allocator, lua, -1);
-                        try buf.appendSlice(allocator, value_json);
+                        if (key.len > 0) {
+                            try buf.append(allocator, '"');
+                            try buf.appendSlice(allocator, key);
+                            try buf.appendSlice(allocator, "\":");
+
+                            const value_json = try luaValueToJsonStatic(allocator, lua, -1);
+                            try buf.appendSlice(allocator, value_json);
+                        } else {
+                            // If key was skipped, remove the trailing comma
+                            if (!first and buf.items.len > 0 and buf.items[buf.items.len - 1] == ',') {
+                                _ = buf.pop();
+                            }
+                            first = true; // Reset to avoid adding comma before next valid key
+                        }
 
                         lua.pop(1);
                     }
@@ -668,7 +705,7 @@ pub const LuaHandler = struct {
                 // LuaJIT (Lua 5.1) doesn't have isInteger, so we check if the number is a whole number
                 const n = lua.toNumber(index) catch 0.0;
                 // Check if it's a whole number that can be represented as an integer
-                const is_whole_number = @floor(n) == n and n >= -9007199254740992 and n <= 9007199254740992;
+                const is_whole_number = @floor(n) == n and n >= JSON_MIN_SAFE_INTEGER and n <= JSON_MAX_SAFE_INTEGER;
                 if (is_whole_number) {
                     const i: i64 = @intFromFloat(n);
                     return try std.fmt.allocPrint(allocator, "{d}", .{i});
@@ -689,6 +726,12 @@ pub const LuaHandler = struct {
                         '\n' => try buf.appendSlice(allocator, "\\n"),
                         '\r' => try buf.appendSlice(allocator, "\\r"),
                         '\t' => try buf.appendSlice(allocator, "\\t"),
+                        0x00...0x07, 0x0b, 0x0e...0x1f => {
+                            // Escape other control characters as \uXXXX
+                            try buf.appendSlice(allocator, "\\u00");
+                            try buf.append(allocator, "0123456789abcdef"[c >> 4]);
+                            try buf.append(allocator, "0123456789abcdef"[c & 0x0f]);
+                        },
                         else => try buf.append(allocator, c),
                     }
                 }
@@ -696,7 +739,12 @@ pub const LuaHandler = struct {
                 return try buf.toOwnedSlice(allocator);
             },
             .table => {
-                // Check if it's an array or object
+                // Determine if table is an array (sequence) or object.
+                // We use rawLen() which returns the length of the sequence part.
+                // A table is treated as an array if rawLen > 0, matching cjson behavior.
+                // Note: Mixed tables (with both integer and string keys) will serialize
+                // only the sequence part when treated as array. For pure objects, use
+                // tables with only string keys.
                 const len = lua.rawLen(index);
                 const is_array = len > 0;
 
@@ -723,16 +771,35 @@ pub const LuaHandler = struct {
                         if (!first) try buf.append(allocator, ',');
                         first = false;
 
-                        // Get key as string
-                        const key = lua.toString(-2) catch "unknown";
-                        try buf.append(allocator, '"');
-                        try buf.appendSlice(allocator, key);
-                        try buf.appendSlice(allocator, "\":");
+                        // JSON object keys must be strings
+                        const key_type = lua.typeOf(-2);
+                        const key = if (key_type == .string)
+                            lua.toString(-2) catch ""
+                        else if (key_type == .number)
+                            // Convert numeric keys to string (common in Lua)
+                            blk: {
+                                const n = lua.toNumber(-2) catch 0.0;
+                                break :blk std.fmt.allocPrint(allocator, "{d}", .{n}) catch "";
+                            } else
+                            // Skip non-serializable keys
+                            "";
 
-                        // Get value
-                        const value_json = try self.luaValueToJson(allocator, lua, -1);
-                        // No defer needed: using arena allocator which handles cleanup
-                        try buf.appendSlice(allocator, value_json);
+                        if (key.len > 0) {
+                            try buf.append(allocator, '"');
+                            try buf.appendSlice(allocator, key);
+                            try buf.appendSlice(allocator, "\":");
+
+                            // Get value
+                            const value_json = try self.luaValueToJson(allocator, lua, -1);
+                            // No defer needed: using arena allocator which handles cleanup
+                            try buf.appendSlice(allocator, value_json);
+                        } else {
+                            // If key was skipped, remove the trailing comma
+                            if (!first and buf.items.len > 0 and buf.items[buf.items.len - 1] == ',') {
+                                _ = buf.pop();
+                            }
+                            first = true; // Reset to avoid adding comma before next valid key
+                        }
 
                         lua.pop(1); // Pop value, keep key for next iteration
                     }
