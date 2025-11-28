@@ -1,8 +1,10 @@
 -- Test script for cjson module
 -- This tests the built-in cjson.encode and cjson.decode functions
 -- Including edge cases for special characters, empty values, and boundary conditions
+--
+-- Handler signature: function handle(request, response, context)
 
-function handle_request(request)
+function handle(request, response, context)
     -- Test 1: Basic encode/decode
     local test_table = {
         name = "test",
@@ -90,6 +92,16 @@ function handle_request(request)
     -- Verify deep nesting
     local deep_valid = deep_decoded.level1.level2.level3.level4.value == "deep"
     
+    -- Test request/response/context
+    local request_tests = {
+        method = request:method(),
+        path = request:path(),
+        has_context = context ~= nil
+    }
+    
+    -- Store test result in context
+    context.test_passed = true
+    
     -- Return comprehensive test results
     return {
         status = "success",
@@ -105,10 +117,12 @@ function handle_request(request)
         deep_encoded = deep_encoded,
         deep_valid = deep_valid,
         large_encoded = large_encoded,
-        float_encoded = float_encoded
+        float_encoded = float_encoded,
+        -- Request/response/context tests
+        request_tests = request_tests
     }
 end
 
 return {
-    handle = handle_request
+    handle = handle
 }

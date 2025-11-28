@@ -2,17 +2,66 @@
 
 This directory contains example Lua scripts that demonstrate dynamic content generation with zhttpd.
 
-## Phase 1 Enhanced Features
+## Handler API
 
-zhttpd now includes enhanced Lua integration with the following features:
+zhttpd uses a clear three-parameter handler signature that provides direct access to httpz Request and Response objects.
 
-### Complex Request Data Structures (luvit/Node.js Style)
+### Handler Signature
 
-Lua scripts now receive full request information including:
-- HTTP headers
-- Query parameters  
-- Request body
-- Method and path
+```lua
+function handle(request, response, context)
+    -- Access request data via methods
+    local method = request:method()
+    local path = request:path()
+    local header = request:header("content-type")
+    local body = request:body()
+    
+    -- Set response properties
+    response:status(200)
+    response:header("X-Custom-Header", "value")
+    response:content_type("application/json")
+    
+    -- Use per-request data storage
+    context.user_id = "12345"
+    context.processed = true
+    
+    return { status = "success", user = context.user_id }
+end
+
+return { handle = handle }
+```
+
+### Request Methods
+
+| Method | Description |
+|--------|-------------|
+| `request:method()` | Get HTTP method (GET, POST, etc.) |
+| `request:path()` | Get request path |
+| `request:url()` | Get full URL with query string |
+| `request:header(name)` | Get specific header value |
+| `request:headers()` | Get all headers as table |
+| `request:query(name)` | Get query parameter value |
+| `request:query_all()` | Get all query parameters as table |
+| `request:body()` | Get parsed JSON body or raw string |
+| `request:body_raw()` | Get raw body string |
+| `request:param(name)` | Get URL path parameter |
+
+### Response Methods
+
+| Method | Description |
+|--------|-------------|
+| `response:status(code)` | Set/get HTTP status code |
+| `response:header(name, value)` | Set response header |
+| `response:content_type(type)` | Set/get Content-Type header |
+| `response:body(content)` | Set/get response body directly |
+
+### Context Data
+
+The `context` parameter is a Lua table for storing per-request data that persists throughout request processing.
+
+For complete documentation, see [docs/LUA_PROGRAMMING_GUIDE.md](../../docs/LUA_PROGRAMMING_GUIDE.md).
+
+## Features
 
 ### Script Hot-Reloading
 
@@ -43,9 +92,9 @@ Each HTTP worker thread has its own **dedicated Lua VM** via thread-local storag
 - Lua states are automatically initialized on first use per thread
 - This allows efficient multi-threaded, multi-connection concurrent processing
 
-## Request Structure
+## Legacy Request Structure
 
-Each Lua handler receives a request table with the following structure (luvit/Node.js style):
+When using the legacy API, each Lua handler receives a request table with the following structure (luvit/Node.js style):
 
 ```lua
 request = {

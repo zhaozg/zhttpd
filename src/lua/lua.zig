@@ -1,8 +1,10 @@
 const std = @import("std");
 const ziglua = @import("ziglua");
+const httpz = @import("httpz");
 const FileCache = @import("../cache/file_cache.zig").FileCache;
 const build_options = @import("build_options");
 const json = @import("json.zig");
+const context = @import("context.zig");
 
 // Lua integration module
 // This module provides integration with Lua for dynamic content handling
@@ -139,6 +141,9 @@ const ThreadLocalLua = struct {
 
         // Register built-in cjson module (safe, sandboxed JSON handling)
         json.registerCjsonModule(lua, &getThreadLocalAllocator);
+
+        // Register context module for Per-Request Context support
+        context.registerContextModule(lua);
     }
 };
 
@@ -417,6 +422,113 @@ pub const LuaHandler = struct {
 
         // Use the shared FileCache to load the script
         return try self.file_cache.loadFile(path);
+    }
+
+    /// Execute a Lua script with Per-Request Context (httpz integration)
+    ///
+    /// This method provides direct access to httpz.Request and httpz.Response
+    /// objects from Lua scripts via the `ctx` parameter:
+    ///
+    /// ```lua
+    /// function handle(ctx)
+    ///     -- Access request data
+    ///     local method = ctx.req:method()
+    ///     local path = ctx.req:path()
+    ///     local header = ctx.req:header("content-type")
+    ///     local body = ctx.req:body()
+    ///
+    ///     -- Set response data
+    ///     ctx.res:status(200)
+    ///     ctx.res:header("X-Custom-Header", "value")
+    ///     ctx.res:content_type("application/json")
+    ///
+    ///     -- Use per-request data storage
+    ///     ctx.data.user_id = "12345"
+    ///
+    ///     return { status = "success" }
+    /// end
+    /// ```
+    ///
+    /// Returns the JSON-encoded response body from the Lua handler.
+    pub fn executeScriptWithContext(
+        self: *LuaHandler,
+        script_name: []const u8,
+        req: *httpz.Request,
+        res: *httpz.Response,
+    ) ![]const u8 {
+        const arena = res.arena;
+
+        // Get the thread-local Lua state (one per worker thread)
+        var lua = try self.getThreadLocalLua();
+
+        // Clear the stack before starting
+        lua.setTop(0);
+
+        // Set up instruction limit hook if configured
+        if (self.sandbox_config.max_instructions > 0) {
+            lua.setHook(ziglua.wrap(instructionLimitHook), .{ .count = true }, @intCast(self.sandbox_config.max_instructions));
+        }
+
+        // Ensure context is cleared on exit
+        defer context.clearContext();
+
+        // Load and execute script file
+        const script_content = try self.loadScript(script_name);
+        defer self.allocator.free(script_content);
+
+        // Convert to null-terminated string for Lua
+        const script_z = try arena.dupeZ(u8, script_content);
+
+        // Load the script
+        lua.doString(script_z) catch |err| {
+            std.debug.print("Error loading Lua script: {}\n", .{err});
+            lua.setTop(0); // Clean up stack before returning
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return try arena.dupe(u8,
+                \\{"status":"error","message":"Lua script load failed"}
+            );
+        };
+
+        // The script should return a table with a 'handle' function
+        if (lua.getTop() != 1) {
+            lua.setTop(0); // Clean up stack before returning
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return try arena.dupe(u8,
+                \\{"status":"error","message":"Script must return a table"}
+            );
+        }
+
+        // Get the handle function from the table
+        _ = lua.getField(1, "handle");
+        if (lua.typeOf(-1) != .function) {
+            lua.setTop(0); // Clean up stack before returning
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return try arena.dupe(u8,
+                \\{"status":"error","message":"Script must export a 'handle' function"}
+            );
+        }
+
+        // Push handler arguments: request, response, context (3 arguments)
+        context.pushHandlerArgs(lua, req, res, arena);
+
+        // Call the handle function with 3 arguments: handle(request, response, context)
+        lua.protectedCall(.{ .args = 3, .results = 1 }) catch |err| {
+            std.debug.print("Error calling Lua handler: {}\n", .{err});
+            lua.setTop(0); // Clean up stack before returning
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return try arena.dupe(u8,
+                \\{"status":"error","message":"Lua handler execution failed"}
+            );
+        };
+
+        // Convert return value to JSON
+        const response_json = try json.luaValueToJson(arena, lua, -1);
+        lua.pop(1);
+
+        // Clear instruction limit hook
+        lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+
+        return response_json;
     }
 };
 

@@ -1,6 +1,9 @@
 -- Complete Lua Dynamic Page Example
 -- Demonstrates GET and POST request handling with thread-safe execution
 -- This example implements a simple todo list API
+--
+-- Handler signature: function handle(request, response, context)
+-- See docs/LUA_PROGRAMMING_GUIDE.md for API documentation
 
 -- In-memory storage (each Lua state has its own copy)
 -- For production, use a shared database or cache
@@ -8,7 +11,7 @@ local todos = {}
 local next_id = 1
 
 -- Helper function to generate response
-local function response(status, data, message)
+local function make_response(status, data, message)
     return {
         status = status,
         data = data,
@@ -23,23 +26,23 @@ local function list_todos()
     for _, todo in pairs(todos) do
         table.insert(todo_list, todo)
     end
-    return response("success", { todos = todo_list })
+    return make_response("success", { todos = todo_list }), 200
 end
 
 -- GET /api/todo/:id - Get a specific todo
 local function get_todo(id)
     local todo = todos[id]
     if todo then
-        return response("success", todo)
+        return make_response("success", todo), 200
     else
-        return response("error", nil, "Todo not found")
+        return make_response("error", nil, "Todo not found"), 404
     end
 end
 
 -- POST /api/todo - Create a new todo
 local function create_todo(body)
     if not body or not body.title then
-        return response("error", nil, "Title is required")
+        return make_response("error", nil, "Title is required"), 400
     end
     
     local todo = {
@@ -53,7 +56,7 @@ local function create_todo(body)
     todos[next_id] = todo
     next_id = next_id + 1
     
-    return response("success", todo, "Todo created successfully")
+    return make_response("success", todo, "Todo created successfully"), 201
 end
 
 -- POST /api/todo/:id/complete - Mark todo as completed
@@ -62,56 +65,65 @@ local function complete_todo(id)
     if todo then
         todo.completed = true
         todo.completed_at = os.time()
-        return response("success", todo, "Todo marked as completed")
+        return make_response("success", todo, "Todo marked as completed"), 200
     else
-        return response("error", nil, "Todo not found")
+        return make_response("error", nil, "Todo not found"), 404
     end
 end
 
--- Main request handler
-function handle_request(request)
-    local method = request.method
-    local path = request.path
-    local body = request.body
+-- Handler with new signature: handle(request, response, context)
+function handle(request, response, context)
+    local method = request:method()
+    local path = request:path()
+    local body = request:body()
     
-    -- Note: Request logging is handled by the server's access log
-    -- Avoid print() here for performance in high-load scenarios
+    -- Store request start time in context
+    context.start_time = os.time()
     
-    -- Route the request
+    local result, status
+    
     if method == "GET" then
         -- List all todos
         if path == "/api/todo" then
-            return list_todos()
+            result, status = list_todos()
+        else
+            -- Get specific todo (match /api/todo/123)
+            local id = path:match("/api/todo/(%d+)$")
+            if id then
+                result, status = get_todo(tonumber(id))
+            else
+                result = make_response("error", nil, "Route not found")
+                status = 404
+            end
         end
-        
-        -- Get specific todo (match /api/todo/123)
-        local id = path:match("/api/todo/(%d+)$")
-        if id then
-            return get_todo(tonumber(id))
-        end
-        
-        return response("error", nil, "Route not found")
-        
     elseif method == "POST" then
         -- Create new todo
         if path == "/api/todo" then
-            return create_todo(body)
+            result, status = create_todo(body)
+        else
+            -- Complete todo (match /api/todo/123/complete)
+            local id = path:match("/api/todo/(%d+)/complete$")
+            if id then
+                result, status = complete_todo(tonumber(id))
+            else
+                result = make_response("error", nil, "Route not found")
+                status = 404
+            end
         end
-        
-        -- Complete todo (match /api/todo/123/complete)
-        local id = path:match("/api/todo/(%d+)/complete$")
-        if id then
-            return complete_todo(tonumber(id))
-        end
-        
-        return response("error", nil, "Route not found")
-        
     else
-        return response("error", nil, "Method not allowed")
+        result = make_response("error", nil, "Method not allowed")
+        status = 405
     end
+    
+    -- Set response status
+    if status then
+        response:status(status)
+    end
+    
+    return result
 end
 
 -- Export the handler
 return {
-    handle = handle_request
+    handle = handle
 }
