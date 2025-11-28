@@ -1092,17 +1092,12 @@ fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     }
 }
 
+/// Get content type for a file path using httpz's built-in MIME type detection
+/// Falls back to BINARY for unknown extensions
 fn getContentType(path: []const u8) httpz.ContentType {
-    if (std.mem.endsWith(u8, path, ".html")) return httpz.ContentType.HTML;
-    if (std.mem.endsWith(u8, path, ".css")) return httpz.ContentType.CSS;
-    if (std.mem.endsWith(u8, path, ".js")) return httpz.ContentType.JS;
-    if (std.mem.endsWith(u8, path, ".json")) return httpz.ContentType.JSON;
-    if (std.mem.endsWith(u8, path, ".png")) return httpz.ContentType.PNG;
-    if (std.mem.endsWith(u8, path, ".jpg") or std.mem.endsWith(u8, path, ".jpeg")) return httpz.ContentType.JPG;
-    if (std.mem.endsWith(u8, path, ".gif")) return httpz.ContentType.GIF;
-    if (std.mem.endsWith(u8, path, ".svg")) return httpz.ContentType.SVG;
-    if (std.mem.endsWith(u8, path, ".ico")) return httpz.ContentType.ICO;
-    return httpz.ContentType.BINARY;
+    const content_type = httpz.ContentType.forFile(path);
+    // httpz returns UNKNOWN for unrecognized extensions, use BINARY instead
+    return if (content_type == .UNKNOWN) .BINARY else content_type;
 }
 
 fn addSecurityHeaders(res: *httpz.Response) void {
@@ -1164,4 +1159,24 @@ test "sanitizeLogField handles empty input" {
     var buf: [256]u8 = undefined;
     const result = sanitizeLogField(&buf, "");
     try testing.expect(result.len == 0);
+}
+
+test "getContentType returns correct MIME types" {
+    const testing = std.testing;
+
+    // Test common web file types
+    try testing.expect(getContentType("/static/index.html") == httpz.ContentType.HTML);
+    try testing.expect(getContentType("/style.css") == httpz.ContentType.CSS);
+    try testing.expect(getContentType("/app.js") == httpz.ContentType.JS);
+    try testing.expect(getContentType("/data.json") == httpz.ContentType.JSON);
+    try testing.expect(getContentType("/logo.png") == httpz.ContentType.PNG);
+    try testing.expect(getContentType("/photo.jpg") == httpz.ContentType.JPG);
+    try testing.expect(getContentType("/photo.jpeg") == httpz.ContentType.JPG);
+    try testing.expect(getContentType("/image.gif") == httpz.ContentType.GIF);
+    try testing.expect(getContentType("/icon.svg") == httpz.ContentType.SVG);
+    try testing.expect(getContentType("/favicon.ico") == httpz.ContentType.ICO);
+
+    // Test that unknown extensions return BINARY
+    try testing.expect(getContentType("/unknown.xyz") == httpz.ContentType.BINARY);
+    try testing.expect(getContentType("/noextension") == httpz.ContentType.BINARY);
 }
