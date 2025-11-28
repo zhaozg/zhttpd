@@ -1,5 +1,5 @@
 const std = @import("std");
-const config = @import("config/config.zig");
+const cli = @import("cli.zig");
 const httpz_handlers = @import("handlers/httpz_handlers.zig");
 
 pub fn main() !void {
@@ -7,23 +7,13 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Load configuration - try YAML first, then JSON, finally defaults
-    // Note: Using std.debug.print here since logger is not yet initialized
-    const cfg = blk: {
-        // Try zhttpd.yaml
-        if (config.loadConfig(allocator, "zhttpd.yaml")) |c| {
-            std.debug.print("Loaded configuration from zhttpd.yaml\n", .{});
-            break :blk c;
-        } else |_| {
-            // Try config.json
-            if (config.loadConfig(allocator, "config.json")) |c| {
-                std.debug.print("Loaded configuration from config.json\n", .{});
-                break :blk c;
-            } else |_| {
-                std.debug.print("Using default configuration\n", .{});
-                break :blk try config.getDefaultConfig(allocator);
-            }
-        }
+    // Parse command-line arguments and load configuration
+    const result = try cli.parseArgs(allocator);
+    const cfg = switch (result) {
+        .exit => |code| {
+            std.process.exit(code);
+        },
+        .run => |c| c,
     };
     defer cfg.deinit();
 
@@ -32,7 +22,7 @@ pub fn main() !void {
     defer server.deinit();
 
     // Log startup information using the integrated logger
-    server.context.logger.info("Starting zhttpd v0.1.2 on {s}:{d}", .{ cfg.host, cfg.port });
+    server.context.logger.info("Starting zhttpd v{s} on {s}:{d}", .{ cli.VERSION, cfg.host, cfg.port });
     server.context.logger.info("Static files: {s}", .{cfg.static_dir});
     server.context.logger.info("Security headers: {s}", .{if (cfg.security_headers) "enabled" else "disabled"});
     server.context.logger.info("Thread pool size: {d}", .{cfg.thread_pool_size});
