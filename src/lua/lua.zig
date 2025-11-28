@@ -1,6 +1,7 @@
 const std = @import("std");
 const ziglua = @import("ziglua");
 const FileCache = @import("../cache/file_cache.zig").FileCache;
+const build_options = @import("build_options");
 
 // Lua integration module
 // This module provides integration with Lua for dynamic content handling
@@ -19,6 +20,15 @@ const FileCache = @import("../cache/file_cache.zig").FileCache;
 // - Script hot-reloading via FileCache auto mode
 // - Bytecode caching and precompilation for performance
 // - Sandboxing with instruction count limits for resource control
+//
+// LuaJIT Support:
+// When built with -Dlua-lang=luajit, uses LuaJIT instead of standard Lua 5.4.
+// LuaJIT provides JIT compilation for better performance but is based on Lua 5.1.
+
+/// Returns the Lua engine name for display purposes
+pub fn getLuaEngineName() []const u8 {
+    return if (build_options.lua_lang == .luajit) "LuaJIT" else "Lua 5.4";
+}
 
 /// Maximum size for header/query parameter keys when passing to Lua
 const MAX_KEY_SIZE: usize = 256;
@@ -125,6 +135,218 @@ const ThreadLocalLua = struct {
         // Remove package library (can load arbitrary C libraries via package.loadlib)
         lua.pushNil();
         lua.setGlobal("package");
+
+        // Register built-in cjson module (safe, sandboxed JSON handling)
+        registerCjsonModule(lua);
+    }
+
+    /// Register the built-in cjson module
+    /// Provides cjson-compatible API: cjson.encode() and cjson.decode()
+    fn registerCjsonModule(lua: *ziglua.Lua) void {
+        // Create the cjson table
+        lua.newTable();
+
+        // Add encode function
+        lua.pushFunction(ziglua.wrap(cjsonEncode));
+        lua.setField(-2, "encode");
+
+        // Add decode function
+        lua.pushFunction(ziglua.wrap(cjsonDecode));
+        lua.setField(-2, "decode");
+
+        // Add null value (cjson.null) - use a unique sentinel value
+        // We use a small integer as a sentinel since light userdata requires non-null
+        lua.pushNil();
+        lua.setField(-2, "null");
+
+        // Set as global 'cjson'
+        lua.setGlobal("cjson");
+    }
+
+    /// cjson.encode(value) - Convert Lua value to JSON string
+    fn cjsonEncode(lua: *ziglua.Lua) i32 {
+        // Check if we have an argument
+        if (lua.getTop() < 1) {
+            _ = lua.pushString("cjson.encode: requires 1 argument");
+            lua.raiseError();
+        }
+
+        // Get thread-local allocator
+        const allocator = if (tls_lua) |tl| tl.allocator else std.heap.page_allocator;
+
+        // Use a temporary arena for JSON encoding
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+
+        const json_str = luaValueToJsonStatic(arena.allocator(), lua, 1) catch {
+            _ = lua.pushString("cjson.encode: failed to encode value");
+            lua.raiseError();
+        };
+
+        _ = lua.pushString(json_str);
+        return 1;
+    }
+
+    /// cjson.decode(json_string) - Parse JSON string to Lua value
+    fn cjsonDecode(lua: *ziglua.Lua) i32 {
+        // Check if we have an argument
+        if (lua.getTop() < 1) {
+            _ = lua.pushString("cjson.decode: requires 1 argument");
+            lua.raiseError();
+        }
+
+        // Check if argument is a string
+        if (lua.typeOf(1) != .string) {
+            _ = lua.pushString("cjson.decode: argument must be a string");
+            lua.raiseError();
+        }
+
+        const json_str = lua.toString(1) catch {
+            _ = lua.pushString("cjson.decode: failed to get string");
+            lua.raiseError();
+        };
+
+        // Get thread-local allocator
+        const allocator = if (tls_lua) |tl| tl.allocator else std.heap.page_allocator;
+
+        // Use a temporary arena for JSON parsing
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+
+        const parsed = std.json.parseFromSlice(std.json.Value, arena.allocator(), json_str, .{}) catch {
+            _ = lua.pushString("cjson.decode: invalid JSON");
+            lua.raiseError();
+        };
+
+        pushJsonValueStatic(lua, parsed.value) catch {
+            _ = lua.pushString("cjson.decode: failed to convert JSON to Lua");
+            lua.raiseError();
+        };
+
+        return 1;
+    }
+
+    /// Static version of pushJsonValue for use in cjson functions
+    fn pushJsonValueStatic(lua: *ziglua.Lua, value: std.json.Value) !void {
+        switch (value) {
+            .null => lua.pushNil(),
+            .bool => |b| lua.pushBoolean(b),
+            .integer => |i| lua.pushInteger(@intCast(i)),
+            .float => |f| lua.pushNumber(f),
+            .number_string => |ns| {
+                const num = std.fmt.parseFloat(f64, ns) catch {
+                    _ = lua.pushString(ns);
+                    return;
+                };
+                lua.pushNumber(num);
+            },
+            .string => |s| _ = lua.pushString(s),
+            .array => |arr| {
+                lua.newTable();
+                for (arr.items, 0..) |item, i| {
+                    try pushJsonValueStatic(lua, item);
+                    lua.rawSetIndex(-2, @intCast(i + 1));
+                }
+            },
+            .object => |obj| {
+                lua.newTable();
+                var it = obj.iterator();
+                while (it.next()) |entry| {
+                    _ = lua.pushString(entry.key_ptr.*);
+                    try pushJsonValueStatic(lua, entry.value_ptr.*);
+                    lua.setTable(-3);
+                }
+            },
+        }
+    }
+
+    /// Static version of luaValueToJson for use in cjson functions
+    fn luaValueToJsonStatic(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32) ![]const u8 {
+        const lua_type = lua.typeOf(index);
+
+        switch (lua_type) {
+            .nil => return try allocator.dupe(u8, "null"),
+            .boolean => {
+                const b = lua.toBoolean(index);
+                return try allocator.dupe(u8, if (b) "true" else "false");
+            },
+            .number => {
+                const n = lua.toNumber(index) catch 0.0;
+                const is_whole_number = @floor(n) == n and n >= -9007199254740992 and n <= 9007199254740992;
+                if (is_whole_number) {
+                    const i: i64 = @intFromFloat(n);
+                    return try std.fmt.allocPrint(allocator, "{d}", .{i});
+                } else {
+                    return try std.fmt.allocPrint(allocator, "{d}", .{n});
+                }
+            },
+            .string => {
+                const s = lua.toString(index) catch "";
+                var buf = std.ArrayListUnmanaged(u8){};
+                defer buf.deinit(allocator);
+                try buf.append(allocator, '"');
+                for (s) |c| {
+                    switch (c) {
+                        '"' => try buf.appendSlice(allocator, "\\\""),
+                        '\\' => try buf.appendSlice(allocator, "\\\\"),
+                        '\n' => try buf.appendSlice(allocator, "\\n"),
+                        '\r' => try buf.appendSlice(allocator, "\\r"),
+                        '\t' => try buf.appendSlice(allocator, "\\t"),
+                        else => try buf.append(allocator, c),
+                    }
+                }
+                try buf.append(allocator, '"');
+                return try buf.toOwnedSlice(allocator);
+            },
+            .table => {
+                const len = lua.rawLen(index);
+                const is_array = len > 0;
+
+                var buf = std.ArrayListUnmanaged(u8){};
+                defer buf.deinit(allocator);
+
+                if (is_array) {
+                    try buf.append(allocator, '[');
+                    var i: i32 = 1;
+                    while (i <= len) : (i += 1) {
+                        if (i > 1) try buf.append(allocator, ',');
+                        _ = lua.rawGetIndex(index, i);
+                        const value_json = try luaValueToJsonStatic(allocator, lua, -1);
+                        try buf.appendSlice(allocator, value_json);
+                        lua.pop(1);
+                    }
+                    try buf.append(allocator, ']');
+                } else {
+                    try buf.append(allocator, '{');
+                    lua.pushNil();
+                    var first = true;
+                    while (lua.next(index - 1)) {
+                        if (!first) try buf.append(allocator, ',');
+                        first = false;
+
+                        const key = lua.toString(-2) catch "unknown";
+                        try buf.append(allocator, '"');
+                        try buf.appendSlice(allocator, key);
+                        try buf.appendSlice(allocator, "\":");
+
+                        const value_json = try luaValueToJsonStatic(allocator, lua, -1);
+                        try buf.appendSlice(allocator, value_json);
+
+                        lua.pop(1);
+                    }
+                    try buf.append(allocator, '}');
+                }
+
+                return try buf.toOwnedSlice(allocator);
+            },
+            .light_userdata => {
+                // cjson.null is represented as light userdata with null pointer
+                return try allocator.dupe(u8, "null");
+            },
+            else => {
+                return try allocator.dupe(u8, "null");
+            },
+        }
     }
 };
 
@@ -443,11 +665,14 @@ pub const LuaHandler = struct {
                 return try allocator.dupe(u8, if (b) "true" else "false");
             },
             .number => {
-                if (lua.isInteger(index)) {
-                    const i = lua.toInteger(index) catch 0;
+                // LuaJIT (Lua 5.1) doesn't have isInteger, so we check if the number is a whole number
+                const n = lua.toNumber(index) catch 0.0;
+                // Check if it's a whole number that can be represented as an integer
+                const is_whole_number = @floor(n) == n and n >= -9007199254740992 and n <= 9007199254740992;
+                if (is_whole_number) {
+                    const i: i64 = @intFromFloat(n);
                     return try std.fmt.allocPrint(allocator, "{d}", .{i});
                 } else {
-                    const n = lua.toNumber(index) catch 0.0;
                     return try std.fmt.allocPrint(allocator, "{d}", .{n});
                 }
             },
@@ -615,4 +840,48 @@ test "lua handler bytecode cache clear" {
     handler.clearBytecodeCache();
 
     try testing.expect(handler.bytecode_cache.count() == 0);
+}
+
+test "cjson module encode and decode" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer cache.deinit();
+
+    // Enable sandbox to test cjson module (cjson is only available with sandbox enabled)
+    const config = SandboxConfig{
+        .max_instructions = 100_000,
+        .enable_sandbox = true,
+    };
+
+    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
+    defer handler.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const result = try handler.executeScriptEx(
+        arena.allocator(),
+        "cjson_test",
+        "GET",
+        "/api/cjson_test",
+        "",
+        &[_]KeyValue{},
+        &[_]KeyValue{},
+    );
+
+    // Verify we got a successful response
+    try testing.expect(result.len > 0);
+    try testing.expect(std.mem.indexOf(u8, result, "success") != null);
+    // Verify cjson was available
+    try testing.expect(std.mem.indexOf(u8, result, "cjson_available") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "true") != null);
+}
+
+test "getLuaEngineName returns correct engine name" {
+    const engine_name = getLuaEngineName();
+    try std.testing.expect(engine_name.len > 0);
+    // Either "LuaJIT" or "Lua 5.4"
+    try std.testing.expect(std.mem.eql(u8, engine_name, "LuaJIT") or std.mem.eql(u8, engine_name, "Lua 5.4"));
 }
