@@ -76,8 +76,9 @@ zig build test
 - [AGENTS.md](AGENTS.md) - Agent instructions
 - [docs/LOGGING.md](docs/LOGGING.md) - Logging system details
 - [docs/ETAG_CACHING.md](docs/ETAG_CACHING.md) - ETag caching guide
-- [docs/h2load_compatibility.md](docs/h2load_compatibility.md) - h2load testing notes
-- [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) - Historical implementation details
+- [docs/SECURITY.md](docs/SECURITY.md) - Security features
+- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) - Observability and metrics
+- [docs/PERFORMANCE_TUNING.md](docs/PERFORMANCE_TUNING.md) - Performance tuning guide
 
 ## Next Steps
 
