@@ -16,6 +16,10 @@
             .url = "https://github.com/yousif-wali/grapzig/archive/fbae8f4c453585a82c9b63fcca43e222027057ef.tar.gz",
             .hash = "N-V-__8AAMikAQA91nJMnvzwe-Ct894D_zRSvrSjroZk16Z7",
         },
+        .yaml = .{
+            .url = "https://github.com/kubkon/zig-yaml/archive/a6c2cd8760bf45c49b17a3f6259c4dfe3ded528e.tar.gz",
+            .hash = "zig_yaml-0.2.0-C1161pmrAgDnipDTh_4v4RQD27XN5GNaVlzzvlXf1jfW",
+        },
     },
     .paths = .{
         "build.zig",
