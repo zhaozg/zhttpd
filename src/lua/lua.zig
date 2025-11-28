@@ -344,8 +344,12 @@ const ThreadLocalLua = struct {
                 } else {
                     try buf.append(allocator, '{');
                     lua.pushNil();
+                    // After pushNil, the table index needs adjustment:
+                    // - For negative indices: the table moved (e.g., -1 becomes -2)
+                    // - For positive indices: they remain the same
+                    const table_index = if (index < 0) index - 1 else index;
                     var first = true;
-                    while (lua.next(index - 1)) {
+                    while (lua.next(table_index)) {
                         if (!first) try buf.append(allocator, ',');
                         first = false;
 
@@ -759,8 +763,12 @@ pub const LuaHandler = struct {
                 } else {
                     try buf.append(allocator, '{');
                     lua.pushNil();
+                    // After pushNil, the table index needs adjustment:
+                    // - For negative indices: the table moved (e.g., -1 becomes -2)
+                    // - For positive indices: they remain the same
+                    const table_index = if (index < 0) index - 1 else index;
                     var first = true;
-                    while (lua.next(index - 1)) {
+                    while (lua.next(table_index)) {
                         if (!first) try buf.append(allocator, ',');
                         first = false;
 
