@@ -64,6 +64,9 @@ const observability = @import("../observability/observability.zig");
 const Metrics = observability.Metrics;
 const HealthCheck = observability.health.HealthCheck;
 const request_id = observability.request_id;
+// Plugins
+const db_plugin = @import("../plugins/db/db.zig");
+const DbPlugin = db_plugin.DbPlugin;
 // Individual handler modules
 const static_handler = @import("static_handler.zig");
 const lua_handler = @import("lua_handler.zig");
@@ -100,6 +103,8 @@ pub const AppContext = struct {
     start_time: i64 = 0,
     // Phase 7: Security
     ip_access_control: ?*IpAccessControl = null,
+    // Database plugin
+    db_plugin: ?*DbPlugin = null,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -245,6 +250,41 @@ pub const AppContext = struct {
             ctx.logger.info("Server-Sent Events (SSE) support enabled", .{});
         }
 
+        // Initialize database plugin if enabled
+        if (config.enable_db and config.db_uri.len > 0) {
+            const plugin = DbPlugin.create(allocator) catch |err| {
+                ctx.logger.warn("Failed to create database plugin: {}", .{err});
+                // Continue without database - it's optional
+                ctx.db_plugin = null;
+                return ctx;
+            };
+
+            // Build config JSON for plugin initialization
+            var config_buf: [512]u8 = undefined;
+            const db_config_json = std.fmt.bufPrint(&config_buf, "{{\"uri\":\"{s}\",\"pool_size\":{d}}}", .{
+                config.db_uri,
+                config.db_pool_size,
+            }) catch {
+                ctx.logger.warn("Failed to format database config", .{});
+                allocator.destroy(plugin);
+                ctx.db_plugin = null;
+                return ctx;
+            };
+
+            // Initialize the plugin
+            var p = plugin.asPlugin();
+            if (p.init(allocator, db_config_json)) {
+                ctx.db_plugin = plugin;
+                // Set global plugin pointer for Lua access
+                db_plugin.setGlobalPlugin(plugin);
+                ctx.logger.info("Database plugin initialized: {s} (pool size: {d})", .{ config.db_uri, config.db_pool_size });
+            } else {
+                ctx.logger.warn("Database plugin initialization failed: {s}", .{plugin.error_message orelse "unknown error"});
+                allocator.destroy(plugin);
+                ctx.db_plugin = null;
+            }
+        }
+
         // Phase 5: Log observability status
         if (config.enable_metrics) {
             ctx.logger.info("Prometheus metrics endpoint: /metrics", .{});
@@ -276,6 +316,13 @@ pub const AppContext = struct {
         if (self.ip_access_control) |ip_control| {
             ip_control.deinit();
             self.allocator.destroy(ip_control);
+        }
+        if (self.db_plugin) |plugin| {
+            // Clear global plugin pointer
+            db_plugin.setGlobalPlugin(null);
+            var p = plugin.asPlugin();
+            p.deinit();
+            self.allocator.destroy(plugin);
         }
         if (self.metrics) |metrics_ptr| {
             self.allocator.destroy(metrics_ptr);

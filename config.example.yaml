@@ -90,6 +90,23 @@ enable_ip_blacklist: false
 ip_blacklist: ""
 ip_whitelist: ""
 
+# Database Plugin Configuration
+# -----------------------------
+# Enable database connectivity through zdbc
+# Supports SQLite, PostgreSQL, and MySQL
+enable_db: false
+
+# Database connection URI
+# Formats:
+#   SQLite:     sqlite:///path/to/database.db
+#   SQLite:     sqlite://:memory:  (in-memory database)
+#   PostgreSQL: postgresql://user:password@host:port/database
+#   MySQL:      mysql://user:password@host:port/database
+db_uri: ""
+
+# Connection pool size (1 = no pooling, use single connection)
+db_pool_size: 5
+
 # Handler Configuration
 # ---------------------
 # Map URL patterns to handler names

@@ -5,6 +5,7 @@ const FileCache = @import("../cache/file_cache.zig").FileCache;
 const build_options = @import("build_options");
 const json = @import("json.zig");
 const context = @import("context.zig");
+const db_plugin = @import("../plugins/db/db.zig");
 
 // Lua integration module
 // This module provides integration with Lua for dynamic content handling
@@ -144,6 +145,11 @@ const ThreadLocalLua = struct {
 
         // Register context module for Per-Request Context support
         context.registerContextModule(lua);
+
+        // Register db module if database plugin is available
+        if (db_plugin.getGlobalPlugin() != null) {
+            db_plugin.registerDbModule(lua);
+        }
     }
 };
 
