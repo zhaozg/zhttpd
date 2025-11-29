@@ -385,13 +385,13 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
 /// Parse data sources from YAML document
 /// If db_uri is set and no explicit data_sources, creates a "default" data source
 fn parseDataSourcesFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml, default_uri: ?[]const u8, default_pool_size: u32) ![]DataSourceConfig {
-    var sources = std.ArrayList(DataSourceConfig).init(allocator);
+    var sources: std.ArrayListUnmanaged(DataSourceConfig) = .empty;
     errdefer {
         for (sources.items) |ds| {
             allocator.free(ds.name);
             allocator.free(ds.uri);
         }
-        sources.deinit();
+        sources.deinit(allocator);
     }
 
     // Try to find the data_sources section in the document
@@ -412,17 +412,17 @@ fn parseDataSourcesFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml, default
                             const name_val = item_map.get("name") orelse continue;
                             const uri_val = item_map.get("uri") orelse continue;
 
-                            const name_str = name_val.asString() orelse continue;
-                            const uri_str = uri_val.asString() orelse continue;
+                            const name_str = name_val.asScalar() orelse continue;
+                            const uri_str = uri_val.asScalar() orelse continue;
 
                             var pool_size: u32 = 5;
                             if (item_map.get("pool_size")) |ps_val| {
-                                if (ps_val.asInt()) |ps| {
-                                    pool_size = @intCast(ps);
+                                if (ps_val.asScalar()) |ps_str| {
+                                    pool_size = std.fmt.parseInt(u32, ps_str, 10) catch 5;
                                 }
                             }
 
-                            try sources.append(.{
+                            try sources.append(allocator, .{
                                 .name = try allocator.dupe(u8, name_str),
                                 .uri = try allocator.dupe(u8, uri_str),
                                 .pool_size = pool_size,
@@ -438,7 +438,7 @@ fn parseDataSourcesFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml, default
     if (sources.items.len == 0) {
         if (default_uri) |uri| {
             if (uri.len > 0) {
-                try sources.append(.{
+                try sources.append(allocator, .{
                     .name = try allocator.dupe(u8, "default"),
                     .uri = try allocator.dupe(u8, uri),
                     .pool_size = default_pool_size,
@@ -447,7 +447,7 @@ fn parseDataSourcesFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml, default
         }
     }
 
-    return sources.toOwnedSlice();
+    return sources.toOwnedSlice(allocator);
 }
 
 /// Parse handlers mapping from YAML document

@@ -21,8 +21,8 @@
             .hash = "zig_yaml-0.2.0-C1161pmrAgDnipDTh_4v4RQD27XN5GNaVlzzvlXf1jfW",
         },
         .zdbc = .{
-            .url = "git+https://github.com/zhaozg/zdbc#main",
-            .hash = "zdbc-0.1.0-_uIxvj8rAgCoVU-pALmFf6PiduL14jl8e1vy0lx8On_I",
+            .url = "https://github.com/zhaozg/zdbc/archive/refs/tags/0.1.0.tar.gz",
+            .hash = "zdbc-0.1.0-_uIxvogwAgCNhrdEfmSJKGQVN0mNw8DVmSFeqKz73OU5",
         },
     },
     .paths = .{

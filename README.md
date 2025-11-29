@@ -214,51 +214,70 @@ curl -X POST http://localhost:8080/api/test \
 
 #### 数据库插件
 
-zhttpd 通过 zdbc 库提供数据库集成，支持 SQLite、PostgreSQL 和 MySQL。
+zhttpd 通过 zdbc 库提供数据库集成，支持 SQLite、PostgreSQL 和 MySQL。支持多数据源配置。
 
 **配置数据库：**
 
 ```yaml
 # 在 config.yaml 中配置
 enable_db: true
-db_uri: "sqlite:///data/app.db"  # SQLite 示例
+
+# 默认数据源配置（简单模式）
+db_uri: "sqlite:///data/app.db"
 db_pool_size: 5
 
-# PostgreSQL 示例
-# db_uri: "postgresql://user:password@localhost:5432/mydb"
-
-# MySQL 示例
-# db_uri: "mysql://user:password@localhost:3306/mydb"
+# 多数据源配置（高级模式）
+# 当配置了 data_sources 时，db_uri 将被忽略
+data_sources:
+  - name: default
+    uri: "sqlite:///data/app.db"
+    pool_size: 5
+  - name: users_db
+    uri: "postgresql://user:password@localhost:5432/users"
+    pool_size: 10
+  - name: logs_db
+    uri: "mysql://user:password@localhost:3306/logs"
+    pool_size: 3
 ```
 
 **在 Lua 中使用数据库：**
 
 ```lua
--- 检查数据库是否可用
-if db then
-    -- 执行查询
-    local result, err = db.query("SELECT * FROM users WHERE id = ?", 1)
-    if not err then
-        for _, row in ipairs(result) do
-            print(row.name)
+-- 数据库通过 context:db(name) 获取
+function handle(request, response, context)
+    -- 获取默认数据源
+    local db = context:db()
+    
+    -- 或获取指定名称的数据源
+    local users_db = context:db("users_db")
+    
+    if db then
+        -- 执行查询
+        local result, err = db:query("SELECT * FROM users WHERE id = ?", 1)
+        if not err then
+            for _, row in ipairs(result) do
+                print(row.name)
+            end
         end
+
+        -- 执行语句
+        local affected, err = db:exec(
+            "INSERT INTO users (name, email) VALUES (?, ?)",
+            "张三", "zhangsan@example.com"
+        )
+
+        -- 事务支持
+        db:begin()
+        db:exec("UPDATE accounts SET balance = balance - 100 WHERE id = ?", 1)
+        db:exec("UPDATE accounts SET balance = balance + 100 WHERE id = ?", 2)
+        db:commit()
+
+        -- 获取数据库状态
+        local status = db:status()
+        print(status.connected)  -- true/false
     end
-
-    -- 执行语句
-    local affected, err = db.exec(
-        "INSERT INTO users (name, email) VALUES (?, ?)",
-        "张三", "zhangsan@example.com"
-    )
-
-    -- 事务支持
-    db.begin()
-    db.exec("UPDATE accounts SET balance = balance - 100 WHERE id = ?", 1)
-    db.exec("UPDATE accounts SET balance = balance + 100 WHERE id = ?", 2)
-    db.commit()
-
-    -- 获取数据库状态
-    local status = db.status()
-    print(status.connected)  -- true/false
+    
+    return { status = "ok" }
 end
 ```
 
