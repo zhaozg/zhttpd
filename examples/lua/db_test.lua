@@ -6,12 +6,23 @@
 --
 -- Endpoints:
 --   GET /api/db_test              - Check database status
---   POST /api/db_test/exec        - Execute SQL (admin only, for testing)
---   POST /api/db_test/query       - Query SQL (admin only, for testing)
+--   POST /api/db_test/exec        - Execute SQL (DANGEROUS - admin only!)
+--   POST /api/db_test/query       - Query SQL (DANGEROUS - admin only!)
 --   POST /api/db_test/init        - Initialize database schema
 --
--- WARNING: This script is for development/testing only!
--- Do not expose the exec/query endpoints in production!
+-- ╔══════════════════════════════════════════════════════════════════════╗
+-- ║  ⚠️  SECURITY WARNING                                                ║
+-- ║                                                                      ║
+-- ║  The /api/db_test/exec and /api/db_test/query endpoints execute     ║
+-- ║  arbitrary SQL without authentication! This is a CRITICAL security  ║
+-- ║  vulnerability if exposed to untrusted users.                        ║
+-- ║                                                                      ║
+-- ║  In production:                                                      ║
+-- ║    1. REMOVE these endpoints entirely, OR                            ║
+-- ║    2. Add authentication and authorization checks                    ║
+-- ║    3. Restrict to localhost/internal network only                    ║
+-- ║    4. Never accept raw SQL from untrusted clients                    ║
+-- ╚══════════════════════════════════════════════════════════════════════╝
 
 -- Initialize database schema
 local function init_schema(db)

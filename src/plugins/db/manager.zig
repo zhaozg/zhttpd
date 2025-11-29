@@ -3,6 +3,11 @@
 //! This module manages multiple named database connections (data sources).
 //! Data sources are accessed by name, with "default" being the default.
 //!
+//! ## Thread Safety
+//! The global manager is set once during server initialization before any
+//! concurrent request handling begins. After initialization, all access is
+//! read-only, making it safe for concurrent access without synchronization.
+//!
 //! ## Usage
 //!
 //! ```zig
@@ -20,6 +25,9 @@ const std = @import("std");
 const zdbc = @import("zdbc");
 const DbPlugin = @import("db.zig").DbPlugin;
 
+/// Maximum URI length before truncation warning
+const MAX_URI_LEN: usize = 510;
+
 /// Configuration for a data source
 pub const DataSourceConfig = struct {
     name: []const u8,
@@ -32,6 +40,8 @@ pub const DbManagerError = error{
     DataSourceNotFound,
     InitializationFailed,
     OutOfMemory,
+    UriTooLong,
+    ConfigBufferOverflow,
 };
 
 /// Database Manager that holds multiple named database plugins
@@ -58,9 +68,18 @@ pub const DbManager = struct {
             var uri_buf: [512]u8 = undefined;
             var uri_len: usize = 0;
 
+            // Check if URI will be truncated
+            if (cfg.uri.len > MAX_URI_LEN) {
+                std.log.warn("Data source '{s}': URI too long ({d} chars), will be truncated to {d} chars", .{ cfg.name, cfg.uri.len, MAX_URI_LEN });
+            }
+
             // Escape special JSON characters in the URI
+            // Handles: " \ \n \r \t \b \f (JSON spec characters)
             for (cfg.uri) |c| {
-                if (uri_len >= uri_buf.len - 2) break;
+                if (uri_len >= uri_buf.len - 2) {
+                    std.log.warn("Data source '{s}': URI truncated during JSON escaping", .{cfg.name});
+                    break;
+                }
                 switch (c) {
                     '"' => {
                         uri_buf[uri_len] = '\\';
@@ -80,6 +99,30 @@ pub const DbManager = struct {
                         uri_buf[uri_len] = 'n';
                         uri_len += 1;
                     },
+                    '\r' => {
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                        uri_buf[uri_len] = 'r';
+                        uri_len += 1;
+                    },
+                    '\t' => {
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                        uri_buf[uri_len] = 't';
+                        uri_len += 1;
+                    },
+                    0x08 => { // backspace
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                        uri_buf[uri_len] = 'b';
+                        uri_len += 1;
+                    },
+                    0x0C => { // form feed
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                        uri_buf[uri_len] = 'f';
+                        uri_len += 1;
+                    },
                     else => {
                         uri_buf[uri_len] = c;
                         uri_len += 1;
@@ -90,7 +133,11 @@ pub const DbManager = struct {
             const db_config_json = std.fmt.bufPrint(&config_buf, "{{\"uri\":\"{s}\",\"pool_size\":{d}}}", .{
                 uri_buf[0..uri_len],
                 cfg.pool_size,
-            }) catch continue;
+            }) catch {
+                std.log.err("Data source '{s}': Config JSON buffer overflow, skipping", .{cfg.name});
+                allocator.destroy(plugin);
+                continue;
+            };
 
             // Initialize the plugin
             var p = plugin.asPlugin();
@@ -100,6 +147,7 @@ pub const DbManager = struct {
                 errdefer allocator.free(name_key);
                 try manager.plugins.put(name_key, plugin);
             } else {
+                std.log.warn("Data source '{s}': Plugin initialization failed", .{cfg.name});
                 allocator.destroy(plugin);
             }
         }
@@ -156,10 +204,21 @@ pub const DbManager = struct {
     }
 };
 
-/// Global database manager instance
+// =============================================================================
+// Global State (Thread Safety)
+// =============================================================================
+
+/// Global database manager instance.
+///
+/// ## Thread Safety
+/// This global is set once during server initialization (in AppContext.init)
+/// before any concurrent request handling begins, and cleared during server
+/// shutdown. No synchronization is needed as the value is effectively immutable
+/// during the server's operational phase.
 var global_db_manager: ?*DbManager = null;
 
-/// Set the global database manager
+/// Set the global database manager.
+/// Should only be called during server initialization or shutdown.
 pub fn setGlobalManager(manager: ?*DbManager) void {
     global_db_manager = manager;
 }

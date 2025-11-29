@@ -55,13 +55,37 @@ pub const DbConfig = struct {
     enable_pool: bool = true,
 };
 
-/// Global pointer to the active database plugin
-/// This is used by Lua functions to access the database plugin
-/// Note: Currently uses a single connection. For production use with high concurrency,
-/// consider using separate database instances or application-level connection management.
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Maximum number of SQL parameters supported per query/exec call
+/// This limit is sufficient for most practical SQL queries
+pub const MAX_PARAMS: usize = 32;
+
+/// Maximum length for column names in query results
+/// Column names exceeding this length will be truncated with a warning
+pub const MAX_COLUMN_NAME_LEN: usize = 256;
+
+// =============================================================================
+// Global State (Thread Safety)
+// =============================================================================
+
+/// Global pointer to the active database plugin.
+///
+/// ## Thread Safety
+/// This global is set once during server initialization (in AppContext.init)
+/// before any concurrent request handling begins, and cleared during server
+/// shutdown. No synchronization is needed as the value is effectively immutable
+/// during the server's operational phase.
+///
+/// ## Usage
+/// Used by Lua functions to access the database plugin. Each request handler
+/// runs in its own thread but reads the same plugin pointer.
 var global_db_plugin: ?*DbPlugin = null;
 
-/// Set the global database plugin pointer
+/// Set the global database plugin pointer.
+/// Should only be called during server initialization or shutdown.
 pub fn setGlobalPlugin(plugin: ?*DbPlugin) void {
     global_db_plugin = plugin;
 }
@@ -389,10 +413,8 @@ fn luaQuery(lua: *ziglua.Lua) i32 {
         return 2;
     };
 
-    // Collect parameters (max 32 parameters per query)
-    // This limit is sufficient for most practical SQL queries
+    // Collect parameters using the module-level MAX_PARAMS constant
     const top = lua.getTop();
-    const MAX_PARAMS = 32;
     var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
     var param_count: usize = 0;
 
@@ -400,6 +422,11 @@ fn luaQuery(lua: *ziglua.Lua) i32 {
     while (i <= top and param_count < params_buf.len) : (i += 1) {
         params_buf[param_count] = luaToDbValue(lua, i);
         param_count += 1;
+    }
+
+    // Warn if parameters were truncated (more params provided than MAX_PARAMS)
+    if (top > @as(i32, @intCast(MAX_PARAMS)) + 1) {
+        std.log.warn("db.query: Too many parameters ({d}), truncated to {d}", .{ top - 1, MAX_PARAMS });
     }
 
     // Execute query
@@ -429,8 +456,12 @@ fn luaQuery(lua: *ziglua.Lua) i32 {
                 // Set by column name if available
                 if (result.columnName(col_idx)) |name| {
                     // Need to convert to null-terminated string
-                    var name_buf: [256]u8 = undefined;
+                    // Using MAX_COLUMN_NAME_LEN constant for buffer size
+                    var name_buf: [MAX_COLUMN_NAME_LEN]u8 = undefined;
                     const len = @min(name.len, name_buf.len - 1);
+                    if (name.len >= MAX_COLUMN_NAME_LEN) {
+                        std.log.warn("db.query: Column name truncated from {d} to {d} chars", .{ name.len, MAX_COLUMN_NAME_LEN - 1 });
+                    }
                     @memcpy(name_buf[0..len], name[0..len]);
                     name_buf[len] = 0;
                     lua.setField(-2, name_buf[0..len :0]);
@@ -464,9 +495,8 @@ fn luaExec(lua: *ziglua.Lua) i32 {
         return 2;
     };
 
-    // Collect parameters (max 32 parameters per query)
+    // Collect parameters using the module-level MAX_PARAMS constant
     const top = lua.getTop();
-    const MAX_PARAMS = 32;
     var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
     var param_count: usize = 0;
 
@@ -474,6 +504,11 @@ fn luaExec(lua: *ziglua.Lua) i32 {
     while (i <= top and param_count < params_buf.len) : (i += 1) {
         params_buf[param_count] = luaToDbValue(lua, i);
         param_count += 1;
+    }
+
+    // Warn if parameters were truncated
+    if (top > @as(i32, @intCast(MAX_PARAMS)) + 1) {
+        std.log.warn("db.exec: Too many parameters ({d}), truncated to {d}", .{ top - 1, MAX_PARAMS });
     }
 
     // Execute statement
@@ -604,9 +639,8 @@ pub fn luaQueryWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32)
         return 2;
     };
 
-    // Collect parameters
+    // Collect parameters using module-level MAX_PARAMS constant
     const top = lua.getTop();
-    const MAX_PARAMS = 32;
     var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
     var param_count: usize = 0;
 
@@ -614,6 +648,12 @@ pub fn luaQueryWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32)
     while (i <= top and param_count < params_buf.len) : (i += 1) {
         params_buf[param_count] = luaToDbValue(lua, i);
         param_count += 1;
+    }
+
+    // Warn if parameters were truncated
+    const provided_params = top - sql_arg_idx;
+    if (provided_params > @as(i32, @intCast(MAX_PARAMS))) {
+        std.log.warn("db:query: Too many parameters ({d}), truncated to {d}", .{ provided_params, MAX_PARAMS });
     }
 
     // Execute query
@@ -640,8 +680,12 @@ pub fn luaQueryWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32)
                 pushDbValueToLua(lua, value);
 
                 if (result.columnName(col_idx)) |name| {
-                    var name_buf: [256]u8 = undefined;
+                    // Using MAX_COLUMN_NAME_LEN constant for buffer size
+                    var name_buf: [MAX_COLUMN_NAME_LEN]u8 = undefined;
                     const len = @min(name.len, name_buf.len - 1);
+                    if (name.len >= MAX_COLUMN_NAME_LEN) {
+                        std.log.warn("db:query: Column name truncated from {d} to {d} chars", .{ name.len, MAX_COLUMN_NAME_LEN - 1 });
+                    }
                     @memcpy(name_buf[0..len], name[0..len]);
                     name_buf[len] = 0;
                     lua.setField(-2, name_buf[0..len :0]);
@@ -669,9 +713,8 @@ pub fn luaExecWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32) 
         return 2;
     };
 
-    // Collect parameters
+    // Collect parameters using module-level MAX_PARAMS constant
     const top = lua.getTop();
-    const MAX_PARAMS = 32;
     var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
     var param_count: usize = 0;
 
@@ -679,6 +722,12 @@ pub fn luaExecWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32) 
     while (i <= top and param_count < params_buf.len) : (i += 1) {
         params_buf[param_count] = luaToDbValue(lua, i);
         param_count += 1;
+    }
+
+    // Warn if parameters were truncated
+    const provided_params = top - sql_arg_idx;
+    if (provided_params > @as(i32, @intCast(MAX_PARAMS))) {
+        std.log.warn("db:exec: Too many parameters ({d}), truncated to {d}", .{ provided_params, MAX_PARAMS });
     }
 
     // Execute statement

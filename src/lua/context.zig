@@ -195,7 +195,8 @@ fn contextIndex(lua: *ziglua.Lua) i32 {
     // Fall back to the table itself for user-defined fields
     lua.pushValue(1); // Push the table
     lua.pushValue(2); // Push the key
-    _ = lua.rawGetTable(-2); // Get table[key]
+    _ = lua.rawGetTable(-2); // Get table[key], value is now at -1
+    lua.remove(-2); // Remove the duplicate table to avoid stack imbalance
     return 1;
 }
 

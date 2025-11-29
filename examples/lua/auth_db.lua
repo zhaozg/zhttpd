@@ -1,6 +1,13 @@
 -- Example: Database-backed Authentication Script for zhttpd
 -- This script demonstrates authentication with database validation
 --
+-- WARNING: This is a DEMO script for development/testing only!
+-- Do NOT use in production without:
+--   1. Cryptographically secure token generation (use /dev/urandom or OS CSPRNG)
+--   2. Proper password hashing (bcrypt, argon2, etc.)
+--   3. HTTPS/TLS for all communications
+--   4. Rate limiting and brute-force protection
+--
 -- Database access is through context:db(name) where name is optional
 -- (defaults to "default" data source)
 --
@@ -41,8 +48,29 @@
 -- In-memory session store (fallback when database is not available)
 local memory_sessions = {}
 
--- Generate a simple random token (demo purposes)
+-- Generate a random token
+-- WARNING: This uses math.random which is NOT cryptographically secure!
+-- For production use, implement secure_random_bytes() using /dev/urandom
+-- or a proper cryptographic random number generator.
 local function generate_token()
+    -- Attempt to use /dev/urandom for better randomness (Unix systems)
+    local f = io.open('/dev/urandom', 'rb')
+    if f then
+        local data = f:read(24)
+        f:close()
+        if data then
+            -- Convert bytes to hex string
+            local hex = "session_"
+            for i = 1, #data do
+                hex = hex .. string.format("%02x", data:byte(i))
+            end
+            return hex
+        end
+    end
+    
+    -- Fallback: Use math.random (NOT secure, demo only!)
+    -- Seed with time + some entropy
+    math.randomseed(os.time() + os.clock() * 1000000)
     local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     local token = "session_"
     for i = 1, 32 do

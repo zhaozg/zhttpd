@@ -62,11 +62,16 @@ function create_user(db, user_data)
         if err then
             return nil, "Database error: " .. tostring(err)
         end
-        -- Query the created user (SQLite doesn't return lastInsertId via exec)
-        local result = db:query("SELECT id, name, email, roles, created_at FROM users WHERE name = ? ORDER BY id DESC LIMIT 1", user_data.name)
-        if result and #result > 0 then
-            return result[1], nil
+        -- Get the last inserted row ID (SQLite-specific, but works for most DBs)
+        local id_result = db:query("SELECT last_insert_rowid() AS id")
+        if id_result and #id_result > 0 and id_result[1].id then
+            local user_id = id_result[1].id
+            local result = db:query("SELECT id, name, email, roles, created_at FROM users WHERE id = ?", user_id)
+            if result and #result > 0 then
+                return result[1], nil
+            end
         end
+        -- Fallback: return what we know about the user
         return { name = user_data.name, email = user_data.email }, nil
     else
         local id = next_id
