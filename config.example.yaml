@@ -96,7 +96,7 @@ ip_whitelist: ""
 # Supports SQLite, PostgreSQL, and MySQL
 enable_db: false
 
-# Database connection URI
+# Default database connection URI (creates a "default" data source)
 # Formats:
 #   SQLite:     sqlite:///path/to/database.db
 #   SQLite:     sqlite://:memory:  (in-memory database)
@@ -104,8 +104,23 @@ enable_db: false
 #   MySQL:      mysql://user:password@host:port/database
 db_uri: ""
 
-# Connection pool size (1 = no pooling, use single connection)
+# Connection pool size for default data source (1 = no pooling)
 db_pool_size: 5
+
+# Named data sources (optional, for multiple database connections)
+# Each data source can be accessed in Lua via context:db("name")
+# If not specified, only the "default" data source from db_uri is available
+#
+# data_sources:
+#   - name: default
+#     uri: "sqlite:///data/app.db"
+#     pool_size: 5
+#   - name: users_db
+#     uri: "postgresql://user:pass@localhost:5432/users"
+#     pool_size: 10
+#   - name: logs_db
+#     uri: "mysql://user:pass@localhost:3306/logs"
+#     pool_size: 3
 
 # Handler Configuration
 # ---------------------

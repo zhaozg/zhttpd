@@ -42,6 +42,8 @@ const std = @import("std");
 const ziglua = @import("ziglua");
 const httpz = @import("httpz");
 const json = @import("json.zig");
+const db_manager = @import("../plugins/db/manager.zig");
+const db_plugin = @import("../plugins/db/db.zig");
 
 /// Opaque pointer type for Request userdata
 /// We store the pointer as light userdata since the request lifetime
@@ -63,6 +65,7 @@ const MAX_KEY_SIZE: usize = 256;
 /// Metatable names for userdata types
 const REQUEST_MT = "zhttpd.request";
 const RESPONSE_MT = "zhttpd.response";
+const CONTEXT_MT = "zhttpd.context";
 
 /// Thread-local storage for current request/response context
 /// This allows Lua C functions to access the current request without upvalues
@@ -78,6 +81,9 @@ pub fn registerContextModule(lua: *ziglua.Lua) void {
 
     // Register Response metatable
     registerResponseMetatable(lua);
+
+    // Register Context metatable
+    registerContextMetatable(lua);
 }
 
 /// Register the Request metatable with all its methods
@@ -154,6 +160,200 @@ fn registerResponseMetatable(lua: *ziglua.Lua) void {
     lua.pop(1); // Pop metatable
 }
 
+/// Register the Context metatable with the db method
+fn registerContextMetatable(lua: *ziglua.Lua) void {
+    // Create new metatable for Context
+    lua.newMetatable(CONTEXT_MT) catch {
+        // Metatable already exists, get it
+        _ = lua.getMetatableRegistry(CONTEXT_MT);
+    };
+
+    // For context, we use a custom __index that first checks for the db method,
+    // then falls back to the table itself for user-defined fields
+    lua.pushFunction(ziglua.wrap(contextIndex));
+    lua.setField(-2, "__index");
+
+    lua.pop(1); // Pop metatable
+}
+
+/// Custom __index metamethod for context
+/// Provides access to db(name) method while allowing user-defined fields
+fn contextIndex(lua: *ziglua.Lua) i32 {
+    // Stack: table, key
+    const key = lua.toString(2) catch {
+        lua.pushNil();
+        return 1;
+    };
+
+    // Check for built-in methods
+    if (std.mem.eql(u8, key, "db")) {
+        // Return the db function
+        lua.pushFunction(ziglua.wrap(contextDb));
+        return 1;
+    }
+
+    // Fall back to the table itself for user-defined fields
+    lua.pushValue(1); // Push the table
+    lua.pushValue(2); // Push the key
+    lua.rawGet(-2); // Get table[key]
+    return 1;
+}
+
+/// Metatable name for database connection objects
+const DB_CONN_MT = "zhttpd.db_conn";
+
+/// context:db(name) - Get a database connection by name
+/// If name is nil or not provided, returns the "default" data source
+fn contextDb(lua: *ziglua.Lua) i32 {
+    // Get the data source name (default to "default")
+    const name = if (lua.getTop() >= 2)
+        lua.toString(2) catch "default"
+    else
+        "default";
+
+    // Get the global database manager
+    const manager = db_manager.getGlobalManager() orelse {
+        lua.pushNil();
+        _ = lua.pushString("Database not configured");
+        return 2;
+    };
+
+    // Get the plugin by name
+    const plugin = manager.get(name) orelse {
+        lua.pushNil();
+        var err_buf: [128]u8 = undefined;
+        const err_msg = std.fmt.bufPrint(&err_buf, "Data source '{s}' not found", .{name}) catch "Data source not found";
+        _ = lua.pushString(err_msg);
+        return 2;
+    };
+
+    // Create a table to hold the database connection
+    lua.newTable();
+
+    // Store the plugin pointer as light userdata
+    lua.pushLightUserdata(@ptrCast(plugin));
+    lua.setField(-2, "_plugin");
+
+    // Set the metatable for database connection methods
+    lua.newMetatable(DB_CONN_MT) catch {
+        // Metatable already exists, get it
+        _ = lua.getMetatableRegistry(DB_CONN_MT);
+    };
+
+    // Register methods on the metatable if not already done
+    _ = lua.getField(-1, "__index");
+    if (lua.typeOf(-1) == .nil) {
+        lua.pop(1);
+        // Set __index to the metatable itself
+        lua.pushValue(-1);
+        lua.setField(-2, "__index");
+
+        // Register database methods
+        lua.pushFunction(ziglua.wrap(dbConnQuery));
+        lua.setField(-2, "query");
+
+        lua.pushFunction(ziglua.wrap(dbConnExec));
+        lua.setField(-2, "exec");
+
+        lua.pushFunction(ziglua.wrap(dbConnBegin));
+        lua.setField(-2, "begin");
+
+        lua.pushFunction(ziglua.wrap(dbConnCommit));
+        lua.setField(-2, "commit");
+
+        lua.pushFunction(ziglua.wrap(dbConnRollback));
+        lua.setField(-2, "rollback");
+
+        lua.pushFunction(ziglua.wrap(dbConnStatus));
+        lua.setField(-2, "status");
+    } else {
+        lua.pop(1);
+    }
+
+    lua.setMetatable(-2);
+    return 1;
+}
+
+/// Get the DbPlugin from the Lua db connection table
+fn getDbPluginFromConn(lua: *ziglua.Lua) ?*db_plugin.DbPlugin {
+    // Get the _plugin field from the table at index 1 (self)
+    _ = lua.getField(1, "_plugin");
+    if (lua.typeOf(-1) != .light_userdata) {
+        lua.pop(1);
+        return null;
+    }
+    const raw_ptr = lua.toPointer(-1) catch {
+        lua.pop(1);
+        return null;
+    };
+    lua.pop(1);
+    const mut_ptr: *anyopaque = @constCast(raw_ptr);
+    return @ptrCast(@alignCast(mut_ptr));
+}
+
+/// db:query(sql, ...) - Execute SELECT query
+fn dbConnQuery(lua: *ziglua.Lua) i32 {
+    const plugin = getDbPluginFromConn(lua) orelse {
+        lua.pushNil();
+        _ = lua.pushString("Invalid database connection");
+        return 2;
+    };
+    return db_plugin.luaQueryWithPlugin(lua, plugin, 2);
+}
+
+/// db:exec(sql, ...) - Execute INSERT/UPDATE/DELETE
+fn dbConnExec(lua: *ziglua.Lua) i32 {
+    const plugin = getDbPluginFromConn(lua) orelse {
+        lua.pushNil();
+        _ = lua.pushString("Invalid database connection");
+        return 2;
+    };
+    return db_plugin.luaExecWithPlugin(lua, plugin, 2);
+}
+
+/// db:begin() - Begin transaction
+fn dbConnBegin(lua: *ziglua.Lua) i32 {
+    const plugin = getDbPluginFromConn(lua) orelse {
+        lua.pushBoolean(false);
+        _ = lua.pushString("Invalid database connection");
+        return 2;
+    };
+    return db_plugin.luaBeginWithPlugin(lua, plugin);
+}
+
+/// db:commit() - Commit transaction
+fn dbConnCommit(lua: *ziglua.Lua) i32 {
+    const plugin = getDbPluginFromConn(lua) orelse {
+        lua.pushBoolean(false);
+        _ = lua.pushString("Invalid database connection");
+        return 2;
+    };
+    return db_plugin.luaCommitWithPlugin(lua, plugin);
+}
+
+/// db:rollback() - Rollback transaction
+fn dbConnRollback(lua: *ziglua.Lua) i32 {
+    const plugin = getDbPluginFromConn(lua) orelse {
+        lua.pushBoolean(false);
+        _ = lua.pushString("Invalid database connection");
+        return 2;
+    };
+    return db_plugin.luaRollbackWithPlugin(lua, plugin);
+}
+
+/// db:status() - Get database status
+fn dbConnStatus(lua: *ziglua.Lua) i32 {
+    const plugin = getDbPluginFromConn(lua) orelse {
+        lua.newTable();
+        lua.pushBoolean(false);
+        lua.setField(-2, "connected");
+        _ = lua.pushString("Invalid database connection");
+        lua.setField(-2, "error");
+        return 1;
+    };
+    return db_plugin.luaStatusWithPlugin(lua, plugin);
+}
+
 /// Push a Request userdata onto the Lua stack
 /// Note: Thread-local storage should be set before calling this via setThreadLocalContext
 fn pushRequestInternal(lua: *ziglua.Lua, req: *httpz.Request) void {
@@ -204,8 +404,12 @@ pub fn pushHandlerArgs(lua: *ziglua.Lua, req: *httpz.Request, res: *httpz.Respon
     // Push response object (second argument)
     pushResponseInternal(lua, res);
 
-    // Push context table (third argument) - empty table for per-request user data
+    // Push context table (third argument) with db method support
     lua.newTable();
+
+    // Set the context metatable for db method access
+    _ = lua.getMetatableRegistry(CONTEXT_MT);
+    lua.setMetatable(-2);
 }
 
 /// Clear the thread-local context after request handling

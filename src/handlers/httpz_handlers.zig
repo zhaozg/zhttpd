@@ -67,6 +67,8 @@ const request_id = observability.request_id;
 // Plugins
 const db_plugin = @import("../plugins/db/db.zig");
 const DbPlugin = db_plugin.DbPlugin;
+const db_manager_mod = @import("../plugins/db/manager.zig");
+const DbManager = db_manager_mod.DbManager;
 // Individual handler modules
 const static_handler = @import("static_handler.zig");
 const lua_handler = @import("lua_handler.zig");
@@ -103,8 +105,8 @@ pub const AppContext = struct {
     start_time: i64 = 0,
     // Phase 7: Security
     ip_access_control: ?*IpAccessControl = null,
-    // Database plugin
-    db_plugin: ?*DbPlugin = null,
+    // Database manager (holds multiple named data sources)
+    db_manager: ?*DbManager = null,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -250,68 +252,45 @@ pub const AppContext = struct {
             ctx.logger.info("Server-Sent Events (SSE) support enabled", .{});
         }
 
-        // Initialize database plugin if enabled
-        if (config.enable_db and config.db_uri.len > 0) {
-            const plugin = DbPlugin.create(allocator) catch |err| {
-                ctx.logger.warn("Failed to create database plugin: {}", .{err});
-                // Continue without database - it's optional
-                ctx.db_plugin = null;
+        // Initialize database manager if enabled
+        if (config.enable_db and config.data_sources.len > 0) {
+            // Convert config data sources to the format expected by DbManager
+            var ds_configs = allocator.alloc(db_manager_mod.DataSourceConfig, config.data_sources.len) catch {
+                ctx.logger.warn("Failed to allocate data source configs", .{});
+                ctx.db_manager = null;
                 return ctx;
             };
+            defer allocator.free(ds_configs);
 
-            // Build config JSON for plugin initialization
-            // Note: We escape special JSON characters in the URI to prevent injection
-            var config_buf: [1024]u8 = undefined;
-            var uri_buf: [512]u8 = undefined;
-            var uri_len: usize = 0;
-            for (config.db_uri) |c| {
-                if (uri_len >= uri_buf.len - 2) break;
-                switch (c) {
-                    '"' => {
-                        uri_buf[uri_len] = '\\';
-                        uri_len += 1;
-                        uri_buf[uri_len] = '"';
-                        uri_len += 1;
-                    },
-                    '\\' => {
-                        uri_buf[uri_len] = '\\';
-                        uri_len += 1;
-                        uri_buf[uri_len] = '\\';
-                        uri_len += 1;
-                    },
-                    '\n' => {
-                        uri_buf[uri_len] = '\\';
-                        uri_len += 1;
-                        uri_buf[uri_len] = 'n';
-                        uri_len += 1;
-                    },
-                    else => {
-                        uri_buf[uri_len] = c;
-                        uri_len += 1;
-                    },
-                }
+            for (config.data_sources, 0..) |ds, i| {
+                ds_configs[i] = .{
+                    .name = ds.name,
+                    .uri = ds.uri,
+                    .pool_size = ds.pool_size,
+                };
             }
-            const db_config_json = std.fmt.bufPrint(&config_buf, "{{\"uri\":\"{s}\",\"pool_size\":{d}}}", .{
-                uri_buf[0..uri_len],
-                config.db_pool_size,
-            }) catch {
-                ctx.logger.warn("Failed to format database config", .{});
-                allocator.destroy(plugin);
-                ctx.db_plugin = null;
+
+            const manager = allocator.create(DbManager) catch {
+                ctx.logger.warn("Failed to allocate database manager", .{});
+                ctx.db_manager = null;
                 return ctx;
             };
 
-            // Initialize the plugin
-            var p = plugin.asPlugin();
-            if (p.init(allocator, db_config_json)) {
-                ctx.db_plugin = plugin;
-                // Set global plugin pointer for Lua access
-                db_plugin.setGlobalPlugin(plugin);
-                ctx.logger.info("Database plugin initialized: {s} (pool size: {d})", .{ config.db_uri, config.db_pool_size });
-            } else {
-                ctx.logger.warn("Database plugin initialization failed: {s}", .{plugin.error_message orelse "unknown error"});
-                allocator.destroy(plugin);
-                ctx.db_plugin = null;
+            manager.* = DbManager.init(allocator, ds_configs) catch |err| {
+                ctx.logger.warn("Failed to initialize database manager: {}", .{err});
+                allocator.destroy(manager);
+                ctx.db_manager = null;
+                return ctx;
+            };
+
+            ctx.db_manager = manager;
+            // Set global database manager for context module access
+            db_manager_mod.setGlobalManager(manager);
+            ctx.logger.info("Database manager initialized with {d} data source(s)", .{manager.count()});
+
+            // Log each data source
+            for (config.data_sources) |ds| {
+                ctx.logger.info("  - Data source '{s}': {s}", .{ ds.name, ds.uri });
             }
         }
 
@@ -347,12 +326,11 @@ pub const AppContext = struct {
             ip_control.deinit();
             self.allocator.destroy(ip_control);
         }
-        if (self.db_plugin) |plugin| {
-            // Clear global plugin pointer
-            db_plugin.setGlobalPlugin(null);
-            var p = plugin.asPlugin();
-            p.deinit();
-            self.allocator.destroy(plugin);
+        if (self.db_manager) |manager| {
+            // Clear global manager pointer
+            db_manager_mod.setGlobalManager(null);
+            manager.deinit();
+            self.allocator.destroy(manager);
         }
         if (self.metrics) |metrics_ptr| {
             self.allocator.destroy(metrics_ptr);

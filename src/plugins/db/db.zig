@@ -591,6 +591,184 @@ fn luaStatus(lua: *ziglua.Lua) i32 {
 }
 
 // ============================================================================
+// Public Lua Helper Functions (for use by context module)
+// ============================================================================
+
+/// Execute SELECT query with a specific plugin
+/// sql_arg_idx specifies which Lua argument contains the SQL string
+pub fn luaQueryWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32) i32 {
+    // Get SQL string
+    const sql = lua.toString(sql_arg_idx) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL string");
+        return 2;
+    };
+
+    // Collect parameters
+    const top = lua.getTop();
+    const MAX_PARAMS = 32;
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
+    var param_count: usize = 0;
+
+    var i: i32 = sql_arg_idx + 1;
+    while (i <= top and param_count < params_buf.len) : (i += 1) {
+        params_buf[param_count] = luaToDbValue(lua, i);
+        param_count += 1;
+    }
+
+    // Execute query
+    var result = plugin.query(sql, params_buf[0..param_count]) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+    defer result.deinit();
+
+    // Convert results to Lua table
+    lua.newTable();
+    var row_idx: i32 = 1;
+
+    while (true) {
+        const maybe_row = result.next() catch break;
+        if (maybe_row) |row| {
+            lua.newTable();
+
+            const col_count = result.columnCount();
+            var col_idx: usize = 0;
+            while (col_idx < col_count) : (col_idx += 1) {
+                const value = row.get(col_idx) catch continue;
+                pushDbValueToLua(lua, value);
+
+                if (result.columnName(col_idx)) |name| {
+                    var name_buf: [256]u8 = undefined;
+                    const len = @min(name.len, name_buf.len - 1);
+                    @memcpy(name_buf[0..len], name[0..len]);
+                    name_buf[len] = 0;
+                    lua.setField(-2, name_buf[0..len :0]);
+                } else {
+                    lua.rawSetIndex(-2, @intCast(col_idx + 1));
+                }
+            }
+
+            lua.rawSetIndex(-2, row_idx);
+            row_idx += 1;
+        } else {
+            break;
+        }
+    }
+
+    return 1;
+}
+
+/// Execute INSERT/UPDATE/DELETE with a specific plugin
+pub fn luaExecWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32) i32 {
+    // Get SQL string
+    const sql = lua.toString(sql_arg_idx) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL string");
+        return 2;
+    };
+
+    // Collect parameters
+    const top = lua.getTop();
+    const MAX_PARAMS = 32;
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
+    var param_count: usize = 0;
+
+    var i: i32 = sql_arg_idx + 1;
+    while (i <= top and param_count < params_buf.len) : (i += 1) {
+        params_buf[param_count] = luaToDbValue(lua, i);
+        param_count += 1;
+    }
+
+    // Execute statement
+    const affected = plugin.exec(sql, params_buf[0..param_count]) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    lua.pushInteger(@intCast(affected));
+    return 1;
+}
+
+/// Begin transaction with a specific plugin
+pub fn luaBeginWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin) i32 {
+    if (plugin.connection) |*conn| {
+        conn.begin() catch |err| {
+            lua.pushBoolean(false);
+            _ = lua.pushString(@errorName(err));
+            return 2;
+        };
+        lua.pushBoolean(true);
+        return 1;
+    }
+
+    lua.pushBoolean(false);
+    _ = lua.pushString("No database connection");
+    return 2;
+}
+
+/// Commit transaction with a specific plugin
+pub fn luaCommitWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin) i32 {
+    if (plugin.connection) |*conn| {
+        conn.commit() catch |err| {
+            lua.pushBoolean(false);
+            _ = lua.pushString(@errorName(err));
+            return 2;
+        };
+        lua.pushBoolean(true);
+        return 1;
+    }
+
+    lua.pushBoolean(false);
+    _ = lua.pushString("No database connection");
+    return 2;
+}
+
+/// Rollback transaction with a specific plugin
+pub fn luaRollbackWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin) i32 {
+    if (plugin.connection) |*conn| {
+        conn.rollback() catch |err| {
+            lua.pushBoolean(false);
+            _ = lua.pushString(@errorName(err));
+            return 2;
+        };
+        lua.pushBoolean(true);
+        return 1;
+    }
+
+    lua.pushBoolean(false);
+    _ = lua.pushString("No database connection");
+    return 2;
+}
+
+/// Get status with a specific plugin
+pub fn luaStatusWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin) i32 {
+    lua.newTable();
+
+    lua.pushBoolean(plugin.initialized);
+    lua.setField(-2, "initialized");
+
+    const connected = plugin.isHealthy();
+    lua.pushBoolean(connected);
+    lua.setField(-2, "connected");
+
+    if (plugin.config) |cfg| {
+        _ = lua.pushString(cfg.uri);
+        lua.setField(-2, "uri");
+
+        lua.pushInteger(@intCast(cfg.pool_size));
+        lua.setField(-2, "pool_size");
+
+        lua.pushBoolean(cfg.enable_pool);
+        lua.setField(-2, "pool_enabled");
+    }
+
+    return 1;
+}
+
+// ============================================================================
 // Zig-side Authentication Utilities
 // ============================================================================
 

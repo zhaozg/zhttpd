@@ -1,6 +1,9 @@
 -- Example: Database-backed Authentication Script for zhttpd
 -- This script demonstrates authentication with database validation
 --
+-- Database access is through context:db(name) where name is optional
+-- (defaults to "default" data source)
+--
 -- The script receives authentication requests in the format:
 -- {
 --   "token": "the JWT or OAuth token",
@@ -35,9 +38,6 @@
 --     FOREIGN KEY (user_id) REFERENCES users(id)
 -- );
 
--- Check if db module is available
-local db_available = type(db) == "table" and type(db.query) == "function"
-
 -- In-memory session store (fallback when database is not available)
 local memory_sessions = {}
 
@@ -53,14 +53,14 @@ local function generate_token()
 end
 
 -- Validate JWT token (demo format: zhttpd_<user_id>_<role>)
-local function validate_jwt(token)
+local function validate_jwt(db, token)
     -- Demo: Accept tokens in format "zhttpd_<user_id>_<role>"
     if token and token:match("^zhttpd_") then
         local user_id, role = token:match("^zhttpd_([^_]+)_(.+)$")
         if user_id and role then
             -- If database is available, verify user exists
-            if db_available then
-                local result = db.query(
+            if db then
+                local result = db:query(
                     "SELECT id, roles FROM users WHERE id = ? AND active = 1",
                     tonumber(user_id)
                 )
@@ -85,10 +85,10 @@ local function validate_jwt(token)
 end
 
 -- Validate session token
-local function validate_session(token)
-    if db_available then
+local function validate_session(db, token)
+    if db then
         -- Check session in database
-        local result = db.query(
+        local result = db:query(
             "SELECT s.user_id, s.expires_at, u.roles FROM sessions s " ..
             "JOIN users u ON s.user_id = u.id " ..
             "WHERE s.token = ? AND u.active = 1",
@@ -104,7 +104,7 @@ local function validate_session(token)
                 }
             end
             -- Session expired, clean it up
-            db.exec("DELETE FROM sessions WHERE token = ?", token)
+            db:exec("DELETE FROM sessions WHERE token = ?", token)
             return { valid = false, error = "Session expired" }
         end
         return { valid = false, error = "Session not found" }
@@ -127,13 +127,13 @@ local function validate_session(token)
 end
 
 -- Create a new session
-local function create_session(user_id, roles, expires_in)
+local function create_session(db, user_id, roles, expires_in)
     expires_in = expires_in or 3600  -- Default 1 hour
     local token = generate_token()
     local expires_at = os.time() + expires_in
     
-    if db_available then
-        local affected, err = db.exec(
+    if db then
+        local affected, err = db:exec(
             "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
             token, user_id, expires_at
         )
@@ -153,9 +153,9 @@ local function create_session(user_id, roles, expires_in)
 end
 
 -- Authenticate user with username/password (for login endpoint)
-local function authenticate_user(username, password_hash)
-    if db_available then
-        local result = db.query(
+local function authenticate_user(db, username, password_hash)
+    if db then
+        local result = db:query(
             "SELECT id, username, roles FROM users " ..
             "WHERE username = ? AND password_hash = ? AND active = 1",
             username, password_hash
@@ -178,8 +178,12 @@ local function authenticate_user(username, password_hash)
 end
 
 -- Main authentication handler
-function handle_request(request)
-    local body = request.body or {}
+function handle(request, response, context)
+    -- Get database connection from context (nil if not configured)
+    local db = context:db()  -- Gets the "default" data source
+    local db_available = db ~= nil
+    
+    local body = request:body() or {}
     local token = body.token
     local auth_type = body.type or "jwt"
     local path = body.path or ""
@@ -199,9 +203,9 @@ function handle_request(request)
     
     local result
     if auth_type == "jwt" then
-        result = validate_jwt(token)
+        result = validate_jwt(db, token)
     elseif auth_type == "session" or auth_type == "oauth" then
-        result = validate_session(token)
+        result = validate_session(db, token)
     else
         return {
             authenticated = false,
@@ -229,7 +233,7 @@ end
 
 -- Export the handler and utility functions
 return {
-    handle = handle_request,
+    handle = handle,
     create_session = create_session,
     authenticate_user = authenticate_user,
     validate_jwt = validate_jwt,

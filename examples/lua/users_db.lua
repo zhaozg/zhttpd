@@ -4,6 +4,9 @@
 -- Handler signature: function handle(request, response, context)
 -- See docs/LUA_PROGRAMMING_GUIDE.md for API documentation
 --
+-- Database access is through context:db(name) where name is optional
+-- (defaults to "default" data source)
+--
 -- Database Requirements:
 -- Before using this API, ensure the database is configured and has the users table:
 --
@@ -21,18 +24,20 @@
 -- enable_db: true
 -- db_uri: "sqlite:///data/app.db"
 -- db_pool_size: 5
-
--- Check if db module is available
-local db_available = type(db) == "table" and type(db.query) == "function"
+-- # Or use named data sources:
+-- # data_sources:
+-- #   - name: default
+-- #     uri: "sqlite:///data/app.db"
+-- #     pool_size: 5
 
 -- Fallback to in-memory storage if database is not available
 local memory_users = {}
 local next_id = 1
 
 -- Get user by ID (database or memory)
-function get_user(user_id)
-    if db_available then
-        local result, err = db.query("SELECT id, name, email, roles, created_at FROM users WHERE id = ? AND active = 1", user_id)
+function get_user(db, user_id)
+    if db then
+        local result, err = db:query("SELECT id, name, email, roles, created_at FROM users WHERE id = ? AND active = 1", user_id)
         if err then
             return { error = "Database error: " .. tostring(err) }
         end
@@ -46,9 +51,9 @@ function get_user(user_id)
 end
 
 -- Create new user
-function create_user(user_data)
-    if db_available then
-        local affected, err = db.exec(
+function create_user(db, user_data)
+    if db then
+        local affected, err = db:exec(
             "INSERT INTO users (name, email, roles) VALUES (?, ?, ?)",
             user_data.name,
             user_data.email or "",
@@ -58,7 +63,7 @@ function create_user(user_data)
             return nil, "Database error: " .. tostring(err)
         end
         -- Query the created user (SQLite doesn't return lastInsertId via exec)
-        local result = db.query("SELECT id, name, email, roles, created_at FROM users WHERE name = ? ORDER BY id DESC LIMIT 1", user_data.name)
+        local result = db:query("SELECT id, name, email, roles, created_at FROM users WHERE name = ? ORDER BY id DESC LIMIT 1", user_data.name)
         if result and #result > 0 then
             return result[1], nil
         end
@@ -78,13 +83,13 @@ function create_user(user_data)
 end
 
 -- List all users
-function list_users(page, limit)
+function list_users(db, page, limit)
     page = page or 1
     limit = limit or 10
     local offset = (page - 1) * limit
     
-    if db_available then
-        local result, err = db.query(
+    if db then
+        local result, err = db:query(
             "SELECT id, name, email, roles, created_at FROM users WHERE active = 1 ORDER BY id LIMIT ? OFFSET ?",
             limit, offset
         )
@@ -106,9 +111,9 @@ function list_users(page, limit)
 end
 
 -- Update user
-function update_user(user_id, user_data)
-    if db_available then
-        local affected, err = db.exec(
+function update_user(db, user_id, user_data)
+    if db then
+        local affected, err = db:exec(
             "UPDATE users SET name = ?, email = ? WHERE id = ? AND active = 1",
             user_data.name or "",
             user_data.email or "",
@@ -117,7 +122,7 @@ function update_user(user_id, user_data)
         if err then
             return nil, "Database error: " .. tostring(err)
         end
-        return get_user(user_id), nil
+        return get_user(db, user_id), nil
     else
         local user = memory_users[user_id]
         if not user then
@@ -130,9 +135,9 @@ function update_user(user_id, user_data)
 end
 
 -- Delete user (soft delete)
-function delete_user(user_id)
-    if db_available then
-        local affected, err = db.exec("UPDATE users SET active = 0 WHERE id = ?", user_id)
+function delete_user(db, user_id)
+    if db then
+        local affected, err = db:exec("UPDATE users SET active = 0 WHERE id = ?", user_id)
         if err then
             return false, "Database error: " .. tostring(err)
         end
@@ -151,6 +156,10 @@ function handle(request, response, context)
     local method = request:method()
     local path = request:path()
     
+    -- Get database connection from context (nil if not configured)
+    local db = context:db()  -- Gets the "default" data source
+    local db_available = db ~= nil
+    
     -- Parse query parameters for pagination
     local page = tonumber(request:query("page")) or 1
     local limit = tonumber(request:query("limit")) or 10
@@ -158,7 +167,7 @@ function handle(request, response, context)
     -- GET /api/users/:id - Get specific user
     local user_id = path:match("/api/users/(%d+)$")
     if method == "GET" and user_id then
-        local user = get_user(tonumber(user_id))
+        local user = get_user(db, tonumber(user_id))
         if user.error then
             response:status(404)
         end
@@ -171,7 +180,7 @@ function handle(request, response, context)
     
     -- GET /api/users - List all users
     if method == "GET" and path == "/api/users" then
-        local users, err = list_users(page, limit)
+        local users, err = list_users(db, page, limit)
         if err then
             response:status(500)
             return { status = "error", message = err }
@@ -191,7 +200,7 @@ function handle(request, response, context)
             response:status(400)
             return { status = "error", message = "Name is required" }
         end
-        local user, err = create_user(body)
+        local user, err = create_user(db, body)
         if err then
             response:status(500)
             return { status = "error", message = err }
@@ -211,7 +220,7 @@ function handle(request, response, context)
             response:status(400)
             return { status = "error", message = "Request body is required" }
         end
-        local user, err = update_user(tonumber(user_id), body)
+        local user, err = update_user(db, tonumber(user_id), body)
         if err then
             response:status(500)
             return { status = "error", message = err }
@@ -225,7 +234,7 @@ function handle(request, response, context)
     
     -- DELETE /api/users/:id - Delete user
     if method == "DELETE" and user_id then
-        local success, err = delete_user(tonumber(user_id))
+        local success, err = delete_user(db, tonumber(user_id))
         if not success then
             response:status(404)
             return { status = "error", message = err or "User not found" }

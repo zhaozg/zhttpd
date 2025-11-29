@@ -24,6 +24,13 @@ pub const HandlerMapping = struct {
     handler: []const u8,
 };
 
+/// Data source configuration for database plugin
+pub const DataSourceConfig = struct {
+    name: []const u8, // Name of the data source (e.g., "default", "users_db", etc.)
+    uri: []const u8, // Database connection URI
+    pool_size: u32 = 5, // Connection pool size
+};
+
 pub const Config = struct {
     host: []const u8,
     port: u16,
@@ -75,8 +82,9 @@ pub const Config = struct {
     ip_whitelist: []const u8, // Comma-separated list of whitelisted IPs/CIDRs
     // Database plugin configuration
     enable_db: bool, // Enable database plugin
-    db_uri: []const u8, // Database connection URI (e.g., "sqlite:///data/app.db")
-    db_pool_size: u32, // Database connection pool size
+    db_uri: []const u8, // Default database connection URI (for backward compatibility)
+    db_pool_size: u32, // Default connection pool size
+    data_sources: []DataSourceConfig, // Named data sources (includes default if db_uri is set)
     // Handler mappings from URL pattern to handler name
     handlers: []HandlerMapping,
     allocator: std.mem.Allocator,
@@ -103,6 +111,12 @@ pub const Config = struct {
         self.allocator.free(self.ip_blacklist);
         self.allocator.free(self.ip_whitelist);
         self.allocator.free(self.db_uri);
+        // Free data sources
+        for (self.data_sources) |ds| {
+            self.allocator.free(ds.name);
+            self.allocator.free(ds.uri);
+        }
+        self.allocator.free(self.data_sources);
         // Free handler mappings
         for (self.handlers) |mapping| {
             self.allocator.free(mapping.pattern);
@@ -228,6 +242,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_db = false,
         .db_uri = try allocator.dupe(u8, ""),
         .db_pool_size = 5,
+        .data_sources = try allocator.alloc(DataSourceConfig, 0),
         // Default handler mappings
         .handlers = try getDefaultHandlers(allocator),
         .allocator = allocator,
@@ -360,10 +375,79 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_db = parsed.enable_db orelse false,
         .db_uri = try allocator.dupe(u8, parsed.db_uri orelse ""),
         .db_pool_size = parsed.db_pool_size orelse 5,
+        .data_sources = try parseDataSourcesFromYaml(allocator, &y, parsed.db_uri, parsed.db_pool_size orelse 5),
         // Handler mappings - parse manually from raw YAML since zig-yaml doesn't support maps well
         .handlers = try parseHandlersFromYaml(allocator, &y),
         .allocator = allocator,
     };
+}
+
+/// Parse data sources from YAML document
+/// If db_uri is set and no explicit data_sources, creates a "default" data source
+fn parseDataSourcesFromYaml(allocator: std.mem.Allocator, y: *yaml.Yaml, default_uri: ?[]const u8, default_pool_size: u32) ![]DataSourceConfig {
+    var sources = std.ArrayList(DataSourceConfig).init(allocator);
+    errdefer {
+        for (sources.items) |ds| {
+            allocator.free(ds.name);
+            allocator.free(ds.uri);
+        }
+        sources.deinit();
+    }
+
+    // Try to find the data_sources section in the document
+    if (y.docs.items.len > 0) {
+        const doc = y.docs.items[0];
+        if (doc.asMap()) |doc_map| {
+            if (doc_map.get("data_sources")) |ds_val| {
+                // Parse data_sources as a sequence:
+                // data_sources:
+                //   - name: default
+                //     uri: "sqlite:///data/app.db"
+                //     pool_size: 5
+                //   - name: users_db
+                //     uri: "postgresql://..."
+                if (ds_val.asList()) |ds_list| {
+                    for (ds_list) |item| {
+                        if (item.asMap()) |item_map| {
+                            const name_val = item_map.get("name") orelse continue;
+                            const uri_val = item_map.get("uri") orelse continue;
+
+                            const name_str = name_val.asString() orelse continue;
+                            const uri_str = uri_val.asString() orelse continue;
+
+                            var pool_size: u32 = 5;
+                            if (item_map.get("pool_size")) |ps_val| {
+                                if (ps_val.asInt()) |ps| {
+                                    pool_size = @intCast(ps);
+                                }
+                            }
+
+                            try sources.append(.{
+                                .name = try allocator.dupe(u8, name_str),
+                                .uri = try allocator.dupe(u8, uri_str),
+                                .pool_size = pool_size,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If no data_sources but db_uri is set, create a default data source
+    if (sources.items.len == 0) {
+        if (default_uri) |uri| {
+            if (uri.len > 0) {
+                try sources.append(.{
+                    .name = try allocator.dupe(u8, "default"),
+                    .uri = try allocator.dupe(u8, uri),
+                    .pool_size = default_pool_size,
+                });
+            }
+        }
+    }
+
+    return sources.toOwnedSlice();
 }
 
 /// Parse handlers mapping from YAML document
