@@ -1,8 +1,22 @@
 # Project Status
 
-## Current Version: v0.1.2
+## Current Version: v0.4.0
 
-**Status:** ✅ Production Ready
+**Status:** ✅ Production Ready  
+**Last Updated:** 2025-11-29
+
+## Quick Status
+
+| Category | Status | Completion |
+|----------|--------|------------|
+| Core HTTP Server | ✅ Complete | 100% |
+| Static File Serving | ✅ Complete | 100% |
+| Lua Dynamic Content | ✅ Complete | 100% |
+| GraphQL Support | ⚠️ Partial | 80% |
+| Security Features | ✅ Complete | 95% |
+| Observability | ✅ Complete | 90% |
+| Database Integration | ⚠️ Basic | 70% |
+| Documentation | ✅ Complete | 90% |
 
 ## Core Features
 
@@ -15,11 +29,22 @@ All primary objectives have been achieved:
 | ETag Caching | ✅ Complete | Weak ETags for bandwidth reduction |
 | Performance Tuning | ✅ Complete | Configurable connection pools & buffers |
 | Lua Integration | ✅ Complete | Dynamic content via ziglua |
+| Lua Sandbox | ✅ Complete | Instruction limits, dangerous functions removed |
+| LuaJIT Support | ✅ Complete | Optional via -Dlua-lang=luajit |
 | GraphQL API | ✅ Complete | Query/mutation support via grapzig |
+| GraphQL Playground | ✅ Complete | Interactive IDE at /graphql/playground |
+| WebSocket | ✅ Complete | Full duplex with Lua handlers |
+| SSE | ✅ Complete | Server-Sent Events streaming |
 | Security Headers | ✅ Complete | CSP, HSTS, X-Frame-Options, etc. |
+| Rate Limiting | ✅ Complete | Token bucket per-IP |
+| IP Access Control | ✅ Complete | Blacklist/whitelist with CIDR |
+| CORS | ✅ Complete | Configurable origins/methods |
+| Authentication | ✅ Complete | Lua-delegated validation |
+| Metrics | ✅ Complete | Prometheus format |
+| Health Check | ✅ Complete | Component status |
+| Request ID | ✅ Complete | X-Request-ID propagation |
 | Configuration | ✅ Complete | JSON and YAML support |
-| Logging System | ✅ Complete | Multi-level with rotation |
-| Performance | ✅ Complete | ~10,700 req/s (ab), ~47,400 req/s (h2load) |
+| Database Plugin | ⚠️ Basic | SQLite, PostgreSQL, MySQL via zdbc |
 
 ## Build & Test Status
 
@@ -42,16 +67,22 @@ All primary objectives have been achieved:
 - Transfer Rate: ~191 MB/s
 - Latency: ~2ms (100 concurrent)
 
-**ETag Caching (v0.1.1):**
+**ETag Caching:**
 - Bandwidth Reduction: 50-90% for returning visitors
 - 304 Not Modified responses for unchanged files
 - Cache-Control headers for browser optimization
 
-**Performance Tuning (v0.1.2):**
-- Configurable max_connections (default: 512)
-- Configurable request_buffer_size (default: 64KB)
-- Fine-tuned connection pool management
-- Memory allocation optimization
+## Software Engineering Quality
+
+| Aspect | Rating | Notes |
+|--------|--------|-------|
+| Modularity | ⭐⭐⭐⭐☆ | Clear module separation, some large files |
+| Code Reuse | ⭐⭐⭐⭐⭐ | Excellent shared components |
+| Memory Management | ⭐⭐⭐⭐⭐ | Arena allocators, proper cleanup |
+| Performance | ⭐⭐⭐⭐☆ | Good, missing compression |
+| Flexibility | ⭐⭐⭐⭐⭐ | 40+ config options |
+| Documentation | ⭐⭐⭐⭐☆ | Comprehensive, some gaps |
+| Testing | ⭐⭐⭐⭐☆ | Unit tests, integration pending |
 
 ## Quick Start
 
@@ -60,7 +91,7 @@ All primary objectives have been achieved:
 zig build
 
 # Configure
-cp config.example.json config.json
+cp config.example.yaml config.yaml
 
 # Run
 zig build run
@@ -72,18 +103,26 @@ zig build test
 ## Documentation
 
 - [README.md](README.md) - Main documentation
-- [ROADMAP.md](ROADMAP.md) - Future plans
-- [AGENTS.md](AGENTS.md) - Agent instructions
+- [ROADMAP.md](ROADMAP.md) - Project status & gap analysis
+- [docs/API_REFERENCE.md](docs/API_REFERENCE.md) - Complete API reference
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System architecture
+- [docs/SECURITY.md](docs/SECURITY.md) - Security features
+- [docs/OWASP_COMPLIANCE.md](docs/OWASP_COMPLIANCE.md) - Security compliance
 - [docs/LOGGING.md](docs/LOGGING.md) - Logging system details
 - [docs/ETAG_CACHING.md](docs/ETAG_CACHING.md) - ETag caching guide
-- [docs/SECURITY.md](docs/SECURITY.md) - Security features
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) - Observability and metrics
 - [docs/PERFORMANCE_TUNING.md](docs/PERFORMANCE_TUNING.md) - Performance tuning guide
+- [docs/LUA_PROGRAMMING_GUIDE.md](docs/LUA_PROGRAMMING_GUIDE.md) - Lua scripting guide
+- [docs/HTTP_REQUEST_HANDLING.md](docs/HTTP_REQUEST_HANDLING.md) - Request handling design
 
 ## Next Steps
 
-See [ROADMAP.md](ROADMAP.md) for future enhancement opportunities.
+See [ROADMAP.md](ROADMAP.md) for:
+- Detailed gap analysis for a complete web server
+- Software engineering recommendations
+- Interface documentation status
+- Future enhancement opportunities
 
 ---
 
-**Last Updated:** 2025-11-26
+**Last Updated:** 2025-11-29
