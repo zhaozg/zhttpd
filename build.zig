@@ -64,6 +64,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // cache.zig - thread-safe, LRU cache for session management
+    const cache_zig = b.dependency("cache.zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Build configuration options to expose to the runtime
     const build_options = b.addOptions();
     build_options.addOption(LuaLang, "lua_lang", lua_lang);
@@ -88,6 +94,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("grapzig", grapzig.module("grapzig"));
     exe.root_module.addImport("yaml", yaml.module("yaml"));
     exe.root_module.addImport("zdbc", zdbc.module("zdbc"));
+    exe.root_module.addImport("cache", cache_zig.module("cache"));
 
     b.installArtifact(exe);
 

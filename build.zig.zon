@@ -24,6 +24,10 @@
             .url = "https://github.com/zhaozg/zdbc/archive/refs/tags/0.1.0.tar.gz",
             .hash = "zdbc-0.1.0-_uIxvogwAgCNhrdEfmSJKGQVN0mNw8DVmSFeqKz73OU5",
         },
+        .@"cache.zig" = .{
+            .url = "https://github.com/karlseguin/cache.zig/archive/9f3329b05b3e98da928fe9988d74971da70328b4.tar.gz",
+            .hash = "cache-0.0.0-winRwKaSAAAKIcUzY8IXwcbH050imeWPFMbPW_sCdPLF",
+        },
     },
     .paths = .{
         "build.zig",
