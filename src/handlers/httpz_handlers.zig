@@ -260,9 +260,39 @@ pub const AppContext = struct {
             };
 
             // Build config JSON for plugin initialization
-            var config_buf: [512]u8 = undefined;
+            // Note: We escape special JSON characters in the URI to prevent injection
+            var config_buf: [1024]u8 = undefined;
+            var uri_buf: [512]u8 = undefined;
+            var uri_len: usize = 0;
+            for (config.db_uri) |c| {
+                if (uri_len >= uri_buf.len - 2) break;
+                switch (c) {
+                    '"' => {
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                        uri_buf[uri_len] = '"';
+                        uri_len += 1;
+                    },
+                    '\\' => {
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                    },
+                    '\n' => {
+                        uri_buf[uri_len] = '\\';
+                        uri_len += 1;
+                        uri_buf[uri_len] = 'n';
+                        uri_len += 1;
+                    },
+                    else => {
+                        uri_buf[uri_len] = c;
+                        uri_len += 1;
+                    },
+                }
+            }
             const db_config_json = std.fmt.bufPrint(&config_buf, "{{\"uri\":\"{s}\",\"pool_size\":{d}}}", .{
-                config.db_uri,
+                uri_buf[0..uri_len],
                 config.db_pool_size,
             }) catch {
                 ctx.logger.warn("Failed to format database config", .{});

@@ -57,7 +57,8 @@ pub const DbConfig = struct {
 
 /// Global pointer to the active database plugin
 /// This is used by Lua functions to access the database plugin
-/// Thread safety: The plugin itself uses thread-safe connection pooling
+/// Note: Currently uses a single connection. For production use with high concurrency,
+/// consider using separate database instances or application-level connection management.
 var global_db_plugin: ?*DbPlugin = null;
 
 /// Set the global database plugin pointer
@@ -75,9 +76,8 @@ pub const DbPlugin = struct {
     allocator: std.mem.Allocator,
     config: ?DbConfig,
     connection: ?zdbc.Connection,
-    // Note: Connection pooling is not currently supported due to zdbc API compatibility
-    // Each request will use the single shared connection. For high-concurrency scenarios,
-    // consider using separate database instances or implementing application-level pooling.
+    // Note: Currently uses a single connection per plugin instance.
+    // The db_pool_size config is reserved for future pooling implementation.
     initialized: bool,
     error_message: ?[]const u8,
 
@@ -206,9 +206,11 @@ pub const DbPlugin = struct {
 
         if (!self.initialized) return false;
 
-        // Try to ping the database
+        // Try to verify database connection with a simple query
         if (self.connection) |*conn| {
-            conn.ping() catch return false;
+            // Use a simple query that works on all databases
+            var result = conn.queryNoParams("SELECT 1") catch return false;
+            result.deinit();
             return true;
         }
 
@@ -387,9 +389,11 @@ fn luaQuery(lua: *ziglua.Lua) i32 {
         return 2;
     };
 
-    // Collect parameters
+    // Collect parameters (max 32 parameters per query)
+    // This limit is sufficient for most practical SQL queries
     const top = lua.getTop();
-    var params_buf: [32]zdbc.Value = undefined;
+    const MAX_PARAMS = 32;
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
     var param_count: usize = 0;
 
     var i: i32 = 2;
@@ -460,9 +464,10 @@ fn luaExec(lua: *ziglua.Lua) i32 {
         return 2;
     };
 
-    // Collect parameters
+    // Collect parameters (max 32 parameters per query)
     const top = lua.getTop();
-    var params_buf: [32]zdbc.Value = undefined;
+    const MAX_PARAMS = 32;
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
     var param_count: usize = 0;
 
     var i: i32 = 2;
