@@ -308,10 +308,21 @@ fn contextSession(lua: *ziglua.Lua) i32 {
             var cookie_iter = std.mem.splitScalar(u8, cookie_header, ';');
             while (cookie_iter.next()) |cookie| {
                 const trimmed = std.mem.trim(u8, cookie, " ");
-                if (std.mem.indexOf(u8, trimmed, cookie_name)) |pos| {
-                    if (pos == 0 and trimmed.len > cookie_name.len and trimmed[cookie_name.len] == '=') {
-                        const value = trimmed[cookie_name.len + 1 ..];
-                        if (value.len == SESSION_ID_HEX_LEN) {
+                // Use startsWith for correct cookie name matching
+                if (std.mem.startsWith(u8, trimmed, cookie_name) and
+                    trimmed.len > cookie_name.len and trimmed[cookie_name.len] == '=')
+                {
+                    const value = trimmed[cookie_name.len + 1 ..];
+                    if (value.len == SESSION_ID_HEX_LEN) {
+                        // Validate session ID contains only hex characters [0-9a-f]
+                        var valid = true;
+                        for (value) |c| {
+                            if (!((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'))) {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        if (valid) {
                             var id: [SESSION_ID_HEX_LEN]u8 = undefined;
                             @memcpy(&id, value);
                             session_id = id;

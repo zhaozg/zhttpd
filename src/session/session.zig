@@ -121,14 +121,21 @@ pub const Session = struct {
     }
 
     /// Get a value from the session
-    pub fn get(self: *const Self, key: []const u8) ?SessionValue {
-        return self.data.get(key);
+    /// Returns a cloned value that the caller owns and must free with deinit()
+    pub fn get(self: *const Self, key: []const u8) !?SessionValue {
+        if (self.data.get(key)) |value| {
+            return try value.clone(self.allocator);
+        }
+        return null;
     }
 
     /// Set a value in the session (takes ownership of the value)
     pub fn set(self: *Self, key: []const u8, value: SessionValue) !void {
         // Check if key already exists
         const result = self.data.getOrPut(self.allocator, key) catch |err| {
+            // Clean up the value on error since we take ownership
+            var val_copy = value;
+            val_copy.deinit(self.allocator);
             return err;
         };
 
@@ -137,7 +144,12 @@ pub const Session = struct {
             result.value_ptr.deinit(self.allocator);
         } else {
             // Need to duplicate the key
-            result.key_ptr.* = try self.allocator.dupe(u8, key);
+            result.key_ptr.* = self.allocator.dupe(u8, key) catch |err| {
+                // Clean up the value on error since we take ownership
+                var val_copy = value;
+                val_copy.deinit(self.allocator);
+                return err;
+            };
         }
         result.value_ptr.* = value;
         self.last_accessed = std.time.timestamp();
@@ -227,10 +239,11 @@ pub const SessionManager = struct {
     }
 
     /// Get a value from a session
-    pub fn get(self: *Self, session_id: []const u8, key: []const u8) ?SessionValue {
+    /// Returns a cloned value that the caller owns and must free with deinit()
+    pub fn get(self: *Self, session_id: []const u8, key: []const u8) !?SessionValue {
         if (self.getEntry(session_id)) |entry| {
             defer entry.release();
-            return entry.value.get(key);
+            return try entry.value.get(key);
         }
         return null;
     }
@@ -242,6 +255,9 @@ pub const SessionManager = struct {
             // Get mutable access to the session value
             try entry.value.set(key, value);
         } else {
+            // Clean up value since we failed and own it
+            var val_copy = value;
+            val_copy.deinit(self.allocator);
             return error.SessionNotFound;
         }
     }
@@ -343,15 +359,18 @@ test "Session create and basic operations" {
 
     try testing.expect(session.count() == 2);
 
-    const user_id = session.get("user_id").?;
+    // Get returns cloned values that we must free
+    var user_id = (try session.get("user_id")).?;
+    defer user_id.deinit(allocator);
     try testing.expect(user_id.asInt().? == 12345);
 
-    const logged_in = session.get("logged_in").?;
+    var logged_in = (try session.get("logged_in")).?;
+    defer logged_in.deinit(allocator);
     try testing.expect(logged_in.asBool().? == true);
 
     // Delete value
     try testing.expect(session.delete("user_id"));
-    try testing.expect(session.get("user_id") == null);
+    try testing.expect((try session.get("user_id")) == null);
     try testing.expect(session.count() == 1);
 
     // Clear session
@@ -369,7 +388,8 @@ test "Session with string value" {
     const name_value = try SessionValue.initString(allocator, "John Doe");
     try session.set("name", name_value);
 
-    const retrieved = session.get("name").?;
+    var retrieved = (try session.get("name")).?;
+    defer retrieved.deinit(allocator);
     try testing.expectEqualStrings("John Doe", retrieved.asString().?);
 }
 
@@ -392,13 +412,14 @@ test "SessionManager basic operations" {
     // Set a value
     try manager.set(&session_id, "test_key", SessionValue.initInt(42));
 
-    // Get the value
-    const value = manager.get(&session_id, "test_key").?;
+    // Get the value (returns cloned value we must free)
+    var value = (try manager.get(&session_id, "test_key")).?;
+    defer value.deinit(allocator);
     try testing.expect(value.asInt().? == 42);
 
     // Delete value
     try testing.expect(manager.deleteValue(&session_id, "test_key"));
-    try testing.expect(manager.get(&session_id, "test_key") == null);
+    try testing.expect((try manager.get(&session_id, "test_key")) == null);
 
     // Delete session
     try testing.expect(manager.delete(&session_id));

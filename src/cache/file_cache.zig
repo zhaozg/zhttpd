@@ -49,22 +49,20 @@ pub const FileCache = struct {
         // Calculate max cache entries based on average file size assumption (10KB)
         const max_entries: u32 = @intCast(@min(max_cache_file_size / 10240 + 100, 10000));
 
+        // Try to initialize with preferred settings, fallback to minimal if that fails
+        const cache_instance = cache.Cache(FileCacheEntry).init(allocator, .{
+            .max_size = max_entries,
+            .segment_count = 8,
+        }) catch blk: {
+            // Fallback to minimal cache on error
+            break :blk cache.Cache(FileCacheEntry).init(allocator, .{
+                .max_size = 100,
+                .segment_count = 1,
+            }) catch unreachable;
+        };
+
         return FileCache{
-            .cache = cache.Cache(FileCacheEntry).init(allocator, .{
-                .max_size = max_entries,
-                .segment_count = 8,
-            }) catch {
-                // Fallback to minimal cache on error
-                return FileCache{
-                    .cache = cache.Cache(FileCacheEntry).init(allocator, .{
-                        .max_size = 100,
-                        .segment_count = 1,
-                    }) catch unreachable,
-                    .allocator = allocator,
-                    .reload_mode = reload_mode,
-                    .max_cache_file_size = max_cache_file_size,
-                };
-            },
+            .cache = cache_instance,
             .allocator = allocator,
             .reload_mode = reload_mode,
             .max_cache_file_size = max_cache_file_size,
@@ -76,12 +74,15 @@ pub const FileCache = struct {
         self.cache.deinit();
     }
 
-    /// Get cached file content if available and valid according to reload mode
-    /// Returns null if file is not cached or cache is invalid
-    fn getCached(self: *FileCache, key: []const u8) ?FileCacheEntry {
+    /// Get cached content, duplicating the content to ensure safety
+    /// Returns null if file is not cached
+    /// The returned content is owned by the caller and must be freed
+    fn getCachedContent(self: *FileCache, key: []const u8) !?struct { content: []const u8, mtime: i128 } {
         if (self.cache.get(key)) |entry| {
             defer entry.release();
-            return entry.value;
+            // Duplicate content while entry is still valid
+            const content = try self.allocator.dupe(u8, entry.value.content);
+            return .{ .content = content, .mtime = entry.value.mtime };
         }
         return null;
     }
@@ -90,10 +91,8 @@ pub const FileCache = struct {
     fn putCached(self: *FileCache, key: []const u8, content: []const u8, mtime: i128, etag: ?[]const u8) !void {
         // Store the new content with owned copies
         const owned_content = try self.allocator.dupe(u8, content);
-        errdefer self.allocator.free(owned_content);
 
         const owned_etag = if (etag) |e| try self.allocator.dupe(u8, e) else null;
-        errdefer if (owned_etag) |e| self.allocator.free(e);
 
         const entry = FileCacheEntry{
             .content = owned_content,
@@ -102,10 +101,15 @@ pub const FileCache = struct {
             .allocator = self.allocator,
         };
 
-        try self.cache.put(key, entry, .{
+        self.cache.put(key, entry, .{
             .ttl = DEFAULT_FILE_TTL,
             .size = entry.size(),
-        });
+        }) catch |err| {
+            // Clean up on failure to avoid memory leak
+            self.allocator.free(owned_content);
+            if (owned_etag) |e| self.allocator.free(e);
+            return err;
+        };
     }
 
     /// Load file content with caching based on reload mode
@@ -121,9 +125,9 @@ pub const FileCache = struct {
             },
             .never => {
                 // Use cache if available, otherwise read and cache
-                if (self.getCached(path)) |cached| {
-                    // Note: We duplicate to give caller owned memory while keeping cached copy
-                    return try self.allocator.dupe(u8, cached.content);
+                if (try self.getCachedContent(path)) |cached| {
+                    // Content is already duplicated and owned by caller
+                    return cached.content;
                 }
 
                 // Check file size before reading
@@ -156,12 +160,13 @@ pub const FileCache = struct {
                 }
 
                 // Check cache
-                if (self.getCached(path)) |cached| {
+                if (try self.getCachedContent(path)) |cached| {
                     if (cached.mtime == current_mtime) {
-                        // File hasn't changed, use cache
-                        // Note: We duplicate to give caller owned memory while keeping cached copy
-                        return try self.allocator.dupe(u8, cached.content);
+                        // File hasn't changed, use cached content (already duplicated)
+                        return cached.content;
                     }
+                    // Cache is stale, free the duplicated content
+                    self.allocator.free(cached.content);
                 }
 
                 // File changed or not cached, read and update cache
@@ -204,13 +209,18 @@ pub const FileCache = struct {
     /// Clear all cached entries (useful for testing or manual cache invalidation)
     pub fn clear(self: *FileCache) void {
         // cache.zig doesn't have a clear method, but we can delete by prefix with empty prefix
-        _ = self.cache.delPrefix("") catch {};
+        self.cache.delPrefix("") catch |err| {
+            std.log.warn("Failed to clear file cache: {}", .{err});
+        };
     }
 
-    /// Get the number of cached entries (approximate, for debugging)
+    /// Get the number of cached entries
+    /// Note: cache.zig doesn't expose count directly, so this always returns 0
+    /// This method is kept for API compatibility but should not be relied upon
     pub fn count(self: *FileCache) usize {
-        // cache.zig doesn't expose count directly, return 0 for now
         _ = self;
+        // cache.zig doesn't provide a way to get the count
+        // This is a known limitation
         return 0;
     }
 };

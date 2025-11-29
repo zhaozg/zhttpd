@@ -175,8 +175,12 @@ fn sessionGet(lua: *ziglua.Lua) i32 {
         return 1;
     };
 
-    if (manager.get(session_id, key)) |value| {
+    // Get returns a cloned value that we own
+    if (manager.get(session_id, key) catch null) |value| {
         pushSessionValueToLua(lua, value);
+        // Free the cloned value after pushing to Lua
+        var val_copy = value;
+        val_copy.deinit(manager.allocator);
         return 1;
     }
 
