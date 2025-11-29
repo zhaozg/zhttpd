@@ -31,22 +31,44 @@ Add cache.zig to `build.zig.zon`:
 },
 ```
 
-### 1.2 Module Structure
+### 1.2 File Cache with cache.zig
 
-Create `src/cache/object_cache.zig`:
+The `FileCache` uses cache.zig for thread-safe LRU file content caching:
 
 ```zig
-const cache = @import("cache");
-
-/// Generic object cache wrapper for zhttpd
-pub const ObjectCache = struct {
+pub const FileCacheEntry = struct {
+    content: []const u8,
+    mtime: i128,
+    etag: ?[]const u8,
     allocator: std.mem.Allocator,
-    
-    /// Create typed caches for different use cases
-    pub fn init(allocator: std.mem.Allocator, config: CacheConfig) !ObjectCache { ... }
-    pub fn deinit(self: *ObjectCache) void { ... }
+
+    /// Size for cache eviction
+    pub fn size(self: FileCacheEntry) u32 {
+        var total: u32 = @intCast(self.content.len);
+        if (self.etag) |e| total +|= @intCast(e.len);
+        return total;
+    }
+
+    /// Called by cache.zig on eviction
+    pub fn removedFromCache(self: *FileCacheEntry, _: std.mem.Allocator) void {
+        self.allocator.free(self.content);
+        if (self.etag) |e| self.allocator.free(e);
+    }
+};
+
+pub const FileCache = struct {
+    cache: cache.Cache(FileCacheEntry),
+    allocator: std.mem.Allocator,
+    reload_mode: ReloadMode,
+    max_cache_file_size: usize,
 };
 ```
+
+Benefits of using cache.zig for file cache:
+- Automatic LRU eviction when memory limit reached
+- Thread-safe segment-based locking
+- TTL support for automatic refresh
+- Size-based eviction using actual file sizes
 
 ---
 
@@ -54,27 +76,27 @@ pub const ObjectCache = struct {
 
 ### 2.1 Design Rationale
 
-Session values need to support multiple types (similar to YAML Value):
-- Strings (most common - user data, tokens)
+Session values support primitive types for simplicity:
+- Strings (most common - user data, tokens, JSON for complex objects)
 - Integers (counters, timestamps)
 - Floats (metrics)
 - Booleans (flags)
-- Nested tables (complex user data)
 - Null
+
+**Note**: For complex objects (arrays, nested objects), use JSON strings.
+This simplifies implementation while maintaining flexibility via cjson.encode()/cjson.decode() in Lua.
 
 ### 2.2 Session Value Definition
 
 ```zig
-/// Session value type supporting multiple data types
-/// Designed for interoperability between Zig and Lua
+/// Session value type supporting primitive data types
+/// For complex objects, store them as JSON strings
 pub const SessionValue = union(enum) {
     null: void,
     boolean: bool,
     integer: i64,
     float: f64,
     string: []const u8,
-    array: []SessionValue,
-    object: std.StringHashMap(SessionValue),
     
     /// Size estimation for cache eviction (bytes)
     pub fn size(self: SessionValue) u32 {
@@ -82,44 +104,33 @@ pub const SessionValue = union(enum) {
             .null, .boolean => 1,
             .integer, .float => 8,
             .string => |s| @intCast(s.len + 1),
-            .array => |a| blk: {
-                var total: u32 = 0;
-                for (a) |item| total += item.size();
-                break :blk total;
-            },
-            .object => |o| blk: {
-                var total: u32 = 0;
-                var iter = o.iterator();
-                while (iter.next()) |entry| {
-                    total += @intCast(entry.key_ptr.*.len);
-                    total += entry.value_ptr.size();
-                }
-                break :blk total;
-            },
         };
-    }
-    
-    /// Required for cache.zig cleanup notification
-    pub fn removedFromCache(self: *SessionValue, allocator: std.mem.Allocator) void {
-        self.deinit(allocator);
     }
 };
 ```
 
-### 2.3 Comparison with YAML Value
+### 2.3 Complex Objects as JSON
+
+For storing complex data in sessions, use JSON strings:
+
+```lua
+-- Store complex object as JSON
+local user_data = { name = "John", roles = {"admin", "user"} }
+session:set("user", cjson.encode(user_data))
+
+-- Retrieve and decode
+local user = cjson.decode(session:get("user"))
+print(user.name)  -- "John"
+```
+
+### 2.4 Comparison with YAML Value
 
 | Aspect | YAML Value | Session Value | Notes |
 |--------|-----------|---------------|-------|
 | Purpose | Config parsing | Runtime state | Different lifecycles |
 | Mutability | Immutable after parse | Mutable | Sessions need updates |
+| Complex types | Native support | JSON strings | Simpler implementation |
 | Allocation | Arena | Heap + manual | Sessions need explicit cleanup |
-| Nesting | Deep | Shallow preferred | Performance consideration |
-
-**Decision**: Create a dedicated `SessionValue` type rather than reusing YAML Value because:
-1. Different memory management requirements (sessions need manual cleanup)
-2. Sessions need mutation support
-3. Sessions benefit from shallow nesting for performance
-4. Cache.zig requires `size()` and `removedFromCache()` methods
 
 ---
 

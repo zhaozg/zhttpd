@@ -41,9 +41,6 @@ const SESSION_ID_HEX_LEN = session_mod.SESSION_ID_HEX_LEN;
 /// Metatable name for session objects
 const SESSION_MT = "zhttpd.session";
 
-/// Maximum key size for session values
-const MAX_KEY_SIZE: usize = 256;
-
 /// Thread-local storage for current session info
 threadlocal var current_session_id: ?[SESSION_ID_HEX_LEN]u8 = null;
 
@@ -315,25 +312,11 @@ fn pushSessionValueToLua(lua: *ziglua.Lua, value: SessionValue) void {
         .integer => |i| lua.pushInteger(i),
         .float => |f| lua.pushNumber(f),
         .string => |s| _ = lua.pushString(s),
-        .array => |a| {
-            lua.newTable();
-            for (a, 1..) |item, idx| {
-                pushSessionValueToLua(lua, item);
-                lua.rawSetIndex(-2, @intCast(idx));
-            }
-        },
-        .object => |o| {
-            lua.newTable();
-            var iter = o.iterator();
-            while (iter.next()) |entry| {
-                pushSessionValueToLua(lua, entry.value_ptr.*);
-                pushKeyToTable(lua, entry.key_ptr.*);
-            }
-        },
     }
 }
 
 /// Convert a Lua value to SessionValue
+/// For tables (complex objects), converts to JSON string
 fn luaToSessionValue(lua: *ziglua.Lua, idx: i32, allocator: std.mem.Allocator) !SessionValue {
     return switch (lua.typeOf(idx)) {
         .nil => SessionValue.initNull(),
@@ -351,110 +334,12 @@ fn luaToSessionValue(lua: *ziglua.Lua, idx: i32, allocator: std.mem.Allocator) !
             break :blk try SessionValue.initString(allocator, str);
         },
         .table => blk: {
-            // Check if it's an array or object
-            // Arrays have consecutive integer keys starting from 1
-            var is_array = true;
-            var max_index: i32 = 0;
-
-            lua.pushNil();
-            while (lua.next(idx)) {
-                const key_type = lua.typeOf(-2);
-                if (key_type != .number) {
-                    is_array = false;
-                    lua.pop(2);
-                    break;
-                }
-                const key_int = lua.toInteger(-2) catch {
-                    is_array = false;
-                    lua.pop(2);
-                    break;
-                };
-                if (key_int <= 0) {
-                    is_array = false;
-                    lua.pop(2);
-                    break;
-                }
-                if (key_int > max_index) {
-                    max_index = @intCast(key_int);
-                }
-                lua.pop(1); // Pop value, keep key for next iteration
-            }
-
-            if (is_array and max_index > 0) {
-                // Create array
-                const arr = try allocator.alloc(SessionValue, @intCast(max_index));
-                errdefer allocator.free(arr);
-
-                var i: usize = 0;
-                while (i < @as(usize, @intCast(max_index))) : (i += 1) {
-                    _ = lua.rawGetIndex(idx, @intCast(i + 1));
-                    arr[i] = try luaToSessionValue(lua, -1, allocator);
-                    lua.pop(1);
-                }
-                break :blk SessionValue{ .array = arr };
-            } else {
-                // Create object
-                var obj: std.StringHashMapUnmanaged(SessionValue) = .empty;
-                errdefer {
-                    var iter = obj.iterator();
-                    while (iter.next()) |entry| {
-                        allocator.free(entry.key_ptr.*);
-                        entry.value_ptr.deinit(allocator);
-                    }
-                    obj.deinit(allocator);
-                }
-
-                lua.pushNil();
-                while (lua.next(idx)) {
-                    // Get key as string
-                    const key_copy: []u8 = switch (lua.typeOf(-2)) {
-                        .string => blk2: {
-                            const str = lua.toString(-2) catch {
-                                lua.pop(2);
-                                continue;
-                            };
-                            break :blk2 try allocator.dupe(u8, str);
-                        },
-                        .number => blk2: {
-                            // Convert number to string
-                            const num = lua.toNumber(-2) catch {
-                                lua.pop(2);
-                                continue;
-                            };
-                            var buf: [32]u8 = undefined;
-                            const s = std.fmt.bufPrint(&buf, "{d}", .{num}) catch {
-                                lua.pop(2);
-                                continue;
-                            };
-                            // Duplicate immediately before buf goes out of scope
-                            break :blk2 try allocator.dupe(u8, s);
-                        },
-                        else => {
-                            lua.pop(2);
-                            continue;
-                        },
-                    };
-                    errdefer allocator.free(key_copy);
-
-                    const val = try luaToSessionValue(lua, -1, allocator);
-                    try obj.put(allocator, key_copy, val);
-
-                    lua.pop(1); // Pop value, keep key for next iteration
-                }
-                break :blk SessionValue{ .object = obj };
-            }
+            // For tables, suggest using cjson.encode() in Lua before storing
+            // Return null for now - users should convert tables to JSON strings explicitly
+            break :blk SessionValue.initNull();
         },
         else => SessionValue.initNull(),
     };
-}
-
-/// Helper to push a key and set field in table
-fn pushKeyToTable(lua: *ziglua.Lua, key: []const u8) void {
-    var key_buf: [MAX_KEY_SIZE]u8 = undefined;
-    const key_len = @min(key.len, key_buf.len - 1);
-    @memcpy(key_buf[0..key_len], key[0..key_len]);
-    key_buf[key_len] = 0;
-    lua.setField(-2, key_buf[0..key_len :0]);
 }
 
 // =============================================================================

@@ -1,17 +1,18 @@
 //! Session Value Type
 //!
 //! This module defines the SessionValue type for storing session data.
-//! SessionValue supports multiple types similar to YAML Value, but optimized
-//! for runtime session usage with proper cache integration.
+//! SessionValue supports primitive types for simple session storage.
 //!
 //! ## Supported Types
 //! - null: No value
 //! - boolean: true/false
 //! - integer: 64-bit signed integer
 //! - float: 64-bit floating point
-//! - string: UTF-8 string
-//! - array: Array of SessionValue
-//! - object: Key-value map of SessionValue
+//! - string: UTF-8 string (can store JSON for complex objects)
+//!
+//! ## Complex Objects
+//! For complex objects (arrays, nested objects), use JSON strings.
+//! This simplifies implementation while maintaining flexibility.
 //!
 //! ## Thread Safety
 //! SessionValue instances are NOT thread-safe by themselves.
@@ -19,7 +20,8 @@
 
 const std = @import("std");
 
-/// Session value type supporting multiple data types.
+/// Session value type supporting primitive data types.
+/// For complex objects, store them as JSON strings.
 /// Designed for interoperability between Zig and Lua.
 pub const SessionValue = union(enum) {
     null: void,
@@ -27,8 +29,6 @@ pub const SessionValue = union(enum) {
     integer: i64,
     float: f64,
     string: []const u8,
-    array: []SessionValue,
-    object: std.StringHashMapUnmanaged(SessionValue),
 
     const Self = @This();
 
@@ -62,18 +62,6 @@ pub const SessionValue = union(enum) {
         return .{ .string = value };
     }
 
-    /// Create an empty array with optional pre-allocation
-    /// Note: Returns an empty slice. Elements must be added using append patterns.
-    /// The caller is responsible for tracking the actual length.
-    pub fn initEmptyArray() Self {
-        return .{ .array = &.{} };
-    }
-
-    /// Create an empty object
-    pub fn initObject() Self {
-        return .{ .object = .empty };
-    }
-
     /// Size estimation for cache eviction (in bytes).
     /// Required by cache.zig for size-based eviction.
     pub fn size(self: Self) u32 {
@@ -81,24 +69,6 @@ pub const SessionValue = union(enum) {
             .null, .boolean => 1,
             .integer, .float => 8,
             .string => |s| @intCast(@min(s.len + 1, std.math.maxInt(u32))),
-            .array => |a| blk: {
-                var total: u32 = 4; // Array overhead
-                for (a) |item| {
-                    total +|= item.size();
-                }
-                break :blk total;
-            },
-            .object => |o| blk: {
-                var total: u32 = 16; // HashMap overhead
-                var iter = o.iterator();
-                while (iter.next()) |entry| {
-                    // Use saturating addition to prevent overflow
-                    const key_len: u32 = @intCast(@min(entry.key_ptr.*.len, std.math.maxInt(u32)));
-                    total +|= key_len;
-                    total +|= entry.value_ptr.size();
-                }
-                break :blk total;
-            },
         };
     }
 
@@ -110,33 +80,6 @@ pub const SessionValue = union(enum) {
             .integer => |i| .{ .integer = i },
             .float => |f| .{ .float = f },
             .string => |s| .{ .string = try allocator.dupe(u8, s) },
-            .array => |a| blk: {
-                const new_arr = try allocator.alloc(SessionValue, a.len);
-                errdefer allocator.free(new_arr);
-                for (a, 0..) |item, i| {
-                    new_arr[i] = try item.clone(allocator);
-                }
-                break :blk .{ .array = new_arr };
-            },
-            .object => |o| blk: {
-                var new_obj: std.StringHashMapUnmanaged(SessionValue) = .empty;
-                errdefer {
-                    var iter = new_obj.iterator();
-                    while (iter.next()) |entry| {
-                        allocator.free(entry.key_ptr.*);
-                        entry.value_ptr.deinit(allocator);
-                    }
-                    new_obj.deinit(allocator);
-                }
-                var iter = o.iterator();
-                while (iter.next()) |entry| {
-                    const new_key = try allocator.dupe(u8, entry.key_ptr.*);
-                    errdefer allocator.free(new_key);
-                    const new_val = try entry.value_ptr.clone(allocator);
-                    try new_obj.put(allocator, new_key, new_val);
-                }
-                break :blk .{ .object = new_obj };
-            },
         };
     }
 
@@ -146,20 +89,6 @@ pub const SessionValue = union(enum) {
             .null, .boolean, .integer, .float => {},
             .string => |s| {
                 allocator.free(s);
-            },
-            .array => |a| {
-                for (a) |*item| {
-                    item.deinit(allocator);
-                }
-                allocator.free(a);
-            },
-            .object => |*o| {
-                var iter = o.iterator();
-                while (iter.next()) |entry| {
-                    allocator.free(entry.key_ptr.*);
-                    entry.value_ptr.deinit(allocator);
-                }
-                o.deinit(allocator);
             },
         }
         self.* = .{ .null = {} };
@@ -202,22 +131,6 @@ pub const SessionValue = union(enum) {
         };
     }
 
-    /// Get array value, returns null if not an array
-    pub fn asArray(self: Self) ?[]SessionValue {
-        return switch (self) {
-            .array => |a| a,
-            else => null,
-        };
-    }
-
-    /// Get object value, returns null if not an object
-    pub fn asObject(self: *Self) ?*std.StringHashMapUnmanaged(SessionValue) {
-        return switch (self.*) {
-            .object => |*o| o,
-            else => null,
-        };
-    }
-
     /// Format for debug output
     pub fn format(
         self: Self,
@@ -233,26 +146,6 @@ pub const SessionValue = union(enum) {
             .integer => |i| try writer.print("{d}", .{i}),
             .float => |f| try writer.print("{d}", .{f}),
             .string => |s| try writer.print("\"{s}\"", .{s}),
-            .array => |a| {
-                try writer.writeAll("[");
-                for (a, 0..) |item, i| {
-                    if (i > 0) try writer.writeAll(", ");
-                    try item.format("", .{}, writer);
-                }
-                try writer.writeAll("]");
-            },
-            .object => |o| {
-                try writer.writeAll("{");
-                var first = true;
-                var iter = o.iterator();
-                while (iter.next()) |entry| {
-                    if (!first) try writer.writeAll(", ");
-                    first = false;
-                    try writer.print("\"{s}\": ", .{entry.key_ptr.*});
-                    try entry.value_ptr.format("", .{}, writer);
-                }
-                try writer.writeAll("}");
-            },
         }
     }
 };
@@ -292,37 +185,19 @@ test "SessionValue string" {
     try testing.expect(str_val.size() == 12); // 11 chars + 1
 }
 
-test "SessionValue object" {
+test "SessionValue JSON string for complex objects" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var obj_val = SessionValue.initObject();
-    defer obj_val.deinit(allocator);
+    // Complex objects should be stored as JSON strings
+    const json_str =
+        \\{"name":"John","age":30,"items":[1,2,3]}
+    ;
 
-    // Add some values to the object
-    var obj = obj_val.asObject().?;
-    const key1 = try allocator.dupe(u8, "name");
-    errdefer allocator.free(key1);
-    try obj.put(allocator, key1, try SessionValue.initString(allocator, "John"));
+    var json_val = try SessionValue.initString(allocator, json_str);
+    defer json_val.deinit(allocator);
 
-    const key2 = try allocator.dupe(u8, "age");
-    errdefer allocator.free(key2);
-    try obj.put(allocator, key2, SessionValue.initInt(30));
-
-    try testing.expect(obj.count() == 2);
-
-    // Check values
-    if (obj.get("name")) |name_val| {
-        try testing.expectEqualStrings("John", name_val.asString().?);
-    } else {
-        return error.TestFailed;
-    }
-
-    if (obj.get("age")) |age_val| {
-        try testing.expect(age_val.asInt().? == 30);
-    } else {
-        return error.TestFailed;
-    }
+    try testing.expectEqualStrings(json_str, json_val.asString().?);
 }
 
 test "SessionValue clone" {

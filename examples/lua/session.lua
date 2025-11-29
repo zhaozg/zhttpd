@@ -1,5 +1,10 @@
 -- Session example script for zhttpd
 -- Demonstrates session management features
+-- 
+-- Note: For complex objects (arrays, nested tables), use cjson.encode/decode
+-- Example:
+--   session:set("user_data", cjson.encode({name="John", roles={"admin"}}))
+--   local user = cjson.decode(session:get("user_data"))
 
 -- Helper function to get login page HTML
 local function get_login_page()
