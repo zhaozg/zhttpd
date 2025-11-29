@@ -54,11 +54,11 @@ local memory_sessions = {}
 -- or a proper cryptographic random number generator.
 local function generate_token()
     -- Attempt to use /dev/urandom for better randomness (Unix systems)
-    local f = io.open('/dev/urandom', 'rb')
-    if f then
-        local data = f:read(24)
+    local success, f = pcall(io.open, '/dev/urandom', 'rb')
+    if success and f then
+        local read_success, data = pcall(f.read, f, 24)
         f:close()
-        if data then
+        if read_success and data and #data == 24 then
             -- Convert bytes to hex string
             local hex = "session_"
             for i = 1, #data do

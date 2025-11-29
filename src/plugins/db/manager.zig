@@ -67,17 +67,13 @@ pub const DbManager = struct {
             var config_buf: [1024]u8 = undefined;
             var uri_buf: [512]u8 = undefined;
             var uri_len: usize = 0;
-
-            // Check if URI will be truncated
-            if (cfg.uri.len > MAX_URI_LEN) {
-                std.log.warn("Data source '{s}': URI too long ({d} chars), will be truncated to {d} chars", .{ cfg.name, cfg.uri.len, MAX_URI_LEN });
-            }
+            var uri_truncated = false;
 
             // Escape special JSON characters in the URI
             // Handles: " \ \n \r \t \b \f (JSON spec characters)
             for (cfg.uri) |c| {
                 if (uri_len >= uri_buf.len - 2) {
-                    std.log.warn("Data source '{s}': URI truncated during JSON escaping", .{cfg.name});
+                    uri_truncated = true;
                     break;
                 }
                 switch (c) {
@@ -128,6 +124,11 @@ pub const DbManager = struct {
                         uri_len += 1;
                     },
                 }
+            }
+
+            // Log warning after escaping if URI was truncated
+            if (uri_truncated) {
+                std.log.warn("Data source '{s}': URI truncated from {d} chars during JSON escaping (buffer limit: {d})", .{ cfg.name, cfg.uri.len, uri_buf.len - 2 });
             }
 
             const db_config_json = std.fmt.bufPrint(&config_buf, "{{\"uri\":\"{s}\",\"pool_size\":{d}}}", .{
