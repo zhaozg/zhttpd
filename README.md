@@ -25,6 +25,7 @@
 - 🛡️ **速率限制** - 令牌桶算法的请求限速中间件
 - 🌐 **CORS 支持** - 可配置的跨域资源共享策略
 - 🔑 **认证中间件** - JWT/OAuth 认证接口，支持 Lua 自定义验证
+- 💾 **数据库插件** - 通过 zdbc 支持 SQLite、PostgreSQL、MySQL
 
 ### 🏗️ 架构设计
 
@@ -33,6 +34,7 @@
 - [http.zig](https://github.com/karlseguin/http.zig) - HTTP 协议实现
 - [ziglua](https://github.com/natecraddock/ziglua) - Lua 集成
 - [grapzig](https://github.com/yousif-wali/grapzig) - GraphQL 实现
+- [zdbc](https://github.com/zhaozg/zdbc) - 数据库抽象层（SQLite、PostgreSQL、MySQL）
 
 ### 📦 安装
 
@@ -209,6 +211,80 @@ curl -X POST http://localhost:8080/api/test \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello"}'
 ```
+
+#### 数据库插件
+
+zhttpd 通过 zdbc 库提供数据库集成，支持 SQLite、PostgreSQL 和 MySQL。支持多数据源配置。
+
+**配置数据库：**
+
+```yaml
+# 在 config.yaml 中配置
+enable_db: true
+
+# 默认数据源配置（简单模式）
+db_uri: "sqlite:///data/app.db"
+db_pool_size: 5
+
+# 多数据源配置（高级模式）
+# 当配置了 data_sources 时，db_uri 将被忽略
+data_sources:
+  - name: default
+    uri: "sqlite:///data/app.db"
+    pool_size: 5
+  - name: users_db
+    uri: "postgresql://user:password@localhost:5432/users"
+    pool_size: 10
+  - name: logs_db
+    uri: "mysql://user:password@localhost:3306/logs"
+    pool_size: 3
+```
+
+**在 Lua 中使用数据库：**
+
+```lua
+-- 数据库通过 context:db(name) 获取
+function handle(request, response, context)
+    -- 获取默认数据源
+    local db = context:db()
+    
+    -- 或获取指定名称的数据源
+    local users_db = context:db("users_db")
+    
+    if db then
+        -- 执行查询
+        local result, err = db:query("SELECT * FROM users WHERE id = ?", 1)
+        if not err then
+            for _, row in ipairs(result) do
+                print(row.name)
+            end
+        end
+
+        -- 执行语句
+        local affected, err = db:exec(
+            "INSERT INTO users (name, email) VALUES (?, ?)",
+            "张三", "zhangsan@example.com"
+        )
+
+        -- 事务支持
+        db:begin()
+        db:exec("UPDATE accounts SET balance = balance - 100 WHERE id = ?", 1)
+        db:exec("UPDATE accounts SET balance = balance + 100 WHERE id = ?", 2)
+        db:commit()
+
+        -- 获取数据库状态
+        local status = db:status()
+        print(status.connected)  -- true/false
+    end
+    
+    return { status = "ok" }
+end
+```
+
+详细示例请参阅：
+- `examples/lua/users_db.lua` - 数据库用户管理 API
+- `examples/lua/auth_db.lua` - 数据库认证示例
+- `examples/lua/db_test.lua` - 数据库测试工具
 
 #### GraphQL API
 
@@ -545,6 +621,7 @@ A high-performance, scalable, HTTP-compliant general-purpose web server built wi
 - 🌐 **CORS Support** - Configurable cross-origin resource sharing policies
 - 🔑 **Authentication Middleware** - JWT/OAuth interface with Lua-based validation
 - 🚫 **IP Access Control** - Blacklist/whitelist with CIDR support
+- 💾 **Database Plugin** - SQLite, PostgreSQL, MySQL support via zdbc
 
 ### 🏗️ Architecture
 
@@ -553,6 +630,7 @@ Built on excellent Zig ecosystem projects:
 - [http.zig](https://github.com/karlseguin/http.zig) - HTTP protocol implementation
 - [ziglua](https://github.com/natecraddock/ziglua) - Lua integration
 - [grapzig](https://github.com/yousif-wali/grapzig) - GraphQL implementation
+- [zdbc](https://github.com/zhaozg/zdbc) - Database abstraction layer (SQLite, PostgreSQL, MySQL)
 
 ### 📦 Installation
 

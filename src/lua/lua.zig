@@ -143,6 +143,7 @@ const ThreadLocalLua = struct {
         json.registerCjsonModule(lua, &getThreadLocalAllocator);
 
         // Register context module for Per-Request Context support
+        // Note: Database access is now through context:db(name) instead of global db
         context.registerContextModule(lua);
     }
 };

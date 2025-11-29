@@ -64,6 +64,11 @@ const observability = @import("../observability/observability.zig");
 const Metrics = observability.Metrics;
 const HealthCheck = observability.health.HealthCheck;
 const request_id = observability.request_id;
+// Plugins
+const db_plugin = @import("../plugins/db/db.zig");
+const DbPlugin = db_plugin.DbPlugin;
+const db_manager_mod = @import("../plugins/db/manager.zig");
+const DbManager = db_manager_mod.DbManager;
 // Individual handler modules
 const static_handler = @import("static_handler.zig");
 const lua_handler = @import("lua_handler.zig");
@@ -100,6 +105,8 @@ pub const AppContext = struct {
     start_time: i64 = 0,
     // Phase 7: Security
     ip_access_control: ?*IpAccessControl = null,
+    // Database manager (holds multiple named data sources)
+    db_manager: ?*DbManager = null,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -245,6 +252,48 @@ pub const AppContext = struct {
             ctx.logger.info("Server-Sent Events (SSE) support enabled", .{});
         }
 
+        // Initialize database manager if enabled
+        if (config.enable_db and config.data_sources.len > 0) {
+            // Convert config data sources to the format expected by DbManager
+            var ds_configs = allocator.alloc(db_manager_mod.DataSourceConfig, config.data_sources.len) catch {
+                ctx.logger.warn("Failed to allocate data source configs", .{});
+                ctx.db_manager = null;
+                return ctx;
+            };
+            defer allocator.free(ds_configs);
+
+            for (config.data_sources, 0..) |ds, i| {
+                ds_configs[i] = .{
+                    .name = ds.name,
+                    .uri = ds.uri,
+                    .pool_size = ds.pool_size,
+                };
+            }
+
+            const manager = allocator.create(DbManager) catch {
+                ctx.logger.warn("Failed to allocate database manager", .{});
+                ctx.db_manager = null;
+                return ctx;
+            };
+
+            manager.* = DbManager.init(allocator, ds_configs) catch |err| {
+                ctx.logger.warn("Failed to initialize database manager: {}", .{err});
+                allocator.destroy(manager);
+                ctx.db_manager = null;
+                return ctx;
+            };
+
+            ctx.db_manager = manager;
+            // Set global database manager for context module access
+            db_manager_mod.setGlobalManager(manager);
+            ctx.logger.info("Database manager initialized with {d} data source(s)", .{manager.count()});
+
+            // Log each data source
+            for (config.data_sources) |ds| {
+                ctx.logger.info("  - Data source '{s}': {s}", .{ ds.name, ds.uri });
+            }
+        }
+
         // Phase 5: Log observability status
         if (config.enable_metrics) {
             ctx.logger.info("Prometheus metrics endpoint: /metrics", .{});
@@ -276,6 +325,12 @@ pub const AppContext = struct {
         if (self.ip_access_control) |ip_control| {
             ip_control.deinit();
             self.allocator.destroy(ip_control);
+        }
+        if (self.db_manager) |manager| {
+            // Clear global manager pointer
+            db_manager_mod.setGlobalManager(null);
+            manager.deinit();
+            self.allocator.destroy(manager);
         }
         if (self.metrics) |metrics_ptr| {
             self.allocator.destroy(metrics_ptr);

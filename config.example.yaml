@@ -90,6 +90,38 @@ enable_ip_blacklist: false
 ip_blacklist: ""
 ip_whitelist: ""
 
+# Database Plugin Configuration
+# -----------------------------
+# Enable database connectivity through zdbc
+# Supports SQLite, PostgreSQL, and MySQL
+enable_db: false
+
+# Default database connection URI (creates a "default" data source)
+# Formats:
+#   SQLite:     sqlite:///path/to/database.db
+#   SQLite:     sqlite://:memory:  (in-memory database)
+#   PostgreSQL: postgresql://user:password@host:port/database
+#   MySQL:      mysql://user:password@host:port/database
+db_uri: ""
+
+# Connection pool size for default data source (1 = no pooling)
+db_pool_size: 5
+
+# Named data sources (optional, for multiple database connections)
+# Each data source can be accessed in Lua via context:db("name")
+# If not specified, only the "default" data source from db_uri is available
+#
+# data_sources:
+#   - name: default
+#     uri: "sqlite:///data/app.db"
+#     pool_size: 5
+#   - name: users_db
+#     uri: "postgresql://user:pass@localhost:5432/users"
+#     pool_size: 10
+#   - name: logs_db
+#     uri: "mysql://user:pass@localhost:3306/logs"
+#     pool_size: 3
+
 # Handler Configuration
 # ---------------------
 # Map URL patterns to handler names
