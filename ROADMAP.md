@@ -77,6 +77,13 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 - Lua database API
 - Missing: Connection pooling, prepared statement caching
 
+✅ **Session Management (New)**
+- cache.zig integration for thread-safe LRU caching
+- In-memory session storage with TTL
+- Lua session API via context:session()
+- Automatic session cookie handling
+- Configurable max sessions, TTL, and cookie options
+
 ---
 
 ## Gap Analysis: Complete Web Server
@@ -264,6 +271,7 @@ request_buffer_size: 65536
 | `Logger` | logger/logger.zig | ✅ Stable | ✅ Documented |
 | `Metrics` | observability/metrics.zig | ✅ Stable | ⚠️ Partial |
 | `DbPlugin` | plugins/db/db.zig | ⚠️ Evolving | ⚠️ Partial |
+| `SessionManager` | session/session.zig | ✅ Stable | ✅ Documented |
 
 **Recommendations:**
 1. Create `docs/API_REFERENCE.md` with all public interfaces
@@ -310,6 +318,16 @@ db:exec(sql, ...)     -- Execute INSERT/UPDATE/DELETE
 db:begin()            -- Start transaction
 db:commit()           -- Commit transaction
 db:rollback()         -- Rollback transaction
+
+-- Session API (via context)
+context:session()     -- Get or create session
+session:id()          -- Get session ID
+session:get(key)      -- Get session value
+session:set(key, val) -- Set session value
+session:delete(key)   -- Delete session value
+session:clear()       -- Clear all session data
+session:destroy()     -- Destroy session
+session:keys()        -- Get all session keys
 ```
 
 ---

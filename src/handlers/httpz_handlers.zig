@@ -69,6 +69,9 @@ const db_plugin = @import("../plugins/db/db.zig");
 const DbPlugin = db_plugin.DbPlugin;
 const db_manager_mod = @import("../plugins/db/manager.zig");
 const DbManager = db_manager_mod.DbManager;
+// Session management
+const session_mod = @import("../session/mod.zig");
+const SessionManager = session_mod.SessionManager;
 // Individual handler modules
 const static_handler = @import("static_handler.zig");
 const lua_handler = @import("lua_handler.zig");
@@ -107,6 +110,8 @@ pub const AppContext = struct {
     ip_access_control: ?*IpAccessControl = null,
     // Database manager (holds multiple named data sources)
     db_manager: ?*DbManager = null,
+    // Session manager
+    session_manager: ?*SessionManager = null,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -294,6 +299,35 @@ pub const AppContext = struct {
             }
         }
 
+        // Initialize session manager if enabled
+        if (config.enable_session) {
+            const session_manager = allocator.create(SessionManager) catch {
+                ctx.logger.warn("Failed to allocate session manager", .{});
+                return ctx;
+            };
+
+            session_manager.* = SessionManager.init(allocator, .{
+                .max_sessions = config.session_max_size,
+                .default_ttl = config.session_default_ttl,
+                .cookie_name = config.session_cookie_name,
+                .cookie_secure = config.session_cookie_secure,
+                .cookie_http_only = config.session_cookie_http_only,
+            }) catch |err| {
+                ctx.logger.warn("Failed to initialize session manager: {}", .{err});
+                allocator.destroy(session_manager);
+                return ctx;
+            };
+
+            ctx.session_manager = session_manager;
+            // Set global session manager for Lua context module access
+            session_mod.setGlobalManager(session_manager);
+            ctx.logger.info("Session manager initialized (max: {d}, ttl: {d}s, cookie: {s})", .{
+                config.session_max_size,
+                config.session_default_ttl,
+                config.session_cookie_name,
+            });
+        }
+
         // Phase 5: Log observability status
         if (config.enable_metrics) {
             ctx.logger.info("Prometheus metrics endpoint: /metrics", .{});
@@ -331,6 +365,12 @@ pub const AppContext = struct {
             db_manager_mod.setGlobalManager(null);
             manager.deinit();
             self.allocator.destroy(manager);
+        }
+        if (self.session_manager) |session_manager| {
+            // Clear global session manager pointer
+            session_mod.setGlobalManager(null);
+            session_manager.deinit();
+            self.allocator.destroy(session_manager);
         }
         if (self.metrics) |metrics_ptr| {
             self.allocator.destroy(metrics_ptr);

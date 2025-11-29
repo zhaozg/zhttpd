@@ -85,6 +85,13 @@ pub const Config = struct {
     db_uri: []const u8, // Default database connection URI (for backward compatibility)
     db_pool_size: u32, // Default connection pool size
     data_sources: []DataSourceConfig, // Named data sources (includes default if db_uri is set)
+    // Session management configuration
+    enable_session: bool, // Enable session management
+    session_max_size: u32, // Maximum number of sessions
+    session_default_ttl: u32, // Default session TTL in seconds
+    session_cookie_name: []const u8, // Cookie name for session ID
+    session_cookie_secure: bool, // Cookie secure flag (HTTPS only)
+    session_cookie_http_only: bool, // Cookie HttpOnly flag
     // Handler mappings from URL pattern to handler name
     handlers: []HandlerMapping,
     allocator: std.mem.Allocator,
@@ -111,6 +118,8 @@ pub const Config = struct {
         self.allocator.free(self.ip_blacklist);
         self.allocator.free(self.ip_whitelist);
         self.allocator.free(self.db_uri);
+        // Free session cookie name
+        self.allocator.free(self.session_cookie_name);
         // Free data sources
         for (self.data_sources) |ds| {
             self.allocator.free(ds.name);
@@ -243,6 +252,13 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .db_uri = try allocator.dupe(u8, ""),
         .db_pool_size = 5,
         .data_sources = try allocator.alloc(DataSourceConfig, 0),
+        // Session management (disabled by default)
+        .enable_session = false,
+        .session_max_size = 10000,
+        .session_default_ttl = 1800, // 30 minutes
+        .session_cookie_name = try allocator.dupe(u8, "ZHTTPD_SESSION"),
+        .session_cookie_secure = true,
+        .session_cookie_http_only = true,
         // Default handler mappings
         .handlers = try getDefaultHandlers(allocator),
         .allocator = allocator,
@@ -301,6 +317,13 @@ const YamlConfig = struct {
     enable_db: ?bool = null,
     db_uri: ?[]const u8 = null,
     db_pool_size: ?u32 = null,
+    // Session management configuration
+    enable_session: ?bool = null,
+    session_max_size: ?u32 = null,
+    session_default_ttl: ?u32 = null,
+    session_cookie_name: ?[]const u8 = null,
+    session_cookie_secure: ?bool = null,
+    session_cookie_http_only: ?bool = null,
 };
 
 /// Parse YAML content using zig-yaml library
@@ -376,6 +399,13 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .db_uri = try allocator.dupe(u8, parsed.db_uri orelse ""),
         .db_pool_size = parsed.db_pool_size orelse 5,
         .data_sources = try parseDataSourcesFromYaml(allocator, &y, parsed.db_uri, parsed.db_pool_size orelse 5),
+        // Session management configuration
+        .enable_session = parsed.enable_session orelse false,
+        .session_max_size = parsed.session_max_size orelse 10000,
+        .session_default_ttl = parsed.session_default_ttl orelse 1800,
+        .session_cookie_name = try allocator.dupe(u8, parsed.session_cookie_name orelse "ZHTTPD_SESSION"),
+        .session_cookie_secure = parsed.session_cookie_secure orelse true,
+        .session_cookie_http_only = parsed.session_cookie_http_only orelse true,
         // Handler mappings - parse manually from raw YAML since zig-yaml doesn't support maps well
         .handlers = try parseHandlersFromYaml(allocator, &y),
         .allocator = allocator,

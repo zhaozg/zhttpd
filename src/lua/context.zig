@@ -44,6 +44,9 @@ const httpz = @import("httpz");
 const json = @import("json.zig");
 const db_manager = @import("../plugins/db/manager.zig");
 const db_plugin = @import("../plugins/db/db.zig");
+const session_mod = @import("../session/mod.zig");
+const SessionManager = session_mod.SessionManager;
+const SESSION_ID_HEX_LEN = session_mod.SESSION_ID_HEX_LEN;
 
 /// Opaque pointer type for Request userdata
 /// We store the pointer as light userdata since the request lifetime
@@ -84,6 +87,9 @@ pub fn registerContextModule(lua: *ziglua.Lua) void {
 
     // Register Context metatable
     registerContextMetatable(lua);
+
+    // Register Session metatable
+    session_mod.registerSessionMetatable(lua);
 }
 
 /// Register the Request metatable with all its methods
@@ -177,7 +183,7 @@ fn registerContextMetatable(lua: *ziglua.Lua) void {
 }
 
 /// Custom __index metamethod for context
-/// Provides access to db(name) method while allowing user-defined fields
+/// Provides access to db(name) and session() methods while allowing user-defined fields
 fn contextIndex(lua: *ziglua.Lua) i32 {
     // Stack: table, key
     const key = lua.toString(2) catch {
@@ -189,6 +195,12 @@ fn contextIndex(lua: *ziglua.Lua) i32 {
     if (std.mem.eql(u8, key, "db")) {
         // Return the db function
         lua.pushFunction(ziglua.wrap(contextDb));
+        return 1;
+    }
+
+    if (std.mem.eql(u8, key, "session")) {
+        // Return the session function
+        lua.pushFunction(ziglua.wrap(contextSession));
         return 1;
     }
 
@@ -272,6 +284,87 @@ fn contextDb(lua: *ziglua.Lua) i32 {
     }
 
     lua.setMetatable(-2);
+    return 1;
+}
+
+/// context:session() - Get or create a session for the current request
+/// Session ID is extracted from cookie or a new one is created
+fn contextSession(lua: *ziglua.Lua) i32 {
+    const manager = session_mod.getGlobalManager() orelse {
+        lua.pushNil();
+        _ = lua.pushString("Session management not configured");
+        return 2;
+    };
+
+    // Try to get session ID from current request cookie
+    var session_id: ?[SESSION_ID_HEX_LEN]u8 = null;
+
+    if (current_request) |req| {
+        // Look for session cookie
+        if (req.headers.get("cookie")) |cookie_header| {
+            // Parse cookies to find session ID
+            // Cookie format: name=value; name2=value2
+            const cookie_name = manager.config.cookie_name;
+            var cookie_iter = std.mem.splitScalar(u8, cookie_header, ';');
+            while (cookie_iter.next()) |cookie| {
+                const trimmed = std.mem.trim(u8, cookie, " ");
+                // Use startsWith for correct cookie name matching
+                if (std.mem.startsWith(u8, trimmed, cookie_name) and
+                    trimmed.len > cookie_name.len and trimmed[cookie_name.len] == '=')
+                {
+                    const value = trimmed[cookie_name.len + 1 ..];
+                    if (value.len == SESSION_ID_HEX_LEN) {
+                        // Validate session ID contains only hex characters [0-9a-f]
+                        var valid = true;
+                        for (value) |c| {
+                            if (!((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'))) {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        if (valid) {
+                            var id: [SESSION_ID_HEX_LEN]u8 = undefined;
+                            @memcpy(&id, value);
+                            session_id = id;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Get or create session
+    const id = manager.getOrCreate(if (session_id) |*id| id else null) catch {
+        lua.pushNil();
+        _ = lua.pushString("Failed to create session");
+        return 2;
+    };
+
+    // If this is a new session, set the cookie in the response
+    if (session_id == null) {
+        if (current_response) |res| {
+            // Build Set-Cookie header
+            var cookie_buf: [512]u8 = undefined;
+            const cookie_value = std.fmt.bufPrint(&cookie_buf, "{s}={s}; Path=/; Max-Age={d}{s}{s}", .{
+                manager.config.cookie_name,
+                id,
+                manager.config.default_ttl,
+                if (manager.config.cookie_http_only) "; HttpOnly" else "",
+                if (manager.config.cookie_secure) "; Secure" else "",
+            }) catch |err| {
+                // Cookie formatting failed - this is unlikely but we continue without setting cookie
+                std.log.warn("Failed to format session cookie: {}", .{err});
+                session_mod.pushSession(lua, id);
+                return 1;
+            };
+
+            res.headers.add("Set-Cookie", cookie_value);
+        }
+    }
+
+    // Push session object
+    session_mod.pushSession(lua, id);
     return 1;
 }
 
