@@ -407,10 +407,13 @@ fn luaToSessionValue(lua: *ziglua.Lua, idx: i32, allocator: std.mem.Allocator) !
                 lua.pushNil();
                 while (lua.next(idx)) {
                     // Get key as string
-                    const key_str = switch (lua.typeOf(-2)) {
-                        .string => lua.toString(-2) catch {
-                            lua.pop(2);
-                            continue;
+                    const key_copy: []u8 = switch (lua.typeOf(-2)) {
+                        .string => blk2: {
+                            const str = lua.toString(-2) catch {
+                                lua.pop(2);
+                                continue;
+                            };
+                            break :blk2 try allocator.dupe(u8, str);
                         },
                         .number => blk2: {
                             // Convert number to string
@@ -423,15 +426,14 @@ fn luaToSessionValue(lua: *ziglua.Lua, idx: i32, allocator: std.mem.Allocator) !
                                 lua.pop(2);
                                 continue;
                             };
-                            break :blk2 s;
+                            // Duplicate immediately before buf goes out of scope
+                            break :blk2 try allocator.dupe(u8, s);
                         },
                         else => {
                             lua.pop(2);
                             continue;
                         },
                     };
-
-                    const key_copy = try allocator.dupe(u8, key_str);
                     errdefer allocator.free(key_copy);
 
                     const val = try luaToSessionValue(lua, -1, allocator);

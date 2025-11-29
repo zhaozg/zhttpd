@@ -106,7 +106,9 @@ pub const Session = struct {
         var total: u32 = SESSION_ID_HEX_LEN + 16; // ID + timestamps
         var iter = self.data.iterator();
         while (iter.next()) |entry| {
-            total +|= @intCast(@min(entry.key_ptr.*.len, std.math.maxInt(u32) - total));
+            // Use saturating addition to prevent overflow
+            const key_len: u32 = @intCast(@min(entry.key_ptr.*.len, std.math.maxInt(u32)));
+            total +|= key_len;
             total +|= entry.value_ptr.size();
         }
         return total;

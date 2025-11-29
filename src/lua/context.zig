@@ -341,11 +341,14 @@ fn contextSession(lua: *ziglua.Lua) i32 {
                 manager.config.default_ttl,
                 if (manager.config.cookie_http_only) "; HttpOnly" else "",
                 if (manager.config.cookie_secure) "; Secure" else "",
-            }) catch "";
+            }) catch |err| {
+                // Cookie formatting failed - this is unlikely but we continue without setting cookie
+                std.log.warn("Failed to format session cookie: {}", .{err});
+                session_mod.pushSession(lua, id);
+                return 1;
+            };
 
-            if (cookie_value.len > 0) {
-                res.headers.add("Set-Cookie", cookie_value);
-            }
+            res.headers.add("Set-Cookie", cookie_value);
         }
     }
 

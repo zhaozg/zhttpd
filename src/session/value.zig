@@ -62,10 +62,11 @@ pub const SessionValue = union(enum) {
         return .{ .string = value };
     }
 
-    /// Create an empty array
-    pub fn initArray(allocator: std.mem.Allocator, capacity: usize) !Self {
-        const arr = try allocator.alloc(SessionValue, capacity);
-        return .{ .array = arr[0..0] };
+    /// Create an empty array with optional pre-allocation
+    /// Note: Returns an empty slice. Elements must be added using append patterns.
+    /// The caller is responsible for tracking the actual length.
+    pub fn initEmptyArray() Self {
+        return .{ .array = &.{} };
     }
 
     /// Create an empty object
@@ -91,7 +92,9 @@ pub const SessionValue = union(enum) {
                 var total: u32 = 16; // HashMap overhead
                 var iter = o.iterator();
                 while (iter.next()) |entry| {
-                    total +|= @intCast(@min(entry.key_ptr.*.len, std.math.maxInt(u32) - total));
+                    // Use saturating addition to prevent overflow
+                    const key_len: u32 = @intCast(@min(entry.key_ptr.*.len, std.math.maxInt(u32)));
+                    total +|= key_len;
                     total +|= entry.value_ptr.size();
                 }
                 break :blk total;
