@@ -10,9 +10,12 @@
 //!     -- Get session ID
 //!     local sid = session:id()
 //!
-//!     -- Get/Set values
+//!     -- Get/Set values (supports binary data)
 //!     session:set("user_id", 12345)
 //!     local user_id = session:get("user_id")
+//!
+//!     -- Binary data is fully supported
+//!     session:set("binary_data", string.char(0, 1, 2, 255))
 //!
 //!     -- Delete a key
 //!     session:delete("temp_data")
@@ -26,6 +29,10 @@
 //!     return { status = "ok" }
 //! end
 //! ```
+//!
+//! ## Binary String Support
+//! Lua strings can contain arbitrary binary data including null bytes.
+//! This is fully supported - the Zig side uses length-based string operations.
 //!
 //! ## Thread Safety
 //! Session access is thread-safe. Each request gets its own session reference.

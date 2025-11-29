@@ -77,11 +77,14 @@ Benefits of using cache.zig for file cache:
 ### 2.1 Design Rationale
 
 Session values support primitive types for simplicity:
-- Strings (most common - user data, tokens, JSON for complex objects)
+- Strings (binary-safe - supports arbitrary bytes including null)
 - Integers (counters, timestamps)
 - Floats (metrics)
 - Booleans (flags)
 - Null
+
+**Binary Data Support**: Lua strings can contain arbitrary binary data including null bytes.
+This is fully supported on the Zig side using length-based string operations.
 
 **Note**: For complex objects (arrays, nested objects), use JSON strings.
 This simplifies implementation while maintaining flexibility via cjson.encode()/cjson.decode() in Lua.
@@ -90,13 +93,13 @@ This simplifies implementation while maintaining flexibility via cjson.encode()/
 
 ```zig
 /// Session value type supporting primitive data types
-/// For complex objects, store them as JSON strings
+/// Strings are binary-safe (can contain null bytes)
 pub const SessionValue = union(enum) {
     null: void,
     boolean: bool,
     integer: i64,
     float: f64,
-    string: []const u8,
+    string: []const u8,  // Binary-safe, length-based
     
     /// Size estimation for cache eviction (bytes)
     pub fn size(self: SessionValue) u32 {

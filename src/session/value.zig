@@ -8,7 +8,12 @@
 //! - boolean: true/false
 //! - integer: 64-bit signed integer
 //! - float: 64-bit floating point
-//! - string: UTF-8 string (can store JSON for complex objects)
+//! - string: Binary-safe string (supports arbitrary bytes including null)
+//!
+//! ## Binary Data Support
+//! Lua strings are binary-safe and can contain any bytes including null bytes.
+//! This is fully supported on the Zig side - strings are stored and retrieved
+//! using length-based operations, not null-terminated.
 //!
 //! ## Complex Objects
 //! For complex objects (arrays, nested objects), use JSON strings.
@@ -198,6 +203,24 @@ test "SessionValue JSON string for complex objects" {
     defer json_val.deinit(allocator);
 
     try testing.expectEqualStrings(json_str, json_val.asString().?);
+}
+
+test "SessionValue binary string support" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Binary data with null bytes (common in Lua)
+    const binary_data = "hello\x00world\x00\x01\x02\x03";
+
+    var bin_val = try SessionValue.initString(allocator, binary_data);
+    defer bin_val.deinit(allocator);
+
+    const retrieved = bin_val.asString().?;
+    try testing.expect(retrieved.len == binary_data.len);
+    try testing.expectEqualSlices(u8, binary_data, retrieved);
+
+    // Verify size calculation includes full binary length
+    try testing.expect(bin_val.size() == binary_data.len + 1);
 }
 
 test "SessionValue clone" {
