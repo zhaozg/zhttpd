@@ -112,6 +112,8 @@ pub const AppContext = struct {
     db_manager: ?*DbManager = null,
     // Session manager
     session_manager: ?*SessionManager = null,
+    // Cached absolute path for static directory (optimization: avoids realpath syscall per request)
+    static_dir_abs: ?[]const u8 = null,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -165,6 +167,9 @@ pub const AppContext = struct {
             .metrics = metrics_ptr,
             .start_time = std.time.timestamp(),
         };
+
+        // Cache the absolute path of static directory (optimization: avoids realpath syscall per request)
+        ctx.static_dir_abs = std.fs.cwd().realpathAlloc(allocator, config.static_dir) catch null;
 
         // Initialize Lua handler if enabled
         if (config.enable_lua) {
@@ -374,6 +379,10 @@ pub const AppContext = struct {
         }
         if (self.metrics) |metrics_ptr| {
             self.allocator.destroy(metrics_ptr);
+        }
+        // Free cached static directory path
+        if (self.static_dir_abs) |static_dir_abs| {
+            self.allocator.free(static_dir_abs);
         }
         self.file_cache.deinit();
         self.allocator.destroy(self.file_cache);

@@ -190,8 +190,10 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
         },
         .string => {
             const s = lua.toString(index) catch "";
+            // Pre-allocate buffer with estimated size (string length + quotes + some escape overhead)
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(allocator);
+            try buf.ensureTotalCapacity(allocator, s.len + 2 + s.len / 8);
             try buf.append(allocator, '"');
             try appendJsonEscapedString(&buf, allocator, s);
             try buf.append(allocator, '"');
@@ -207,8 +209,12 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
             const len = lua.rawLen(index);
             const is_array = len > 0;
 
+            // Pre-allocate buffer with estimated size based on table length
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(allocator);
+            // Estimate: each element ~20 bytes average for JSON values
+            const estimated_size: usize = if (is_array) @as(usize, @intCast(len)) * 20 + 2 else 128;
+            try buf.ensureTotalCapacity(allocator, estimated_size);
 
             if (is_array) {
                 try buf.append(allocator, '[');
