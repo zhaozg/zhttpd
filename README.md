@@ -583,16 +583,27 @@ zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # 生产构建
 > ⚠️ **macOS 用户注意**：由于上游 ziglua 库的问题，LuaJIT 在 macOS 上可能会出现链接错误（"unexpected pointer encoding"）。
 > 建议 macOS 用户暂时使用默认的 Lua 5.4 引擎。详见 [ziglua#issues](https://github.com/natecraddock/ziglua/issues)。
 
-#### 内置 cjson 模块
+#### 内置 json 模块
 
-zhttpd 内置了 cjson 兼容模块，提供 JSON 编解码功能：
+zhttpd 内置了高性能 json 模块（基于 [lua-cjson](https://github.com/mpx/lua-cjson)），提供 JSON 编解码功能：
 
 ```lua
 -- 在 Lua 脚本中使用
 local data = {name = "test", value = 123}
-local json_str = cjson.encode(data)  -- 编码为 JSON
-local parsed = cjson.decode(json_str)  -- 解码 JSON
+local json_str = json.encode(data)  -- 编码为 JSON
+local parsed = json.decode(json_str)  -- 解码 JSON
 ```
+
+**JSON 模块性能** (ReleaseFast, 100,000 次迭代):
+
+| 操作 | 性能 | 说明 |
+|------|------|------|
+| 简单编码 | ~1,514,000 ops/s | 基础对象编码 |
+| 复杂编码 | ~305,000 ops/s | 嵌套对象和数组 |
+| 简单解码 | ~62,000 ops/s | 基础 JSON 字符串 |
+| 复杂解码 | ~138,000 ops/s | 复杂嵌套结构 |
+
+> 💡 zhttpd 的 json 模块集成了 lua-cjson (MIT License)，使用 `-O3` 优化编译，提供原生级别的 JSON 处理性能。
 
 详细文档请参阅 [Lua C 模块集成指南](docs/LUA_C_MODULES.md)。
 
@@ -658,7 +669,7 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 - ✅ WebSocket 支持 (Lua 消息处理)
 - ✅ GraphQL 订阅
 - ✅ LuaJIT 支持（可选构建选项）
-- ✅ 内置 cjson 模块
+- ✅ 内置 json 模块
 
 未来的增强包括：
 - 完整的 GraphQL 实现
@@ -878,7 +889,7 @@ Current version (v0.3.0) has completed all core features and advanced middleware
 - ✅ WebSocket support with Lua message handling
 - ✅ GraphQL subscriptions
 - ✅ LuaJIT support (optional build option)
-- ✅ Built-in cjson module
+- ✅ Built-in json module
 
 Future enhancements include:
 - Full GraphQL implementation
@@ -917,16 +928,27 @@ zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # Production build
 > ⚠️ **macOS Users Note**: Due to an upstream issue in the ziglua library, LuaJIT may fail to link on macOS with an "unexpected pointer encoding" error.
 > macOS users are recommended to use the default Lua 5.4 engine for now. See [ziglua#issues](https://github.com/natecraddock/ziglua/issues) for updates.
 
-#### Built-in cjson Module
+#### Built-in json Module
 
-zhttpd includes a built-in cjson-compatible module for JSON encoding/decoding:
+zhttpd includes a high-performance json module (based on [lua-cjson](https://github.com/mpx/lua-cjson)) for JSON encoding/decoding:
 
 ```lua
 -- In Lua scripts
 local data = {name = "test", value = 123}
-local json_str = cjson.encode(data)  -- Encode to JSON
-local parsed = cjson.decode(json_str)  -- Decode JSON
+local json_str = json.encode(data)  -- Encode to JSON
+local parsed = json.decode(json_str)  -- Decode JSON
 ```
+
+**JSON Module Performance** (ReleaseFast, 100,000 iterations):
+
+| Operation | Performance | Notes |
+|-----------|-------------|-------|
+| Simple Encode | ~1,514,000 ops/s | Basic object encoding |
+| Complex Encode | ~305,000 ops/s | Nested objects and arrays |
+| Simple Decode | ~62,000 ops/s | Basic JSON strings |
+| Complex Decode | ~138,000 ops/s | Complex nested structures |
+
+> 💡 zhttpd's json module integrates lua-cjson (MIT License), compiled with `-O3` optimization for native-level JSON processing performance.
 
 See [Lua C Module Integration Guide](docs/LUA_C_MODULES.md) for details.
 

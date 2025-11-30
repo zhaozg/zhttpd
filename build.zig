@@ -70,6 +70,63 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Build lua-cjson as a static library for high-performance JSON handling
+    // Source: https://github.com/mpx/lua-cjson (MIT License)
+    // Performance optimizations:
+    // - Always use ReleaseFast for lua-cjson to maintain consistent performance
+    // - This ensures JSON operations are fast even during development
+    const lua_cjson_module = b.createModule(.{
+        .target = target,
+        // Always use ReleaseFast for lua-cjson for maximum JSON performance
+        // Debug builds still get fast JSON, while other code remains debuggable
+        .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
+    });
+    const lua_cjson = b.addLibrary(.{
+        .name = "lua_cjson",
+        .linkage = .static,
+        .root_module = lua_cjson_module,
+    });
+
+    // lua-cjson C source files
+    const cjson_sources = [_][]const u8{
+        "vendor/lua-cjson/lua_cjson.c",
+        "vendor/lua-cjson/strbuf.c",
+        "vendor/lua-cjson/fpconv.c",
+        "vendor/lua-cjson/dtoa.c",
+        "vendor/lua-cjson/g_fmt.c",
+    };
+
+    // Performance optimization flags for lua-cjson
+    // These flags maximize JSON encoding/decoding performance
+    const cjson_cflags = [_][]const u8{
+        "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
+        "-O3", // Maximum optimization level
+        "-funroll-loops", // Unroll loops for better performance
+        "-fomit-frame-pointer", // Free up a register for better optimization
+        "-DNDEBUG", // Disable assertions in release
+        "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
+        "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
+    };
+
+    // Add lua-cjson source files
+    lua_cjson_module.addCSourceFiles(.{
+        .files = &cjson_sources,
+        .flags = &cjson_cflags,
+    });
+
+    // Add lua-cjson include path (for strbuf.h, fpconv.h, etc.)
+    lua_cjson_module.addIncludePath(b.path("vendor/lua-cjson"));
+
+    // Get Lua include path from ziglua's upstream dependency
+    // ziglua fetches the appropriate Lua source (5.4 or LuaJIT) as a lazy dependency
+    const lua_upstream_name = if (lua_lang == .luajit) "luajit" else "lua54";
+    if (ziglua.builder.lazyDependency(lua_upstream_name, .{})) |upstream| {
+        lua_cjson_module.addIncludePath(upstream.path("src"));
+    }
+
+    // Link libc for C standard library functions
+    lua_cjson.linkLibC();
+
     // Build configuration options to expose to the runtime
     const build_options = b.addOptions();
     build_options.addOption(LuaLang, "lua_lang", lua_lang);
@@ -96,6 +153,9 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("zdbc", zdbc.module("zdbc"));
     exe.root_module.addImport("cache", cache_zig.module("cache"));
 
+    // Link lua-cjson library
+    exe.linkLibrary(lua_cjson);
+
     b.installArtifact(exe);
 
     // Run step
@@ -110,8 +170,22 @@ pub fn build(b: *std.Build) void {
 
     // Test step
     const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
+
+    // Add the same dependencies to tests
+    exe_tests.root_module.addOptions("build_options", build_options);
+    exe_tests.root_module.addImport("httpz", httpz.module("httpz"));
+    exe_tests.root_module.addImport("ziglua", ziglua.module("zlua"));
+    exe_tests.root_module.addImport("grapzig", grapzig.module("grapzig"));
+    exe_tests.root_module.addImport("yaml", yaml.module("yaml"));
+    exe_tests.root_module.addImport("zdbc", zdbc.module("zdbc"));
+    exe_tests.root_module.addImport("cache", cache_zig.module("cache"));
+    exe_tests.linkLibrary(lua_cjson);
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 

@@ -1,6 +1,6 @@
 # Lua C Module Integration Guide
 
-This guide explains how to use Lua modules in zhttpd, including the built-in cjson module and considerations for external C modules.
+This guide explains how to use Lua modules in zhttpd, including the built-in json module and considerations for external C modules.
 
 ## Overview
 
@@ -9,13 +9,13 @@ zhttpd supports two approaches for Lua module integration:
 1. **Built-in Modules** (Recommended): Modules implemented in Zig and exposed to Lua
 2. **External C Modules**: Traditional Lua C modules (requires disabling sandbox)
 
-## Built-in cjson Module
+## Built-in json Module
 
-zhttpd includes a built-in cjson-compatible module that provides JSON encoding and decoding capabilities. This module is implemented in Zig and is available by default when the sandbox is enabled.
+zhttpd includes a built-in json module that provides JSON encoding and decoding capabilities. This module is implemented in Zig and is available by default.
 
 ### API Reference
 
-#### `cjson.encode(value)`
+#### `json.encode(value)`
 
 Converts a Lua value to a JSON string.
 
@@ -34,11 +34,11 @@ local data = {
     scores = {100, 95, 87}
 }
 
-local json_str = cjson.encode(data)
+local json_str = json.encode(data)
 -- Result: {"name":"John","age":30,"active":true,"scores":[100,95,87]}
 ```
 
-#### `cjson.decode(json_string)`
+#### `json.decode(json_string)`
 
 Parses a JSON string and returns the corresponding Lua value.
 
@@ -51,16 +51,16 @@ Parses a JSON string and returns the corresponding Lua value.
 **Example:**
 ```lua
 local json_str = '{"status":"ok","count":42,"items":["a","b","c"]}'
-local data = cjson.decode(json_str)
+local data = json.decode(json_str)
 
 print(data.status)  -- "ok"
 print(data.count)   -- 42
 print(data.items[1]) -- "a"
 ```
 
-#### `cjson.null`
+#### `json.null`
 
-A special value representing JSON null. When sandbox is enabled, this is Lua's `nil` value.
+A special value representing JSON null. This is Lua's `nil` value.
 
 ### Complete Example
 
@@ -85,18 +85,18 @@ function handle_request(request)
     return response
 end
 
--- You can also use cjson for intermediate processing
+-- You can also use json for intermediate processing
 function process_complex_data(request)
     -- Encode a Lua table to JSON string
     local internal_data = {
         operation = "transform",
         input = request.body
     }
-    local json_payload = cjson.encode(internal_data)
+    local json_payload = json.encode(internal_data)
     
     -- Decode JSON from an external source
     local external_json = '{"config": {"enabled": true}}'
-    local config = cjson.decode(external_json)
+    local config = json.decode(external_json)
     
     return {
         processed = true,
@@ -193,7 +193,7 @@ local mymodule = require("mymodule")
 
 ### 1. Prefer Built-in Modules
 
-The built-in cjson module is:
+The built-in json module is:
 - Safe (works within sandbox)
 - Fast (implemented in Zig, no FFI overhead)
 - Compatible with both Lua 5.4 and LuaJIT
@@ -229,7 +229,7 @@ end
 ```lua
 function safe_decode(json_str)
     local success, result = pcall(function()
-        return cjson.decode(json_str)
+        return json.decode(json_str)
     end)
     
     if success then
@@ -270,9 +270,9 @@ end
 
 ## Troubleshooting
 
-### "cjson not found" error
+### "json not found" error
 
-The `cjson` global is only available when sandbox is enabled (`lua_sandbox_enabled: true`).
+The `json` global should be available automatically. Check that zhttpd is initialized correctly.
 
 ### "Lua handler execution failed" error
 
@@ -292,7 +292,7 @@ LuaJIT has specific platform requirements. If the build fails:
 
 | Feature | Lua 5.4 | LuaJIT |
 |---------|---------|--------|
-| Built-in cjson | ✅ | ✅ |
+| Built-in json | ✅ | ✅ |
 | Sandbox | ✅ | ✅ |
 | Package library (when sandbox disabled) | ✅ | ✅ |
 | FFI | ❌ | ✅ |

@@ -98,6 +98,13 @@ const ThreadLocalLua = struct {
     fn init(allocator: std.mem.Allocator, sandbox_config: SandboxConfig) !ThreadLocalLua {
         var lua = try ziglua.Lua.init(allocator);
         lua.openLibs();
+
+        // Always register built-in json module (safe for use with or without sandbox)
+        json.registerJsonModule(lua, &getThreadLocalAllocator);
+
+        // Always register context module for Per-Request Context support
+        context.registerContextModule(lua);
+
         if (sandbox_config.enable_sandbox) {
             applySandbox(lua);
         }
@@ -158,13 +165,6 @@ const ThreadLocalLua = struct {
         // Remove package library (can load arbitrary C libraries via package.loadlib)
         lua.pushNil();
         lua.setGlobal("package");
-
-        // Register built-in cjson module (safe, sandboxed JSON handling)
-        json.registerCjsonModule(lua, &getThreadLocalAllocator);
-
-        // Register context module for Per-Request Context support
-        // Note: Database access is now through context:db(name) instead of global db
-        context.registerContextModule(lua);
     }
 };
 
@@ -627,14 +627,14 @@ test "lua handler bytecode cache clear" {
     try testing.expect(handler.bytecode_cache.count() == 0);
 }
 
-test "cjson module encode and decode" {
+test "json module encode and decode" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
     var cache = FileCache.init(allocator, .auto, 1024 * 1024);
     defer cache.deinit();
 
-    // Enable sandbox to test cjson module (cjson is only available with sandbox enabled)
+    // Enable sandbox to test json module (json is only available with sandbox enabled)
     const config = SandboxConfig{
         .max_instructions = 100_000,
         .enable_sandbox = true,
@@ -648,9 +648,9 @@ test "cjson module encode and decode" {
 
     const result = try handler.executeScriptEx(
         arena.allocator(),
-        "cjson_test",
+        "json_test",
         "GET",
-        "/api/cjson_test",
+        "/api/json_test",
         "",
         &[_]KeyValue{},
         &[_]KeyValue{},
@@ -659,8 +659,8 @@ test "cjson module encode and decode" {
     // Verify we got a successful response
     try testing.expect(result.len > 0);
     try testing.expect(std.mem.indexOf(u8, result, "success") != null);
-    // Verify cjson was available
-    try testing.expect(std.mem.indexOf(u8, result, "cjson_available") != null);
+    // Verify json was available
+    try testing.expect(std.mem.indexOf(u8, result, "json_available") != null);
     try testing.expect(std.mem.indexOf(u8, result, "true") != null);
     // Verify special character escaping works
     try testing.expect(std.mem.indexOf(u8, result, "special_chars_valid") != null);

@@ -87,7 +87,7 @@ Session values support primitive types for simplicity:
 This is fully supported on the Zig side using length-based string operations.
 
 **Note**: For complex objects (arrays, nested objects), use JSON strings.
-This simplifies implementation while maintaining flexibility via cjson.encode()/cjson.decode() in Lua.
+This simplifies implementation while maintaining flexibility via json.encode()/json.decode() in Lua.
 
 ### 2.2 Session Value Definition
 
@@ -119,10 +119,10 @@ For storing complex data in sessions, use JSON strings:
 ```lua
 -- Store complex object as JSON
 local user_data = { name = "John", roles = {"admin", "user"} }
-session:set("user", cjson.encode(user_data))
+session:set("user", json.encode(user_data))
 
 -- Retrieve and decode
-local user = cjson.decode(session:get("user"))
+local user = json.decode(session:get("user"))
 print(user.name)  -- "John"
 ```
 

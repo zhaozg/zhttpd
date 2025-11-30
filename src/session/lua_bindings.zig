@@ -345,7 +345,7 @@ fn luaToSessionValue(lua: *ziglua.Lua, idx: i32, allocator: std.mem.Allocator) !
             break :blk try SessionValue.initString(allocator, str);
         },
         .table => blk: {
-            // For tables, suggest using cjson.encode() in Lua before storing
+            // For tables, suggest using json.encode() in Lua before storing
             // Return null for now - users should convert tables to JSON strings explicitly
             break :blk SessionValue.initNull();
         },
