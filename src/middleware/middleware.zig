@@ -19,8 +19,8 @@
 // To add a new middleware:
 // 1. Create a new file in middleware/ following the existing patterns
 // 2. Export the types in this module
-// 3. Add the middleware to AppContext in httpz_handlers.zig
-// 4. Add the check in applyMiddleware() function
+// 3. Add the middleware to AppContext in handlers/context.zig
+// 4. Add the check in applyMiddleware() function in server.zig
 //
 // See docs/HTTP_REQUEST_HANDLING.md for detailed design documentation.
 
