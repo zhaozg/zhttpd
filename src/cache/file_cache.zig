@@ -76,6 +76,7 @@ pub const FileCache = struct {
             .allocator = allocator,
             .reload_mode = reload_mode,
             .max_cache_file_size = max_cache_file_size,
+            .put_mutex = .{},
         };
     }
 
@@ -120,15 +121,11 @@ pub const FileCache = struct {
         self.put_mutex.lock();
         defer self.put_mutex.unlock();
 
-        self.cache.put(key, entry, .{
+        // If put fails, errdefer will handle cleanup
+        try self.cache.put(key, entry, .{
             .ttl = DEFAULT_FILE_TTL,
             .size = entry.size(),
-        }) catch |err| {
-            // Clean up on failure to avoid memory leak
-            self.allocator.free(owned_content);
-            if (owned_etag) |e| self.allocator.free(e);
-            return err;
-        };
+        });
     }
 
     /// Load file content with caching based on reload mode
