@@ -17,6 +17,13 @@ const ziglua = @import("ziglua");
 pub const JSON_MAX_SAFE_INTEGER: f64 = 9007199254740992;
 pub const JSON_MIN_SAFE_INTEGER: f64 = -9007199254740992;
 
+/// Buffer pre-allocation constants for JSON encoding
+/// These are conservative upper-bound estimates to reduce memory reallocations
+/// In practice, most strings have far fewer escapable characters
+const STRING_ESCAPE_OVERHEAD_RATIO = 4; // Worst case: 1 in 4 chars may need escaping
+const ARRAY_ELEMENT_AVG_SIZE = 20; // Average JSON element size (e.g., "123" or "\"text\"")
+const OBJECT_DEFAULT_SIZE = 128; // Default buffer for objects with unknown size
+
 /// Escape a string for JSON output, appending the escaped content to the buffer
 /// Handles quotes, backslashes, and control characters according to RFC 8259
 pub fn appendJsonEscapedString(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, s: []const u8) !void {
@@ -190,8 +197,13 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
         },
         .string => {
             const s = lua.toString(index) catch "";
+            // Pre-allocate buffer with estimated size (string length + quotes + escape overhead)
+            // Use saturating arithmetic to prevent overflow for very large strings
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(allocator);
+            const escape_overhead = s.len / STRING_ESCAPE_OVERHEAD_RATIO;
+            const estimated_size = s.len +| 2 +| escape_overhead;
+            try buf.ensureTotalCapacity(allocator, estimated_size);
             try buf.append(allocator, '"');
             try appendJsonEscapedString(&buf, allocator, s);
             try buf.append(allocator, '"');
@@ -207,8 +219,12 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
             const len = lua.rawLen(index);
             const is_array = len > 0;
 
+            // Pre-allocate buffer with estimated size based on table length
+            // Use saturating arithmetic to prevent overflow for very large arrays
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(allocator);
+            const estimated_size: usize = if (is_array) @as(usize, @intCast(len)) *| ARRAY_ELEMENT_AVG_SIZE +| 2 else OBJECT_DEFAULT_SIZE;
+            try buf.ensureTotalCapacity(allocator, estimated_size);
 
             if (is_array) {
                 try buf.append(allocator, '[');

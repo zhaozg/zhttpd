@@ -19,40 +19,22 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
     const clean_path = if (std.mem.eql(u8, path, "/")) "/index.html" else path;
 
     // Security: Prevent path traversal attacks with comprehensive checks
-    // Check for ".." sequences (both encoded and unencoded)
-    if (std.mem.indexOf(u8, clean_path, "..") != null) {
+    // Combined security validation for efficiency
+    if (!isPathSafe(clean_path)) {
         res.status = 400;
         res.body = "Bad Request";
         return;
     }
 
-    // Check for URL-encoded path traversal attempts
-    // %2e = '.', %2f = '/', %5c = '\'
-    if (containsEncodedTraversal(clean_path)) {
-        res.status = 400;
-        res.body = "Bad Request";
-        return;
-    }
-
-    // Check for backslash (Windows-style path separator)
-    if (std.mem.indexOf(u8, clean_path, "\\") != null) {
-        res.status = 400;
-        res.body = "Bad Request";
-        return;
-    }
-
-    // Check for null bytes (could bypass checks)
-    if (std.mem.indexOf(u8, clean_path, "\x00") != null) {
-        res.status = 400;
-        res.body = "Bad Request";
-        return;
-    }
-
-    // Get the absolute path of static directory
-    const static_dir_abs = std.fs.cwd().realpathAlloc(res.arena, ctx.config.static_dir) catch {
-        res.status = 500;
-        res.body = "Internal Server Error";
-        return;
+    // Get the absolute path of static directory (use cached value if available)
+    const static_dir_abs = ctx.static_dir_abs orelse blk: {
+        // Fallback: compute the path if not cached (should rarely happen).
+        // Uses arena allocator which is automatically cleaned up with the response.
+        break :blk std.fs.cwd().realpathAlloc(res.arena, ctx.config.static_dir) catch {
+            res.status = 500;
+            res.body = "Internal Server Error";
+            return;
+        };
     };
 
     // Build the target file path (strip leading slash from clean_path)
@@ -161,36 +143,76 @@ fn addSecurityHeaders(res: *httpz.Response) void {
     res.headers.add("Permissions-Policy", headers.permissions_policy);
 }
 
-/// Check for URL-encoded path traversal attempts
-/// Detects common encoded patterns like %2e%2e (..),  %2f (/), %5c (\)
-fn containsEncodedTraversal(path: []const u8) bool {
+/// Combined path security validation (single pass optimization)
+/// Checks for:
+/// - ".." path components (path traversal)
+/// - URL-encoded path traversal attempts (%2e%2e, %2f, %5c)
+/// - Backslash (Windows-style path separator)
+/// - Null bytes
+fn isPathSafe(path: []const u8) bool {
     var i: usize = 0;
+    var prev_char: u8 = 0;
+    var prev_prev_char: u8 = 0;
+
     while (i < path.len) : (i += 1) {
-        if (path[i] == '%' and i + 2 < path.len) {
+        const c = path[i];
+
+        // Check for null bytes
+        if (c == 0) return false;
+
+        // Check for backslash
+        if (c == '\\') return false;
+
+        // Check for ".." path component (path traversal)
+        // The ".." must be a complete path component, not part of a filename like "..hidden" or "a..b"
+        // Patterns to block: "/..", "../", start with ".." as a complete path component
+        if (c == '.' and prev_char == '.') {
+            // When we see ".." at position i (second dot), the first dot is at i-1
+            // Check if this ".." is at a path boundary
+            // at_start: ".." starts at position 0 (first dot at 0, second at 1)
+            const at_start = i == 1;
+            // after_slash: preceded by "/" (first dot right after slash)
+            const after_slash = prev_prev_char == '/';
+            // at_end: ".." is at end of path
+            const at_end = i + 1 >= path.len;
+            // before_slash: followed by "/"
+            const before_slash = i + 1 < path.len and path[i + 1] == '/';
+
+            // Block if ".." is a complete path component
+            if ((at_start or after_slash) and (at_end or before_slash)) {
+                return false;
+            }
+        }
+
+        // Check for URL-encoded characters
+        if (c == '%' and i + 3 <= path.len) {
             const hex = path[i + 1 .. i + 3];
             // Check for encoded '.' (%2e or %2E)
             if (std.ascii.eqlIgnoreCase(hex, "2e")) {
                 // Look for pattern like %2e%2e or %2e. or .%2e
-                if (i + 5 < path.len and path[i + 3] == '%') {
+                if (i + 6 <= path.len and path[i + 3] == '%') {
                     const hex2 = path[i + 4 .. i + 6];
                     if (std.ascii.eqlIgnoreCase(hex2, "2e")) {
-                        return true; // Found %2e%2e
+                        return false; // Found %2e%2e
                     }
                 }
-                if (i + 3 < path.len and path[i + 3] == '.') {
-                    return true; // Found %2e.
+                if (i + 4 <= path.len and path[i + 3] == '.') {
+                    return false; // Found %2e.
                 }
-                if (i >= 1 and path[i - 1] == '.') {
-                    return true; // Found .%2e
+                if (prev_char == '.') {
+                    return false; // Found .%2e
                 }
             }
             // Check for encoded '/' (%2f or %2F) or '\' (%5c or %5C)
             if (std.ascii.eqlIgnoreCase(hex, "2f") or std.ascii.eqlIgnoreCase(hex, "5c")) {
-                return true;
+                return false;
             }
         }
+
+        prev_prev_char = prev_char;
+        prev_char = c;
     }
-    return false;
+    return true;
 }
 
 // Tests
@@ -212,4 +234,37 @@ test "getContentType returns correct MIME types" {
     // Test that unknown extensions return BINARY
     try testing.expect(getContentType("/unknown.xyz") == httpz.ContentType.BINARY);
     try testing.expect(getContentType("/noextension") == httpz.ContentType.BINARY);
+}
+
+test "isPathSafe blocks path traversal attacks" {
+    const testing = std.testing;
+
+    // Safe paths - including legitimate filenames with dots
+    try testing.expect(isPathSafe("/index.html"));
+    try testing.expect(isPathSafe("/static/style.css"));
+    try testing.expect(isPathSafe("/images/logo.png"));
+    try testing.expect(isPathSafe("/api/users"));
+    try testing.expect(isPathSafe("/a.b.c.html")); // Multiple dots but not ".." as path component
+    try testing.expect(isPathSafe("/..hidden")); // ".." followed by more chars is valid filename
+    try testing.expect(isPathSafe("/a..b.txt")); // ".." in middle of filename is valid
+
+    // Unsafe paths - ".." path component traversal
+    try testing.expect(!isPathSafe("/.."));
+    try testing.expect(!isPathSafe("/../"));
+    try testing.expect(!isPathSafe("/static/../etc/passwd"));
+    try testing.expect(!isPathSafe("../etc/passwd"));
+
+    // Unsafe paths - encoded traversal
+    try testing.expect(!isPathSafe("/%2e%2e/etc/passwd")); // %2e%2e = ..
+    try testing.expect(!isPathSafe("/%2e.")); // %2e. = ..
+    try testing.expect(!isPathSafe("/.%2e")); // .%2e = ..
+    try testing.expect(!isPathSafe("/%2f")); // encoded /
+    try testing.expect(!isPathSafe("/%5c")); // encoded \
+
+    // Unsafe paths - backslash
+    try testing.expect(!isPathSafe("/static\\..\\etc\\passwd"));
+    try testing.expect(!isPathSafe("\\"));
+
+    // Unsafe paths - null byte
+    try testing.expect(!isPathSafe("/file.txt\x00.jpg"));
 }
