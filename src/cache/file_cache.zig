@@ -288,8 +288,8 @@ pub const FileCache = struct {
                 const etag = try generateETag(self.allocator, stat.size, stat.mtime);
                 errdefer self.allocator.free(etag);
 
-                // Cache makes its own copy
-                try self.putCached(path, content, 0, etag);
+                // Cache makes its own copy, use stat.mtime for cache invalidation in auto mode
+                try self.putCached(path, content, stat.mtime, etag);
                 return .{ .content = content, .etag = etag };
             },
             .auto => {
@@ -337,7 +337,9 @@ pub const FileCache = struct {
                         errdefer self.allocator.free(etag);
 
                         // Update cache with new last_check_time
-                        self.putCached(path, content, entry.value.mtime, etag) catch {};
+                        self.putCached(path, content, entry.value.mtime, etag) catch |err| {
+                            std.log.debug("Failed to update file cache last_check_time for {s}: {}", .{ path, err });
+                        };
                         return .{ .content = content, .etag = etag };
                     }
 

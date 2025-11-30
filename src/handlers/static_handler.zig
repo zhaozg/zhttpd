@@ -92,7 +92,8 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
             },
         }
     };
-    // Transfer ownership to the response arena for automatic cleanup
+    // Content and etag are owned by the caller and must be freed.
+    // Defer cleanup - these run at function end, after we've copied to res.arena.
     defer ctx.file_cache.allocator.free(file_info.content);
     defer ctx.file_cache.allocator.free(file_info.etag);
 
