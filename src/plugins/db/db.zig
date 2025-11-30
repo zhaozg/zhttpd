@@ -84,8 +84,8 @@ pub const DEFAULT_STMT_CACHE_SIZE: u32 = 100;
 // =============================================================================
 
 /// Prepared statement cache scoped to a single database connection
-/// Uses a StringHashMap for simple key-value storage without automatic eviction.
-/// Statements persist for the lifetime of the connection unless manually cleared.
+/// Uses a StringHashMap for simple key-value storage with automatic eviction when capacity is reached.
+/// When reaching `max_size`, eviction order is arbitrary (not FIFO) due to HashMap iteration semantics.
 ///
 /// ## Thread Safety
 /// This cache is NOT thread-safe. Each connection should have its own
@@ -189,9 +189,9 @@ pub const StatementCache = struct {
 
     /// Prepare a fresh statement and add to cache
     fn prepareFresh(self: *Self, sql: []const u8) !*zdbc.Statement {
-        // Check if we need to evict entries (simple FIFO-style eviction when at capacity)
+        // Check if we need to evict entries (eviction when at capacity)
         if (self.statements.count() >= self.max_size) {
-            // Remove one entry to make room (simple eviction strategy)
+            // Remove one entry to make room (eviction order is arbitrary)
             var it = self.statements.iterator();
             if (it.next()) |entry| {
                 const key_to_remove = entry.key_ptr.*;
@@ -199,7 +199,8 @@ pub const StatementCache = struct {
             }
         }
 
-        const stmt = try self.connection.prepare(sql);
+        var stmt = try self.connection.prepare(sql);
+        errdefer stmt.deinit();
 
         // Duplicate the SQL key for storage
         const sql_key = try self.allocator.dupe(u8, sql);
@@ -515,60 +516,60 @@ pub const DbPlugin = struct {
 
     /// Execute a query and return results using cached prepared statements
     pub fn query(self: *Self, sql: []const u8, params: []const zdbc.Value) !zdbc.Result {
-        if (self.connection == null) {
-            return zdbc.Error.ConnectionFailed;
+        if (self.connection) |*conn| {
+            // Try to use cached statement if available
+            if (self.stmt_cache) |*sc| {
+                var stmt = sc.getOrPrepare(sql) catch |err| {
+                    // Fallback to direct query if statement preparation fails
+                    std.log.debug("Statement cache: fallback to direct query for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.query(sql, params);
+                };
+
+                // Bind parameters
+                stmt.bindAll(params) catch |err| {
+                    // Fallback to direct query on bind error
+                    std.log.debug("Statement cache: bind failed, fallback for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.query(sql, params);
+                };
+
+                // Execute query
+                return stmt.query();
+            }
+
+            // No cache, use direct connection query
+            return conn.query(sql, params);
         }
 
-        // Try to use cached statement if available
-        if (self.stmt_cache) |*sc| {
-            var stmt = sc.getOrPrepare(sql) catch {
-                // Fallback to direct query if statement preparation fails
-                std.log.debug("Statement cache: fallback to direct query for: {s}", .{sql[0..@min(sql.len, 64)]});
-                return self.connection.?.query(sql, params);
-            };
-
-            // Bind parameters
-            stmt.bindAll(params) catch {
-                // Fallback to direct query on bind error
-                std.log.debug("Statement cache: bind failed, fallback for: {s}", .{sql[0..@min(sql.len, 64)]});
-                return self.connection.?.query(sql, params);
-            };
-
-            // Execute query
-            return stmt.query();
-        }
-
-        // No cache, use direct connection query
-        return self.connection.?.query(sql, params);
+        return zdbc.Error.ConnectionFailed;
     }
 
     /// Execute a statement (INSERT, UPDATE, DELETE) using cached prepared statements
     pub fn exec(self: *Self, sql: []const u8, params: []const zdbc.Value) !usize {
-        if (self.connection == null) {
-            return zdbc.Error.ConnectionFailed;
+        if (self.connection) |*conn| {
+            // Try to use cached statement if available
+            if (self.stmt_cache) |*sc| {
+                var stmt = sc.getOrPrepare(sql) catch |err| {
+                    // Fallback to direct exec if statement preparation fails
+                    std.log.debug("Statement cache: fallback to direct exec for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.exec(sql, params);
+                };
+
+                // Bind parameters
+                stmt.bindAll(params) catch |err| {
+                    // Fallback to direct exec on bind error
+                    std.log.debug("Statement cache: bind failed, fallback for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.exec(sql, params);
+                };
+
+                // Execute statement
+                return stmt.exec();
+            }
+
+            // No cache, use direct connection exec
+            return conn.exec(sql, params);
         }
 
-        // Try to use cached statement if available
-        if (self.stmt_cache) |*sc| {
-            var stmt = sc.getOrPrepare(sql) catch {
-                // Fallback to direct exec if statement preparation fails
-                std.log.debug("Statement cache: fallback to direct exec for: {s}", .{sql[0..@min(sql.len, 64)]});
-                return self.connection.?.exec(sql, params);
-            };
-
-            // Bind parameters
-            stmt.bindAll(params) catch {
-                // Fallback to direct exec on bind error
-                std.log.debug("Statement cache: bind failed, fallback for: {s}", .{sql[0..@min(sql.len, 64)]});
-                return self.connection.?.exec(sql, params);
-            };
-
-            // Execute statement
-            return stmt.exec();
-        }
-
-        // No cache, use direct connection exec
-        return self.connection.?.exec(sql, params);
+        return zdbc.Error.ConnectionFailed;
     }
 
     /// Get statement cache statistics
@@ -918,18 +919,7 @@ fn luaStatus(lua: *ziglua.Lua) i32 {
 
     // Add statement cache statistics
     if (plugin.getStmtCacheStats()) |stats| {
-        lua.newTable();
-        lua.pushInteger(@intCast(stats.hits));
-        lua.setField(-2, "hits");
-        lua.pushInteger(@intCast(stats.misses));
-        lua.setField(-2, "misses");
-        lua.pushNumber(stats.hit_rate);
-        lua.setField(-2, "hit_rate");
-        lua.pushInteger(@intCast(stats.size));
-        lua.setField(-2, "size");
-        lua.pushInteger(@intCast(stats.max_size));
-        lua.setField(-2, "max_size");
-        lua.setField(-2, "stmt_cache_stats");
+        pushStmtCacheStats(lua, stats);
     }
 
     return 1;
@@ -938,6 +928,22 @@ fn luaStatus(lua: *ziglua.Lua) i32 {
 // ============================================================================
 // Public Lua Helper Functions (for use by context module)
 // ============================================================================
+
+/// Helper function to push statement cache stats to Lua stack
+fn pushStmtCacheStats(lua: *ziglua.Lua, stats: StatementCache.Stats) void {
+    lua.newTable();
+    lua.pushInteger(@intCast(stats.hits));
+    lua.setField(-2, "hits");
+    lua.pushInteger(@intCast(stats.misses));
+    lua.setField(-2, "misses");
+    lua.pushNumber(stats.hit_rate);
+    lua.setField(-2, "hit_rate");
+    lua.pushInteger(@intCast(stats.size));
+    lua.setField(-2, "size");
+    lua.pushInteger(@intCast(stats.max_size));
+    lua.setField(-2, "max_size");
+    lua.setField(-2, "stmt_cache_stats");
+}
 
 /// Execute SELECT query with a specific plugin
 /// sql_arg_idx specifies which Lua argument contains the SQL string
@@ -1129,18 +1135,7 @@ pub fn luaStatusWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin) i32 {
 
     // Add statement cache statistics
     if (plugin.getStmtCacheStats()) |stats| {
-        lua.newTable();
-        lua.pushInteger(@intCast(stats.hits));
-        lua.setField(-2, "hits");
-        lua.pushInteger(@intCast(stats.misses));
-        lua.setField(-2, "misses");
-        lua.pushNumber(stats.hit_rate);
-        lua.setField(-2, "hit_rate");
-        lua.pushInteger(@intCast(stats.size));
-        lua.setField(-2, "size");
-        lua.pushInteger(@intCast(stats.max_size));
-        lua.setField(-2, "max_size");
-        lua.setField(-2, "stmt_cache_stats");
+        pushStmtCacheStats(lua, stats);
     }
 
     return 1;
