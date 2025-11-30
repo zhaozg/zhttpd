@@ -9,10 +9,16 @@ const MAX_FILE_SIZE = 100 * 1024 * 1024;
 /// Default file cache TTL in seconds (1 hour)
 const DEFAULT_FILE_TTL: u32 = 3600;
 
+/// Minimum interval between file stat checks in nanoseconds (1 second)
+/// This reduces the overhead of stat() syscalls in auto reload mode
+const STAT_CHECK_INTERVAL_NS: i128 = 1_000_000_000;
+
 /// Cached file entry with content, modification time, and ETag
 pub const FileCacheEntry = struct {
     content: []const u8,
     mtime: i128, // File modification time in nanoseconds
+    /// Last time we verified the file's mtime (default 0 ensures first check is always performed)
+    last_check_time: i128 = 0,
     etag: ?[]const u8 = null, // ETag for cache validation
     allocator: std.mem.Allocator,
 
@@ -77,12 +83,12 @@ pub const FileCache = struct {
     /// Get cached content, duplicating the content to ensure safety
     /// Returns null if file is not cached
     /// The returned content is owned by the caller and must be freed
-    fn getCachedContent(self: *FileCache, key: []const u8) !?struct { content: []const u8, mtime: i128 } {
+    fn getCachedContent(self: *FileCache, key: []const u8) !?struct { content: []const u8, mtime: i128, last_check_time: i128 } {
         if (self.cache.get(key)) |entry| {
             defer entry.release();
             // Duplicate content while entry is still valid
             const content = try self.allocator.dupe(u8, entry.value.content);
-            return .{ .content = content, .mtime = entry.value.mtime };
+            return .{ .content = content, .mtime = entry.value.mtime, .last_check_time = entry.value.last_check_time };
         }
         return null;
     }
@@ -97,6 +103,7 @@ pub const FileCache = struct {
         const entry = FileCacheEntry{
             .content = owned_content,
             .mtime = mtime,
+            .last_check_time = std.time.nanoTimestamp(),
             .etag = owned_etag,
             .allocator = self.allocator,
         };
@@ -148,33 +155,71 @@ pub const FileCache = struct {
                 return content;
             },
             .auto => {
-                // Check file modification time and size
+                // First, check cache to see if we have a recent entry
+                if (try self.getCachedContent(path)) |cached| {
+                    const current_time = std.time.nanoTimestamp();
+                    // Skip stat check if we checked recently (within STAT_CHECK_INTERVAL_NS)
+                    if (current_time - cached.last_check_time < STAT_CHECK_INTERVAL_NS) {
+                        // Return cached content without stat check
+                        return cached.content;
+                    }
+
+                    // Check file modification time
+                    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+                        if (err == error.FileNotFound) {
+                            // File was deleted, cache is stale - free the duplicate and return error
+                            self.allocator.free(cached.content);
+                            return err;
+                        }
+                        // For other errors (permission, etc.), return cached content as fallback
+                        return cached.content;
+                    };
+                    defer file.close();
+                    const stat = try file.stat();
+
+                    if (cached.mtime == stat.mtime) {
+                        // File hasn't changed, update last_check_time in cache
+                        // Note: This creates a new cache entry because cache.zig doesn't support
+                        // in-place updates. The double-duplication overhead is acceptable because:
+                        // 1. It only happens once per check interval (1 second)
+                        // 2. The old entry is immediately evicted and its memory freed
+                        // 3. The alternative (no update) would cause stat() on every request
+                        self.putCached(path, cached.content, cached.mtime, null) catch {
+                            // If cache update fails, still return the cached content
+                        };
+                        return cached.content;
+                    }
+
+                    // Cache is stale, free the duplicated content
+                    self.allocator.free(cached.content);
+
+                    // If file is too large, don't cache it
+                    if (stat.size > self.max_cache_file_size) {
+                        return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    }
+
+                    // File changed, read and update cache
+                    const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    errdefer self.allocator.free(content);
+
+                    try self.putCached(path, content, stat.mtime, null);
+                    return content;
+                }
+
+                // Not cached, read from disk
                 const file = try std.fs.cwd().openFile(path, .{});
                 defer file.close();
                 const stat = try file.stat();
-                const current_mtime = stat.mtime;
 
                 // If file is too large, don't cache it
                 if (stat.size > self.max_cache_file_size) {
                     return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
                 }
 
-                // Check cache
-                if (try self.getCachedContent(path)) |cached| {
-                    if (cached.mtime == current_mtime) {
-                        // File hasn't changed, use cached content (already duplicated)
-                        return cached.content;
-                    }
-                    // Cache is stale, free the duplicated content
-                    self.allocator.free(cached.content);
-                }
-
-                // File changed or not cached, read and update cache
                 const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
 
-                // Cache makes its own copy, so we can return the original
-                try self.putCached(path, content, current_mtime, null);
+                try self.putCached(path, content, stat.mtime, null);
                 return content;
             },
         }
@@ -253,4 +298,40 @@ test "file cache force mode" {
     const content1 = try file_cache.loadFile(test_file);
     defer allocator.free(content1);
     try testing.expectEqualStrings("test content", content1);
+}
+
+test "file cache auto mode rate limiting" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var file_cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer file_cache.deinit();
+
+    // Create a temporary file
+    const test_file = "test_cache_auto_rate_limit.tmp";
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("original content");
+    }
+    defer std.fs.cwd().deleteFile(test_file) catch {};
+
+    // First load - should read from disk and cache
+    const content1 = try file_cache.loadFile(test_file);
+    defer allocator.free(content1);
+    try testing.expectEqualStrings("original content", content1);
+
+    // Modify the file
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("modified content");
+    }
+
+    // Immediate second load - should return cached content (stat check skipped)
+    // because we're within STAT_CHECK_INTERVAL_NS (1 second)
+    const content2 = try file_cache.loadFile(test_file);
+    defer allocator.free(content2);
+    // Should still see original content because rate limiting skips stat check
+    try testing.expectEqualStrings("original content", content2);
 }
