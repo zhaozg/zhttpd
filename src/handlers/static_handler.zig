@@ -165,7 +165,7 @@ fn isPathSafe(path: []const u8) bool {
 
         // Check for ".." path component (path traversal)
         // The ".." must be a complete path component, not part of a filename like "..hidden" or "a..b"
-        // Valid patterns to block: "/..", "../", "/.../", start with ".."
+        // Patterns to block: "/..", "../", start with ".." as a complete path component
         if (c == '.' and prev_char == '.') {
             // When we see ".." at position i (second dot), the first dot is at i-1
             // Check if this ".." is at a path boundary

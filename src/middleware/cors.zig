@@ -35,8 +35,12 @@ pub const CorsMiddleware = struct {
             .is_wildcard_origin = std.mem.eql(u8, config.allowed_origins, "*"),
         };
         // Pre-format max-age string
-        const max_age_slice = std.fmt.bufPrint(&middleware.max_age_str, "{d}", .{config.max_age}) catch "0";
-        middleware.max_age_len = max_age_slice.len;
+        if (std.fmt.bufPrint(&middleware.max_age_str, "{d}", .{config.max_age})) |slice| {
+            middleware.max_age_len = slice.len;
+        } else |_| {
+            middleware.max_age_str[0] = '0';
+            middleware.max_age_len = 1;
+        }
         return middleware;
     }
 

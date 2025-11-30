@@ -220,8 +220,13 @@ pub const AppContext = struct {
             });
             ctx.rate_limiter = rate_limiter;
             // Pre-format the rate limit window string (optimization: avoids formatting on every 429 response)
-            const window_str = std.fmt.bufPrint(&ctx.rate_limit_window_str, "{d}", .{config.rate_limit_window}) catch "60";
-            ctx.rate_limit_window_len = window_str.len;
+            if (std.fmt.bufPrint(&ctx.rate_limit_window_str, "{d}", .{config.rate_limit_window})) |slice| {
+                ctx.rate_limit_window_len = slice.len;
+            } else |_| {
+                ctx.rate_limit_window_str[0] = '6';
+                ctx.rate_limit_window_str[1] = '0';
+                ctx.rate_limit_window_len = 2;
+            }
             ctx.logger.info("Rate limiter initialized: {d} requests per {d} seconds", .{ config.rate_limit_requests, config.rate_limit_window });
         }
 
