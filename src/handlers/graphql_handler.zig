@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const httpz = @import("httpz");
-const AppContext = @import("httpz_handlers.zig").AppContext;
+const AppContext = @import("context.zig").AppContext;
 
 /// Handle GraphQL GET requests
 pub fn handleGet(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {

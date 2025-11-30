@@ -7,7 +7,7 @@ const std = @import("std");
 const httpz = @import("httpz");
 const security = @import("../security/security.zig");
 const FileCache = @import("../cache/file_cache.zig").FileCache;
-const AppContext = @import("httpz_handlers.zig").AppContext;
+const AppContext = @import("context.zig").AppContext;
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max file size
 

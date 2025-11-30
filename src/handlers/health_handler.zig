@@ -6,7 +6,7 @@
 const std = @import("std");
 const httpz = @import("httpz");
 const observability = @import("../observability/observability.zig");
-const AppContext = @import("httpz_handlers.zig").AppContext;
+const AppContext = @import("context.zig").AppContext;
 
 /// Handle health check requests
 pub fn handle(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {

@@ -9,7 +9,7 @@ const LuaHandler = lua_mod.LuaHandler;
 const ws_mod = @import("websocket.zig");
 const WebSocketHandler = ws_mod.WebSocketHandler;
 const WebSocketContext = ws_mod.WebSocketContext;
-const AppContext = @import("httpz_handlers.zig").AppContext;
+const AppContext = @import("context.zig").AppContext;
 
 /// Handle WebSocket upgrade requests
 pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
