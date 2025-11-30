@@ -28,7 +28,8 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
 
     // Get the absolute path of static directory (use cached value if available)
     const static_dir_abs = ctx.static_dir_abs orelse blk: {
-        // Fallback: compute the path if not cached (should rarely happen)
+        // Fallback: compute the path if not cached (should rarely happen).
+        // Uses arena allocator which is automatically cleaned up with the response.
         break :blk std.fs.cwd().realpathAlloc(res.arena, ctx.config.static_dir) catch {
             res.status = 500;
             res.body = "Internal Server Error";

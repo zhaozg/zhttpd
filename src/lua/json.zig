@@ -18,8 +18,9 @@ pub const JSON_MAX_SAFE_INTEGER: f64 = 9007199254740992;
 pub const JSON_MIN_SAFE_INTEGER: f64 = -9007199254740992;
 
 /// Buffer pre-allocation constants for JSON encoding
-/// These are conservative estimates to reduce memory reallocations
-const STRING_ESCAPE_OVERHEAD_RATIO = 4; // 1 in 4 chars may need escaping (quotes, backslashes, etc.)
+/// These are conservative upper-bound estimates to reduce memory reallocations
+/// In practice, most strings have far fewer escapable characters
+const STRING_ESCAPE_OVERHEAD_RATIO = 4; // Worst case: 1 in 4 chars may need escaping
 const ARRAY_ELEMENT_AVG_SIZE = 20; // Average JSON element size (e.g., "123" or "\"text\"")
 const OBJECT_DEFAULT_SIZE = 128; // Default buffer for objects with unknown size
 
@@ -197,9 +198,12 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
         .string => {
             const s = lua.toString(index) catch "";
             // Pre-allocate buffer with estimated size (string length + quotes + escape overhead)
+            // Use saturating arithmetic to prevent overflow for very large strings
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(allocator);
-            try buf.ensureTotalCapacity(allocator, s.len + 2 + s.len / STRING_ESCAPE_OVERHEAD_RATIO);
+            const escape_overhead = s.len / STRING_ESCAPE_OVERHEAD_RATIO;
+            const estimated_size = s.len +| 2 +| escape_overhead;
+            try buf.ensureTotalCapacity(allocator, estimated_size);
             try buf.append(allocator, '"');
             try appendJsonEscapedString(&buf, allocator, s);
             try buf.append(allocator, '"');
