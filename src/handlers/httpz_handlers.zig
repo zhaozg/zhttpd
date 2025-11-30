@@ -114,6 +114,9 @@ pub const AppContext = struct {
     session_manager: ?*SessionManager = null,
     // Cached absolute path for static directory (optimization: avoids realpath syscall per request)
     static_dir_abs: ?[]const u8 = null,
+    // Pre-formatted rate limit window string (optimization: avoids formatting on every 429 response)
+    rate_limit_window_str: [16]u8 = undefined,
+    rate_limit_window_len: usize = 0,
 
     /// WebSocket handler declaration for httpz integration
     /// This enables WebSocket support in httpz.Server
@@ -213,6 +216,9 @@ pub const AppContext = struct {
                 .burst_size = 10,
             });
             ctx.rate_limiter = rate_limiter;
+            // Pre-format the rate limit window string (optimization: avoids formatting on every 429 response)
+            const window_str = std.fmt.bufPrint(&ctx.rate_limit_window_str, "{d}", .{config.rate_limit_window}) catch "60";
+            ctx.rate_limit_window_len = window_str.len;
             ctx.logger.info("Rate limiter initialized: {d} requests per {d} seconds", .{ config.rate_limit_requests, config.rate_limit_window });
         }
 
@@ -568,10 +574,8 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
             res.body =
                 \\{"error":"Too Many Requests","message":"Rate limit exceeded. Please try again later."}
             ;
-            // Use actual rate_limit_window config value for Retry-After
-            var retry_after_buf: [16]u8 = undefined;
-            const retry_after_str = std.fmt.bufPrint(&retry_after_buf, "{d}", .{ctx.config.rate_limit_window}) catch "60";
-            res.headers.add("Retry-After", retry_after_str);
+            // Use pre-formatted rate_limit_window string (optimization: avoids formatting per request)
+            res.headers.add("Retry-After", ctx.rate_limit_window_str[0..ctx.rate_limit_window_len]);
             res.headers.add("Content-Type", "application/json");
             return false;
         }
@@ -602,10 +606,8 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
                 if (req.method == .OPTIONS) {
                     res.status = 204;
                     res.body = "";
-                    // Add max-age header for preflight caching
-                    var max_age_buf: [16]u8 = undefined;
-                    const max_age_str = std.fmt.bufPrint(&max_age_buf, "{d}", .{cors_headers.access_control_max_age}) catch "0";
-                    res.headers.add("Access-Control-Max-Age", max_age_str);
+                    // Add pre-formatted max-age header for preflight caching (optimization)
+                    res.headers.add("Access-Control-Max-Age", cors.getMaxAgeStr());
                     return false;
                 }
             }

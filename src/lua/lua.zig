@@ -52,6 +52,26 @@ pub const SandboxConfig = struct {
 /// Default sandbox configuration with safe defaults
 pub const default_sandbox_config = SandboxConfig{};
 
+/// Pre-defined error response strings (optimization: avoids allocation on error paths)
+const ERR_SCRIPT_LOAD_FAILED =
+    \\{"status":"error","message":"Lua script load failed"}
+;
+const ERR_SCRIPT_MUST_RETURN_TABLE =
+    \\{"status":"error","message":"Script must return a table"}
+;
+const ERR_SCRIPT_MUST_EXPORT_HANDLE =
+    \\{"status":"error","message":"Script must export a 'handle' function"}
+;
+const ERR_HANDLER_EXECUTION_FAILED =
+    \\{"status":"error","message":"Lua handler execution failed"}
+;
+const ERR_INVALID_JSON_REQUEST =
+    \\{"status":"error","message":"Invalid JSON in request body"}
+;
+const ERR_JSON_TO_LUA_FAILED =
+    \\{"status":"error","message":"Failed to convert JSON to Lua"}
+;
+
 /// Bytecode cache entry (reserved for future bytecode precompilation)
 const BytecodeEntry = struct {
     bytecode: []const u8,
@@ -313,27 +333,21 @@ pub const LuaHandler = struct {
         lua.doString(script_z) catch |err| {
             std.debug.print("Error loading Lua script: {}\n", .{err});
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Lua script load failed"}
-            );
+            return ERR_SCRIPT_LOAD_FAILED;
         };
 
         // The script should return a table with a 'handle' function
         // Get the module table from the stack
         if (lua.getTop() != 1) {
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Script must return a table"}
-            );
+            return ERR_SCRIPT_MUST_RETURN_TABLE;
         }
 
         // Get the handle function from the table
         _ = lua.getField(1, "handle");
         if (lua.typeOf(-1) != .function) {
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Script must export a 'handle' function"}
-            );
+            return ERR_SCRIPT_MUST_EXPORT_HANDLE;
         }
 
         // Create request table (luvit/Node.js style)
@@ -370,9 +384,7 @@ pub const LuaHandler = struct {
                 std.debug.print("JSON parse error: {}\n", .{err});
                 lua.pop(2); // Pop function and table
                 lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-                return try arena.dupe(u8,
-                    \\{"status":"error","message":"Invalid JSON in request body"}
-                );
+                return ERR_INVALID_JSON_REQUEST;
             };
             // No defer for arena-allocated memory
 
@@ -380,9 +392,7 @@ pub const LuaHandler = struct {
             json.pushJsonValue(lua, parsed.value) catch {
                 lua.pop(2);
                 lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-                return try arena.dupe(u8,
-                    \\{"status":"error","message":"Failed to convert JSON to Lua"}
-                );
+                return ERR_JSON_TO_LUA_FAILED;
             };
             lua.setField(-2, "body");
         }
@@ -394,9 +404,7 @@ pub const LuaHandler = struct {
             // which is caught here. We can't distinguish between instruction limit
             // and other Lua errors, so we return a generic error message.
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Lua handler execution failed"}
-            );
+            return ERR_HANDLER_EXECUTION_FAILED;
         };
 
         // Convert return value to JSON using arena allocator
@@ -485,18 +493,14 @@ pub const LuaHandler = struct {
             std.debug.print("Error loading Lua script: {}\n", .{err});
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Lua script load failed"}
-            );
+            return ERR_SCRIPT_LOAD_FAILED;
         };
 
         // The script should return a table with a 'handle' function
         if (lua.getTop() != 1) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Script must return a table"}
-            );
+            return ERR_SCRIPT_MUST_RETURN_TABLE;
         }
 
         // Get the handle function from the table
@@ -504,9 +508,7 @@ pub const LuaHandler = struct {
         if (lua.typeOf(-1) != .function) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Script must export a 'handle' function"}
-            );
+            return ERR_SCRIPT_MUST_EXPORT_HANDLE;
         }
 
         // Push handler arguments: request, response, context (3 arguments)
@@ -517,9 +519,7 @@ pub const LuaHandler = struct {
             std.debug.print("Error calling Lua handler: {}\n", .{err});
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return try arena.dupe(u8,
-                \\{"status":"error","message":"Lua handler execution failed"}
-            );
+            return ERR_HANDLER_EXECUTION_FAILED;
         };
 
         // Convert return value to JSON

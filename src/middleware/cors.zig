@@ -22,17 +22,32 @@ pub const CorsConfig = struct {
 /// CORS middleware handler
 pub const CorsMiddleware = struct {
     config: CorsConfig,
+    /// Pre-formatted max-age string (optimization: avoids formatting on every preflight request)
+    max_age_str: [16]u8 = undefined,
+    max_age_len: usize = 0,
+    /// Flag indicating if allowed_origins is wildcard (optimization: avoids string comparison per request)
+    is_wildcard_origin: bool = false,
 
     /// Initialize CORS middleware with configuration
     pub fn init(config: CorsConfig) CorsMiddleware {
-        return CorsMiddleware{
+        var middleware = CorsMiddleware{
             .config = config,
+            .is_wildcard_origin = std.mem.eql(u8, config.allowed_origins, "*"),
         };
+        // Pre-format max-age string
+        const max_age_slice = std.fmt.bufPrint(&middleware.max_age_str, "{d}", .{config.max_age}) catch "0";
+        middleware.max_age_len = max_age_slice.len;
+        return middleware;
+    }
+
+    /// Get pre-formatted max-age string
+    pub fn getMaxAgeStr(self: *const CorsMiddleware) []const u8 {
+        return self.max_age_str[0..self.max_age_len];
     }
 
     /// Check if origin is allowed
     pub fn isOriginAllowed(self: *const CorsMiddleware, origin: []const u8) bool {
-        if (std.mem.eql(u8, self.config.allowed_origins, "*")) {
+        if (self.is_wildcard_origin) {
             return true;
         }
 
@@ -58,7 +73,7 @@ pub const CorsMiddleware = struct {
             return null;
         }
 
-        const allow_origin = if (std.mem.eql(u8, self.config.allowed_origins, "*"))
+        const allow_origin = if (self.is_wildcard_origin)
             "*"
         else
             origin;
