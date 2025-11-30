@@ -6,6 +6,7 @@
 //! ## Features
 //!
 //! - Connection pooling for efficient database access
+//! - Prepared statement caching per connection for improved performance
 //! - Unified API across multiple database backends
 //! - Lua bindings for scripting database operations
 //! - Zig-side utilities for authentication and user validation
@@ -17,6 +18,7 @@
 //! enable_db: true
 //! db_uri: "sqlite:///data/app.db"
 //! db_pool_size: 10
+//! stmt_cache_size: 100  # Maximum cached prepared statements per connection
 //! ```
 //!
 //! ## Lua API
@@ -35,6 +37,11 @@
 //! db.exec("UPDATE accounts SET balance = balance - 100 WHERE id = ?", 1)
 //! db.exec("UPDATE accounts SET balance = balance + 100 WHERE id = ?", 2)
 //! db.commit()
+//!
+//! -- Get status including statement cache statistics
+//! local status = db.status()
+//! print("Cache hits:", status.stmt_cache_stats.hits)
+//! print("Cache hit rate:", status.stmt_cache_stats.hit_rate)
 //! ```
 
 const std = @import("std");
@@ -53,6 +60,8 @@ pub const DbConfig = struct {
     pool_size: u32 = 5,
     /// Enable connection pooling
     enable_pool: bool = true,
+    /// Maximum number of prepared statements to cache per connection
+    stmt_cache_size: u32 = 100,
 };
 
 // =============================================================================
@@ -66,6 +75,194 @@ pub const MAX_PARAMS: usize = 32;
 /// Maximum length for column names in query results
 /// Column names exceeding this length will be truncated with a warning
 pub const MAX_COLUMN_NAME_LEN: usize = 256;
+
+/// Default prepared statement cache size
+pub const DEFAULT_STMT_CACHE_SIZE: u32 = 100;
+
+// =============================================================================
+// Prepared Statement Cache
+// =============================================================================
+
+/// Prepared statement cache scoped to a single database connection
+/// Uses a StringHashMap for simple key-value storage with automatic eviction when capacity is reached.
+/// When reaching `max_size`, eviction order is arbitrary (not FIFO) due to HashMap iteration semantics.
+///
+/// ## Thread Safety
+/// This cache is NOT thread-safe. Each connection should have its own
+/// StatementCache instance, and access should be serialized if the
+/// connection is shared across threads.
+///
+/// ## Usage
+/// ```zig
+/// var stmt_cache = StatementCache.init(allocator, conn, 100);
+/// defer stmt_cache.deinit();
+///
+/// // Get or create a prepared statement
+/// var stmt = try stmt_cache.getOrPrepare("SELECT * FROM users WHERE id = ?");
+///
+/// // Use the statement - bind params and execute
+/// try stmt.bindAll(&.{zdbc.Value.initInt(1)});
+/// var result = try stmt.query();
+/// ```
+pub const StatementCache = struct {
+    /// Map from SQL string to prepared statement
+    statements: std.StringHashMap(zdbc.Statement),
+    allocator: std.mem.Allocator,
+    connection: *zdbc.Connection,
+    max_size: u32,
+    hits: u64 = 0,
+    misses: u64 = 0,
+
+    const Self = @This();
+
+    /// Cache statistics
+    pub const Stats = struct {
+        hits: u64,
+        misses: u64,
+        hit_rate: f64,
+        size: usize,
+        max_size: u32,
+    };
+
+    /// Initialize a new statement cache for a connection
+    pub fn init(allocator: std.mem.Allocator, connection: *zdbc.Connection, max_size: u32) Self {
+        return Self{
+            .statements = std.StringHashMap(zdbc.Statement).init(allocator),
+            .allocator = allocator,
+            .connection = connection,
+            .max_size = max_size,
+        };
+    }
+
+    /// Clean up all cached statements
+    pub fn deinit(self: *Self) void {
+        // Deinitialize all cached statements
+        var it = self.statements.iterator();
+        while (it.next()) |entry| {
+            var stmt = entry.value_ptr.*;
+            stmt.deinit();
+            // Free the duplicated key
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.statements.deinit();
+    }
+
+    /// Get a cached statement or prepare a new one
+    /// The returned statement is reset and ready for parameter binding
+    /// Note: The statement remains owned by the cache and should not be deinitialized by the caller
+    pub fn getOrPrepare(self: *Self, sql: []const u8) !*zdbc.Statement {
+        // Try to get from cache
+        if (self.statements.getPtr(sql)) |stmt_ptr| {
+            self.hits += 1;
+
+            // Reset the statement for reuse
+            stmt_ptr.reset() catch |err| {
+                // If reset fails, remove from cache and prepare fresh
+                std.log.debug("StatementCache: reset failed for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                self.removeStatement(sql);
+                return self.prepareFresh(sql);
+            };
+
+            // Clear any existing bindings
+            stmt_ptr.clearBindings() catch |err| {
+                // If clear fails, remove from cache and prepare fresh
+                std.log.debug("StatementCache: clearBindings failed for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                self.removeStatement(sql);
+                return self.prepareFresh(sql);
+            };
+
+            return stmt_ptr;
+        }
+
+        self.misses += 1;
+        return self.prepareFresh(sql);
+    }
+
+    /// Remove a statement from the cache and clean it up
+    fn removeStatement(self: *Self, sql: []const u8) void {
+        if (self.statements.fetchRemove(sql)) |kv| {
+            var stmt = kv.value;
+            stmt.deinit();
+            self.allocator.free(kv.key);
+        }
+    }
+
+    /// Prepare a fresh statement and add to cache
+    fn prepareFresh(self: *Self, sql: []const u8) !*zdbc.Statement {
+        // Check if we need to evict entries (eviction when at capacity)
+        if (self.statements.count() >= self.max_size) {
+            // Remove one entry to make room (eviction order is arbitrary)
+            var it = self.statements.iterator();
+            if (it.next()) |entry| {
+                const key_to_remove = entry.key_ptr.*;
+                self.removeStatement(key_to_remove);
+            }
+        }
+
+        var stmt = try self.connection.prepare(sql);
+        errdefer stmt.deinit();
+
+        // Duplicate the SQL key for storage
+        const sql_key = try self.allocator.dupe(u8, sql);
+        errdefer self.allocator.free(sql_key);
+
+        // Add to cache
+        try self.statements.put(sql_key, stmt);
+
+        // Return pointer to the stored statement
+        return self.statements.getPtr(sql_key).?;
+    }
+
+    /// Get cache statistics
+    pub fn getStats(self: *const Self) Stats {
+        const total = self.hits + self.misses;
+        const hit_rate = if (total > 0)
+            @as(f64, @floatFromInt(self.hits)) / @as(f64, @floatFromInt(total))
+        else
+            0.0;
+        return Stats{
+            .hits = self.hits,
+            .misses = self.misses,
+            .hit_rate = hit_rate,
+            .size = self.statements.count(),
+            .max_size = self.max_size,
+        };
+    }
+
+    /// Clear all cached statements
+    pub fn clear(self: *Self) void {
+        var it = self.statements.iterator();
+        while (it.next()) |entry| {
+            var stmt = entry.value_ptr.*;
+            stmt.deinit();
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.statements.clearRetainingCapacity();
+        self.hits = 0;
+        self.misses = 0;
+    }
+
+    /// Check if a statement is cached for the given SQL
+    pub fn contains(self: *const Self, sql: []const u8) bool {
+        return self.statements.contains(sql);
+    }
+
+    /// Invalidate a specific cached statement
+    pub fn invalidate(self: *Self, sql: []const u8) bool {
+        if (self.statements.fetchRemove(sql)) |kv| {
+            var stmt = kv.value;
+            stmt.deinit();
+            self.allocator.free(kv.key);
+            return true;
+        }
+        return false;
+    }
+
+    /// Get the current number of cached statements
+    pub fn count(self: *const Self) usize {
+        return self.statements.count();
+    }
+};
 
 // =============================================================================
 // Global State (Thread Safety)
@@ -100,6 +297,9 @@ pub const DbPlugin = struct {
     allocator: std.mem.Allocator,
     config: ?DbConfig,
     connection: ?zdbc.Connection,
+    // Prepared statement cache scoped to this connection
+    // This cache is NOT shared across connections for thread safety
+    stmt_cache: ?StatementCache,
     // Note: Currently uses a single connection per plugin instance.
     // The db_pool_size config is reserved for future pooling implementation.
     initialized: bool,
@@ -124,6 +324,7 @@ pub const DbPlugin = struct {
             .allocator = allocator,
             .config = null,
             .connection = null,
+            .stmt_cache = null,
             .initialized = false,
             .error_message = null,
         };
@@ -178,6 +379,12 @@ pub const DbPlugin = struct {
             else
                 5;
 
+            // Extract statement cache size
+            const stmt_cache_size: u32 = if (obj.get("stmt_cache_size")) |scs|
+                @intCast(scs.integer)
+            else
+                DEFAULT_STMT_CACHE_SIZE;
+
             // Store configuration (need to dupe strings for ownership)
             const uri_copy = self.allocator.dupe(u8, uri) catch {
                 self.error_message = "Memory allocation failed";
@@ -188,6 +395,7 @@ pub const DbPlugin = struct {
                 .uri = uri_copy,
                 .pool_size = pool_size,
                 .enable_pool = pool_size > 1,
+                .stmt_cache_size = stmt_cache_size,
             };
 
             // Initialize database connection
@@ -197,6 +405,11 @@ pub const DbPlugin = struct {
                     self.error_message = "Failed to open database connection";
                     return false;
                 };
+
+                // Initialize prepared statement cache for this connection
+                if (self.connection) |*conn| {
+                    self.stmt_cache = StatementCache.init(self.allocator, conn, db_cfg.stmt_cache_size);
+                }
             }
 
             self.initialized = true;
@@ -210,6 +423,12 @@ pub const DbPlugin = struct {
     /// Deinitialize the plugin
     fn deinitPlugin(ctx: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
+
+        // Deinitialize statement cache first (before closing connection)
+        if (self.stmt_cache) |*sc| {
+            sc.deinit();
+            self.stmt_cache = null;
+        }
 
         if (self.connection) |*conn| {
             conn.close();
@@ -287,20 +506,93 @@ pub const DbPlugin = struct {
         return null;
     }
 
-    /// Execute a query and return results
+    /// Get the statement cache
+    pub fn getStatementCache(self: *Self) ?*StatementCache {
+        if (self.stmt_cache) |*sc| {
+            return sc;
+        }
+        return null;
+    }
+
+    /// Execute a query and return results using cached prepared statements
     pub fn query(self: *Self, sql: []const u8, params: []const zdbc.Value) !zdbc.Result {
         if (self.connection) |*conn| {
+            // Try to use cached statement if available
+            if (self.stmt_cache) |*sc| {
+                var stmt = sc.getOrPrepare(sql) catch |err| {
+                    // Fallback to direct query if statement preparation fails
+                    std.log.debug("Statement cache: fallback to direct query for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.query(sql, params);
+                };
+
+                // Bind parameters
+                stmt.bindAll(params) catch |err| {
+                    // Fallback to direct query on bind error
+                    std.log.debug("Statement cache: bind failed, fallback for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.query(sql, params);
+                };
+
+                // Execute query
+                return stmt.query();
+            }
+
+            // No cache, use direct connection query
             return conn.query(sql, params);
         }
+
         return zdbc.Error.ConnectionFailed;
     }
 
-    /// Execute a statement (INSERT, UPDATE, DELETE)
+    /// Execute a statement (INSERT, UPDATE, DELETE) using cached prepared statements
     pub fn exec(self: *Self, sql: []const u8, params: []const zdbc.Value) !usize {
         if (self.connection) |*conn| {
+            // Try to use cached statement if available
+            if (self.stmt_cache) |*sc| {
+                var stmt = sc.getOrPrepare(sql) catch |err| {
+                    // Fallback to direct exec if statement preparation fails
+                    std.log.debug("Statement cache: fallback to direct exec for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.exec(sql, params);
+                };
+
+                // Bind parameters
+                stmt.bindAll(params) catch |err| {
+                    // Fallback to direct exec on bind error
+                    std.log.debug("Statement cache: bind failed, fallback for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
+                    return conn.exec(sql, params);
+                };
+
+                // Execute statement
+                return stmt.exec();
+            }
+
+            // No cache, use direct connection exec
             return conn.exec(sql, params);
         }
+
         return zdbc.Error.ConnectionFailed;
+    }
+
+    /// Get statement cache statistics
+    pub fn getStmtCacheStats(self: *const Self) ?StatementCache.Stats {
+        if (self.stmt_cache) |sc| {
+            return sc.getStats();
+        }
+        return null;
+    }
+
+    /// Clear the statement cache
+    pub fn clearStmtCache(self: *Self) void {
+        if (self.stmt_cache) |*sc| {
+            sc.clear();
+        }
+    }
+
+    /// Invalidate a specific cached statement
+    pub fn invalidateCachedStmt(self: *Self, sql: []const u8) bool {
+        if (self.stmt_cache) |*sc| {
+            return sc.invalidate(sql);
+        }
+        return false;
     }
 
     /// Check if plugin is healthy (public method)
@@ -620,6 +912,14 @@ fn luaStatus(lua: *ziglua.Lua) i32 {
 
         lua.pushBoolean(cfg.enable_pool);
         lua.setField(-2, "pool_enabled");
+
+        lua.pushInteger(@intCast(cfg.stmt_cache_size));
+        lua.setField(-2, "stmt_cache_size");
+    }
+
+    // Add statement cache statistics
+    if (plugin.getStmtCacheStats()) |stats| {
+        pushStmtCacheStats(lua, stats);
     }
 
     return 1;
@@ -628,6 +928,22 @@ fn luaStatus(lua: *ziglua.Lua) i32 {
 // ============================================================================
 // Public Lua Helper Functions (for use by context module)
 // ============================================================================
+
+/// Helper function to push statement cache stats to Lua stack
+fn pushStmtCacheStats(lua: *ziglua.Lua, stats: StatementCache.Stats) void {
+    lua.newTable();
+    lua.pushInteger(@intCast(stats.hits));
+    lua.setField(-2, "hits");
+    lua.pushInteger(@intCast(stats.misses));
+    lua.setField(-2, "misses");
+    lua.pushNumber(stats.hit_rate);
+    lua.setField(-2, "hit_rate");
+    lua.pushInteger(@intCast(stats.size));
+    lua.setField(-2, "size");
+    lua.pushInteger(@intCast(stats.max_size));
+    lua.setField(-2, "max_size");
+    lua.setField(-2, "stmt_cache_stats");
+}
 
 /// Execute SELECT query with a specific plugin
 /// sql_arg_idx specifies which Lua argument contains the SQL string
@@ -812,6 +1128,14 @@ pub fn luaStatusWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin) i32 {
 
         lua.pushBoolean(cfg.enable_pool);
         lua.setField(-2, "pool_enabled");
+
+        lua.pushInteger(@intCast(cfg.stmt_cache_size));
+        lua.setField(-2, "stmt_cache_size");
+    }
+
+    // Add statement cache statistics
+    if (plugin.getStmtCacheStats()) |stats| {
+        pushStmtCacheStats(lua, stats);
     }
 
     return 1;
@@ -921,4 +1245,23 @@ test "DbPlugin creation" {
 
     try testing.expect(!plugin.initialized);
     try testing.expect(plugin.connection == null);
+    try testing.expect(plugin.stmt_cache == null);
+}
+
+test "StatementCache stats" {
+    const testing = std.testing;
+
+    // Test Stats struct initialization
+    const stats = StatementCache.Stats{
+        .hits = 10,
+        .misses = 5,
+        .hit_rate = 0.667,
+        .size = 3,
+        .max_size = 100,
+    };
+
+    try testing.expect(stats.hits == 10);
+    try testing.expect(stats.misses == 5);
+    try testing.expect(stats.size == 3);
+    try testing.expect(stats.max_size == 100);
 }
