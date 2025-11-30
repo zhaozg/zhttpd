@@ -98,6 +98,13 @@ const ThreadLocalLua = struct {
     fn init(allocator: std.mem.Allocator, sandbox_config: SandboxConfig) !ThreadLocalLua {
         var lua = try ziglua.Lua.init(allocator);
         lua.openLibs();
+
+        // Always register built-in json module (safe for use with or without sandbox)
+        json.registerJsonModule(lua, &getThreadLocalAllocator);
+
+        // Always register context module for Per-Request Context support
+        context.registerContextModule(lua);
+
         if (sandbox_config.enable_sandbox) {
             applySandbox(lua);
         }
@@ -158,13 +165,6 @@ const ThreadLocalLua = struct {
         // Remove package library (can load arbitrary C libraries via package.loadlib)
         lua.pushNil();
         lua.setGlobal("package");
-
-        // Register built-in json module (safe, sandboxed JSON handling)
-        json.registerJsonModule(lua, &getThreadLocalAllocator);
-
-        // Register context module for Per-Request Context support
-        // Note: Database access is now through context:db(name) instead of global db
-        context.registerContextModule(lua);
     }
 };
 

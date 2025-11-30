@@ -46,7 +46,7 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 - Instruction limit protection
 - Request/Response/Context API
 - Hot-reloading via FileCache auto mode
-- Built-in cjson module for JSON handling
+- Built-in json module for JSON handling
 
 ✅ **Security (Complete)**
 - Default security headers (CSP, HSTS, X-Frame-Options, etc.)
@@ -376,7 +376,7 @@ The following are **optional enhancements** that could be considered for future 
 - [x] Lua script caching and precompilation - source caching with mtime validation (bytecode infrastructure added for future use)
 - [x] Sandboxing and resource limits for Lua scripts - instruction limits and dangerous function removal
 - [x] LuaJIT support - optional build with `-Dlua-lang=luajit` for JIT compilation and better performance
-- [x] Built-in cjson module - cjson-compatible JSON encode/decode functions available in sandboxed scripts
+- [x] Built-in json module - JSON encode/decode functions available in Lua scripts
 - [x] C module integration guide - documentation for using Lua C modules (see docs/LUA_C_MODULES.md)
 
 ### Phase 2: Full GraphQL Implementation
@@ -493,7 +493,7 @@ Current Version: **v0.5.0** (Production Ready)
 
 - **v0.2.x**: Minor enhancements and bug fixes
 - **v0.3.x**: Enhanced Lua integration (Phase 1)
-- **v0.4.x**: LuaJIT support and cjson module (Phase 1 complete)
+- **v0.4.x**: LuaJIT support and json module (Phase 1 complete)
 - **v0.5.x**: Full GraphQL implementation (Phase 2 complete)
 - **v1.0.0**: Stable API with backward compatibility guarantees
 

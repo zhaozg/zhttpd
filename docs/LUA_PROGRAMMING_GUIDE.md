@@ -261,7 +261,7 @@ end
 
 ## Working with JSON
 
-zhttpd provides a built-in `cjson` module compatible with the popular lua-cjson library.
+zhttpd provides a built-in `json` module for JSON encoding and decoding.
 
 ### Encoding to JSON
 
@@ -273,7 +273,7 @@ local data = {
     roles = {"admin", "user"}
 }
 
-local json_str = cjson.encode(data)
+local json_str = json.encode(data)
 -- {"name":"John","age":30,"active":true,"roles":["admin","user"]}
 ```
 
@@ -281,7 +281,7 @@ local json_str = cjson.encode(data)
 
 ```lua
 local json_str = '{"status":"ok","count":42}'
-local data = cjson.decode(json_str)
+local data = json.decode(json_str)
 
 print(data.status)  -- "ok"
 print(data.count)   -- 42
@@ -290,9 +290,9 @@ print(data.count)   -- 42
 ### Handling NULL
 
 ```lua
--- cjson.null represents JSON null
-local data = cjson.decode('{"value":null}')
-print(data.value == nil)  -- true (cjson.null == nil)
+-- json.null represents JSON null
+local data = json.decode('{"value":null}')
+print(data.value == nil)  -- true (json.null == nil)
 ```
 
 ### Error Handling
@@ -300,7 +300,7 @@ print(data.value == nil)  -- true (cjson.null == nil)
 ```lua
 local function safe_decode(json_str)
     local success, result = pcall(function()
-        return cjson.decode(json_str)
+        return json.decode(json_str)
     end)
     
     if success then
@@ -610,6 +610,6 @@ settings.lua  -> /api/settings
 
 ## See Also
 
-- [Lua C Module Integration Guide](LUA_C_MODULES.md) - cjson module details
+- [Lua C Module Integration Guide](LUA_C_MODULES.md) - json module details
 - [Security Guide](SECURITY.md) - Security considerations
 - [Architecture Guide](ARCHITECTURE.md) - System architecture

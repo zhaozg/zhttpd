@@ -414,24 +414,24 @@ print(status.uri)         -- Connection URI
 
 ---
 
-### JSON Module (cjson)
+### JSON Module (json)
 
 Built-in JSON encoding/decoding.
 
-#### `cjson.encode(value)`
+#### `json.encode(value)`
 Encode Lua value to JSON string.
 
 ```lua
 local data = { name = "John", age = 30 }
-local json = cjson.encode(data)
+local json_str = json.encode(data)
 -- '{"name":"John","age":30}'
 ```
 
-#### `cjson.decode(json)`
+#### `json.decode(json)`
 Decode JSON string to Lua value.
 
 ```lua
-local data = cjson.decode('{"name":"John","age":30}')
+local data = json.decode('{"name":"John","age":30}')
 print(data.name)  -- "John"
 ```
 
