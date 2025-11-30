@@ -220,9 +220,10 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
             const is_array = len > 0;
 
             // Pre-allocate buffer with estimated size based on table length
+            // Use saturating arithmetic to prevent overflow for very large arrays
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(allocator);
-            const estimated_size: usize = if (is_array) @as(usize, @intCast(len)) * ARRAY_ELEMENT_AVG_SIZE + 2 else OBJECT_DEFAULT_SIZE;
+            const estimated_size: usize = if (is_array) @as(usize, @intCast(len)) *| ARRAY_ELEMENT_AVG_SIZE +| 2 else OBJECT_DEFAULT_SIZE;
             try buf.ensureTotalCapacity(allocator, estimated_size);
 
             if (is_array) {

@@ -185,18 +185,18 @@ fn isPathSafe(path: []const u8) bool {
         }
 
         // Check for URL-encoded characters
-        if (c == '%' and i + 2 < path.len) {
+        if (c == '%' and i + 3 <= path.len) {
             const hex = path[i + 1 .. i + 3];
             // Check for encoded '.' (%2e or %2E)
             if (std.ascii.eqlIgnoreCase(hex, "2e")) {
                 // Look for pattern like %2e%2e or %2e. or .%2e
-                if (i + 5 < path.len and path[i + 3] == '%') {
+                if (i + 6 <= path.len and path[i + 3] == '%') {
                     const hex2 = path[i + 4 .. i + 6];
                     if (std.ascii.eqlIgnoreCase(hex2, "2e")) {
                         return false; // Found %2e%2e
                     }
                 }
-                if (i + 3 < path.len and path[i + 3] == '.') {
+                if (i + 4 <= path.len and path[i + 3] == '.') {
                     return false; // Found %2e.
                 }
                 if (prev_char == '.') {

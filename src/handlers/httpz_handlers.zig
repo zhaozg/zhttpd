@@ -172,7 +172,10 @@ pub const AppContext = struct {
         };
 
         // Cache the absolute path of static directory (optimization: avoids realpath syscall per request)
-        ctx.static_dir_abs = std.fs.cwd().realpathAlloc(allocator, config.static_dir) catch null;
+        ctx.static_dir_abs = std.fs.cwd().realpathAlloc(allocator, config.static_dir) catch |err| blk: {
+            logger.warn("Could not cache static directory path (will resolve per request): {}", .{err});
+            break :blk null;
+        };
 
         // Initialize Lua handler if enabled
         if (config.enable_lua) {
