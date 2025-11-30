@@ -144,13 +144,14 @@ fn addSecurityHeaders(res: *httpz.Response) void {
 
 /// Combined path security validation (single pass optimization)
 /// Checks for:
-/// - ".." sequences (path traversal)
-/// - URL-encoded path traversal attempts (%2e, %2f, %5c)
+/// - ".." path components (path traversal)
+/// - URL-encoded path traversal attempts (%2e%2e, %2f, %5c)
 /// - Backslash (Windows-style path separator)
 /// - Null bytes
 fn isPathSafe(path: []const u8) bool {
     var i: usize = 0;
     var prev_char: u8 = 0;
+    var prev_prev_char: u8 = 0;
 
     while (i < path.len) : (i += 1) {
         const c = path[i];
@@ -161,8 +162,20 @@ fn isPathSafe(path: []const u8) bool {
         // Check for backslash
         if (c == '\\') return false;
 
-        // Check for ".." sequence
-        if (c == '.' and prev_char == '.') return false;
+        // Check for ".." path component (path traversal)
+        // The ".." must be a complete path component, not part of a filename like "..hidden" or "a..b"
+        // Valid patterns to block: "/..", "../", "/.../", start with "../"
+        if (c == '.' and prev_char == '.') {
+            // Check if this ".." is at a path boundary
+            const at_start = i == 1; // Path is ".." at start
+            const after_slash = prev_prev_char == '/' or i == 1; // Preceded by "/" or at position 1 (after first char)
+            const at_end = i + 1 >= path.len; // ".." at end of path
+            const before_slash = i + 1 < path.len and path[i + 1] == '/'; // Followed by "/"
+
+            if ((at_start or after_slash) and (at_end or before_slash)) {
+                return false;
+            }
+        }
 
         // Check for URL-encoded characters
         if (c == '%' and i + 2 < path.len) {
@@ -189,6 +202,7 @@ fn isPathSafe(path: []const u8) bool {
             }
         }
 
+        prev_prev_char = prev_char;
         prev_char = c;
     }
     return true;
@@ -218,18 +232,20 @@ test "getContentType returns correct MIME types" {
 test "isPathSafe blocks path traversal attacks" {
     const testing = std.testing;
 
-    // Safe paths
+    // Safe paths - including legitimate filenames with dots
     try testing.expect(isPathSafe("/index.html"));
     try testing.expect(isPathSafe("/static/style.css"));
     try testing.expect(isPathSafe("/images/logo.png"));
     try testing.expect(isPathSafe("/api/users"));
-    try testing.expect(isPathSafe("/a.b.c.html")); // Multiple dots but not ".."
+    try testing.expect(isPathSafe("/a.b.c.html")); // Multiple dots but not ".." as path component
+    try testing.expect(isPathSafe("/..hidden")); // ".." followed by more chars is valid filename
+    try testing.expect(isPathSafe("/a..b.txt")); // ".." in middle of filename is valid
 
-    // Unsafe paths - ".." traversal
+    // Unsafe paths - ".." path component traversal
     try testing.expect(!isPathSafe("/.."));
     try testing.expect(!isPathSafe("/../"));
     try testing.expect(!isPathSafe("/static/../etc/passwd"));
-    try testing.expect(!isPathSafe("/..hidden"));
+    try testing.expect(!isPathSafe("../etc/passwd"));
 
     // Unsafe paths - encoded traversal
     try testing.expect(!isPathSafe("/%2e%2e/etc/passwd")); // %2e%2e = ..

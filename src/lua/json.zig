@@ -190,10 +190,11 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
         },
         .string => {
             const s = lua.toString(index) catch "";
-            // Pre-allocate buffer with estimated size (string length + quotes + some escape overhead)
+            // Pre-allocate buffer with estimated size (string length + quotes + escape overhead)
+            // Use conservative estimate: each char could potentially need escaping
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(allocator);
-            try buf.ensureTotalCapacity(allocator, s.len + 2 + s.len / 8);
+            try buf.ensureTotalCapacity(allocator, s.len + 2 + s.len / 4);
             try buf.append(allocator, '"');
             try appendJsonEscapedString(&buf, allocator, s);
             try buf.append(allocator, '"');
