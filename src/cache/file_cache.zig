@@ -49,6 +49,10 @@ pub const FileCache = struct {
     allocator: std.mem.Allocator,
     reload_mode: ReloadMode,
     max_cache_file_size: usize, // Maximum file size to cache (files larger than this won't be cached)
+    /// Mutex to serialize cache put operations. This works around a race condition
+    /// in the cache.zig library where the removeTail function in list.zig doesn't
+    /// acquire the list's mutex, causing crashes under high concurrency.
+    put_mutex: std.Thread.Mutex = .{},
 
     /// Initialize a new file cache with the specified reload mode and max cache file size
     pub fn init(allocator: std.mem.Allocator, reload_mode: ReloadMode, max_cache_file_size: usize) FileCache {
@@ -72,6 +76,7 @@ pub const FileCache = struct {
             .allocator = allocator,
             .reload_mode = reload_mode,
             .max_cache_file_size = max_cache_file_size,
+            .put_mutex = .{},
         };
     }
 
@@ -97,8 +102,10 @@ pub const FileCache = struct {
     fn putCached(self: *FileCache, key: []const u8, content: []const u8, mtime: i128, etag: ?[]const u8) !void {
         // Store the new content with owned copies
         const owned_content = try self.allocator.dupe(u8, content);
+        errdefer self.allocator.free(owned_content);
 
         const owned_etag = if (etag) |e| try self.allocator.dupe(u8, e) else null;
+        errdefer if (owned_etag) |e| self.allocator.free(e);
 
         const entry = FileCacheEntry{
             .content = owned_content,
@@ -108,15 +115,17 @@ pub const FileCache = struct {
             .allocator = self.allocator,
         };
 
-        self.cache.put(key, entry, .{
+        // Acquire the put_mutex to serialize cache.put operations.
+        // This is a workaround for a race condition in the cache.zig library
+        // where concurrent put operations can cause crashes during LRU eviction.
+        self.put_mutex.lock();
+        defer self.put_mutex.unlock();
+
+        // If put fails, errdefer will handle cleanup
+        try self.cache.put(key, entry, .{
             .ttl = DEFAULT_FILE_TTL,
             .size = entry.size(),
-        }) catch |err| {
-            // Clean up on failure to avoid memory leak
-            self.allocator.free(owned_content);
-            if (owned_etag) |e| self.allocator.free(e);
-            return err;
-        };
+        });
     }
 
     /// Load file content with caching based on reload mode
