@@ -137,7 +137,13 @@ local MAX_QUERY_COMPLEXITY = 100  -- Maximum allowed complexity
 local MAX_QUERY_DEPTH = 10        -- Maximum nesting depth
 
 local function calculate_complexity(selections, depth)
-    if not selections or depth > MAX_QUERY_DEPTH then
+    if not selections then
+        return 0, depth
+    end
+    
+    -- Track max depth reached even when exceeding limit
+    if depth > MAX_QUERY_DEPTH then
+        -- Still return the depth to report the exceeded value
         return 0, depth
     end
     
@@ -207,7 +213,9 @@ local function create_user_in_db(db, input)
         input.email or ""
     )
     if err then return nil end
-    -- Get the created user
+    -- Note: last_insert_rowid() is SQLite-specific and safe within the same connection
+    -- For other databases, consider using RETURNING clause if supported
+    -- This is acceptable since zdbc maintains connection affinity per request
     local id_result = db:query("SELECT last_insert_rowid() AS id")
     if id_result and #id_result > 0 then
         return get_user_from_db(db, id_result[1].id)
@@ -633,25 +641,42 @@ local function resolve_value(value, selections, type_name, context)
     return result
 end
 
+-- Helper function to parse request body
+local function parse_request(request, context)
+    -- Check if request is a simple table (old style)
+    if type(request) == "table" and request.body and type(request.body) == "table" then
+        return {
+            body = request.body,
+            ctx = { variables = request.body.variables or {}, db = nil }
+        }
+    end
+    
+    -- New style: request object with parsed body passed through
+    local body = request.body or {}
+    
+    -- Get database connection from context if available
+    local db = nil
+    if context and type(context.db) == "function" then
+        db = context:db()
+    elseif context and context.db then
+        db = context.db
+    end
+    
+    return {
+        body = body,
+        ctx = { variables = body.variables or {}, db = db }
+    }
+end
+
 -- Main request handler
 -- Signature: handle(request, response, context)
 -- The graphql handler passes a simplified request with body containing
 -- { operation = {...}, variables = {...} }
 function handle(request, response, context)
-    -- Support both old signature (request table) and new signature (request, response, context)
-    local body, ctx
-    if type(request) == "table" and request.body then
-        -- Old style: request is a table with body
-        body = request.body or {}
-        ctx = { variables = body.variables or {}, db = nil }
-    else
-        -- New style: request object with :body() method
-        -- The graphql handler passes parsed JSON body directly
-        body = request.body or (type(request.body_raw) == "function" and cjson and cjson.decode(request:body_raw())) or {}
-        -- Get database connection from context if available
-        local db = context and context.db and context:db() or nil
-        ctx = { variables = body.variables or {}, db = db }
-    end
+    -- Parse request and extract context
+    local parsed = parse_request(request, context)
+    local body = parsed.body
+    local ctx = parsed.ctx
     
     local operation = body.operation
     local variables = body.variables or {}

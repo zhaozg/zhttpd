@@ -121,15 +121,22 @@ function handle(request, response, context)
             WHERE type='table' AND name IN ('users', 'posts')
         ]])
         
-        local user_count = db:query("SELECT COUNT(*) as count FROM users")
-        local post_count = db:query("SELECT COUNT(*) as count FROM posts")
+        -- Use a single query to get both counts efficiently
+        local counts = db:query([[
+            SELECT 
+                (SELECT COUNT(*) FROM users) as user_count,
+                (SELECT COUNT(*) FROM posts) as post_count
+        ]])
+        
+        local user_count = counts and counts[1] and counts[1].user_count or 0
+        local post_count = counts and counts[1] and counts[1].post_count or 0
         
         return {
             status = "success",
             schema = {
                 tables = tables,
-                user_count = user_count and user_count[1] and user_count[1].count or 0,
-                post_count = post_count and post_count[1] and post_count[1].count or 0
+                user_count = user_count,
+                post_count = post_count
             }
         }
     end
