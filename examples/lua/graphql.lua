@@ -28,6 +28,8 @@
 -- This resolver supports both in-memory data (fallback) and database storage.
 -- When database is configured (enable_db: true in config), data is persisted.
 -- Access database via context:db() - returns nil if not configured.
+-- Note: Current implementation uses SQLite-specific syntax. For PostgreSQL/MySQL,
+-- the SQL queries may need to be adapted.
 --
 -- Schema Introspection:
 -- Supports __schema, __type, and __typename introspection queries.
@@ -189,6 +191,9 @@ local next_user_id = 4
 local next_post_id = 4
 
 -- Database helper functions
+-- Note: These functions use SQLite-specific syntax (last_insert_rowid).
+-- For PostgreSQL, use RETURNING clause; for MySQL, use LAST_INSERT_ID().
+-- TODO: Add database type detection for multi-database support.
 local function get_user_from_db(db, user_id)
     if not db then return nil end
     local result, err = db:query("SELECT id, name, email, created_at as createdAt FROM users WHERE id = ? AND active = 1", user_id)
@@ -207,15 +212,14 @@ end
 
 local function create_user_in_db(db, input)
     if not db then return nil end
-    local affected, err = db:exec(
+    local _, err = db:exec(
         "INSERT INTO users (name, email) VALUES (?, ?)",
         input.name or "Unknown",
         input.email or ""
     )
     if err then return nil end
     -- Note: last_insert_rowid() is SQLite-specific and safe within the same connection
-    -- For other databases, consider using RETURNING clause if supported
-    -- This is acceptable since zdbc maintains connection affinity per request
+    -- For PostgreSQL, use RETURNING clause; for MySQL, use LAST_INSERT_ID()
     local id_result = db:query("SELECT last_insert_rowid() AS id")
     if id_result and #id_result > 0 then
         return get_user_from_db(db, id_result[1].id)
@@ -239,14 +243,14 @@ local function update_user_in_db(db, user_id, input)
     
     table.insert(values, user_id)
     local sql = "UPDATE users SET " .. table.concat(updates, ", ") .. " WHERE id = ? AND active = 1"
-    local affected, err = db:exec(sql, table.unpack(values))
+    local _, err = db:exec(sql, table.unpack(values))
     if err then return nil end
     return get_user_from_db(db, user_id)
 end
 
 local function delete_user_in_db(db, user_id)
     if not db then return false end
-    local affected, err = db:exec("UPDATE users SET active = 0 WHERE id = ?", user_id)
+    local _, err = db:exec("UPDATE users SET active = 0 WHERE id = ?", user_id)
     return err == nil
 end
 
@@ -266,6 +270,8 @@ local function get_all_posts_from_db(db)
     return result or {}
 end
 
+-- Note: This function may cause N+1 query issues when resolving multiple users' posts.
+-- For production use, consider implementing a DataLoader pattern or batch loading.
 local function get_posts_by_author_from_db(db, author_id)
     if not db then return nil end
     local result, err = db:query("SELECT id, title, content, author_id as authorId, created_at as createdAt, updated_at as updatedAt FROM posts WHERE author_id = ? ORDER BY id", author_id)
@@ -276,15 +282,16 @@ end
 local function create_post_in_db(db, input)
     if not db then return nil end
     local now = os.date("!%Y-%m-%dT%H:%M:%SZ")
-    local affected, err = db:exec(
+    local _, err = db:exec(
         "INSERT INTO posts (title, content, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
         input.title or "Untitled",
         input.content or "",
-        input.authorId or "1",
+        tonumber(input.authorId) or 1,
         now,
         now
     )
     if err then return nil end
+    -- Note: last_insert_rowid() is SQLite-specific
     local id_result = db:query("SELECT last_insert_rowid() AS id")
     if id_result and #id_result > 0 then
         return get_post_from_db(db, id_result[1].id)
@@ -520,6 +527,7 @@ local subscription_resolvers = {
         return {
             id = "1",
             content = "Sample subscription message",
+            senderId = "1",  -- Include senderId for the sender resolver
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }
     end
@@ -804,23 +812,21 @@ function handle(request, response, context)
         end
     end
     
-    -- Include query complexity info in extensions (optional, for debugging)
-    local extensions = {
-        complexity = complexity,
-        depth = depth
-    }
-    
+    -- Only include extensions on errors (avoid exposing complexity info in production)
+    -- To enable for debugging, set GRAPHQL_DEBUG=true in environment or add debug flag to request
     if #errors > 0 then
         return {
             data = data,
             errors = errors,
-            extensions = extensions
+            extensions = {
+                complexity = complexity,
+                depth = depth
+            }
         }
     end
     
     return {
-        data = data,
-        extensions = extensions
+        data = data
     }
 end
 

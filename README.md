@@ -390,6 +390,11 @@ GraphQL 查询执行可以委托给 Lua 脚本进行自定义数据解析。在 
 
 ```lua
 -- examples/lua/graphql.lua
+-- 内存数据存储（用于演示）
+local memory_users = {
+    ["1"] = { id = "1", name = "Alice", email = "alice@example.com" }
+}
+
 local query_resolvers = {
     users = function(args, context)
         -- 优先使用数据库，回退到内存数据
@@ -397,7 +402,11 @@ local query_resolvers = {
         if db then
             return db:query("SELECT * FROM users")
         end
-        return memory_users
+        local result = {}
+        for _, user in pairs(memory_users) do
+            table.insert(result, user)
+        end
+        return result
     end,
     user = function(args, context)
         local db = context.db
@@ -411,8 +420,13 @@ local query_resolvers = {
 
 function handle(request, response, context)
     local operation = request.body.operation
-    -- 执行查询并返回结果
-    return { data = result }
+    local field_name = operation.selections[1].name
+    local resolver = query_resolvers[field_name]
+    if resolver then
+        local result = resolver(operation.selections[1].arguments or {}, context)
+        return { data = { [field_name] = result } }
+    end
+    return { data = {} }
 end
 
 return { handle = handle }

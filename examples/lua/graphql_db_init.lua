@@ -1,4 +1,4 @@
--- GraphQL Database Schema Initialization
+-- GraphQL Database Schema Initialization (SQLite)
 -- This script creates the database tables needed for the GraphQL resolver
 --
 -- Usage: POST /api/graphql_db_init
@@ -8,15 +8,31 @@
 --
 -- Database Requirements:
 -- Configure enable_db: true and db_uri in config.yaml
+--
+-- ╔══════════════════════════════════════════════════════════════════════╗
+-- ║  ⚠️  SECURITY WARNING                                                ║
+-- ║                                                                      ║
+-- ║  This endpoint allows schema initialization without authentication! ║
+-- ║  In production environments, you MUST either:                        ║
+-- ║    1. Remove this script entirely, OR                                ║
+-- ║    2. Add authentication (check for admin token/session), OR         ║
+-- ║    3. Disable this endpoint via config                               ║
+-- ║                                                                      ║
+-- ║  Example: Require admin token header for POST requests               ║
+-- ╚══════════════════════════════════════════════════════════════════════╝
+--
+-- Note: This script uses SQLite-specific syntax.
+-- For PostgreSQL, use SERIAL PRIMARY KEY and CURRENT_TIMESTAMP.
+-- For MySQL, use INT AUTO_INCREMENT PRIMARY KEY and CURRENT_TIMESTAMP.
 
--- Initialize the GraphQL database schema
+-- Initialize the GraphQL database schema (SQLite syntax)
 local function init_schema(db)
     if not db then
         return false, "Database not available"
     end
     
-    -- Create users table
-    local affected, err = db:exec([[
+    -- Create users table (SQLite syntax)
+    local _, err = db:exec([[
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -29,8 +45,8 @@ local function init_schema(db)
         return false, "Failed to create users table: " .. tostring(err)
     end
     
-    -- Create posts table
-    affected, err = db:exec([[
+    -- Create posts table (SQLite syntax)
+    _, err = db:exec([[
         CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -48,16 +64,25 @@ local function init_schema(db)
     return true, "Schema initialized successfully"
 end
 
--- Seed sample data
+-- Seed sample data with transaction support
 local function seed_data(db)
     if not db then
         return false, "Database not available"
     end
     
     -- Check if data already exists
-    local existing = db:query("SELECT COUNT(*) as count FROM users")
+    local existing, err = db:query("SELECT COUNT(*) as count FROM users")
+    if err then
+        return false, "Failed to check existing data: " .. tostring(err)
+    end
     if existing and existing[1] and existing[1].count > 0 then
         return true, "Data already seeded"
+    end
+    
+    -- Start transaction for atomic seeding
+    local tx_ok, tx_err = db:begin()
+    if tx_err then
+        return false, "Failed to start transaction: " .. tostring(tx_err)
     end
     
     -- Insert sample users
@@ -68,12 +93,13 @@ local function seed_data(db)
     }
     
     for _, user in ipairs(users) do
-        local affected, err = db:exec(
+        local _, insert_err = db:exec(
             "INSERT INTO users (name, email) VALUES (?, ?)",
             user.name, user.email
         )
-        if err then
-            return false, "Failed to insert user: " .. tostring(err)
+        if insert_err then
+            db:rollback()
+            return false, "Failed to insert user: " .. tostring(insert_err)
         end
     end
     
@@ -85,13 +111,21 @@ local function seed_data(db)
     }
     
     for _, post in ipairs(posts) do
-        local affected, err = db:exec(
+        local _, insert_err = db:exec(
             "INSERT INTO posts (title, content, author_id) VALUES (?, ?, ?)",
             post.title, post.content, post.author_id
         )
-        if err then
-            return false, "Failed to insert post: " .. tostring(err)
+        if insert_err then
+            db:rollback()
+            return false, "Failed to insert post: " .. tostring(insert_err)
         end
+    end
+    
+    -- Commit transaction
+    local commit_ok, commit_err = db:commit()
+    if commit_err then
+        db:rollback()
+        return false, "Failed to commit: " .. tostring(commit_err)
     end
     
     return true, "Sample data seeded successfully"
@@ -114,22 +148,41 @@ function handle(request, response, context)
         }
     end
     
-    -- GET - Check schema status
+    -- GET - Check schema status (uses SQLite-specific sqlite_master)
     if method == "GET" then
-        local tables = db:query([[
+        local tables, tables_err = db:query([[
             SELECT name FROM sqlite_master 
             WHERE type='table' AND name IN ('users', 'posts')
         ]])
+        if tables_err then
+            response:status(500)
+            return { status = "error", message = "Failed to query tables: " .. tostring(tables_err) }
+        end
         
-        -- Use a single query to get both counts efficiently
-        local counts = db:query([[
-            SELECT 
-                (SELECT COUNT(*) FROM users) as user_count,
-                (SELECT COUNT(*) FROM posts) as post_count
-        ]])
+        -- Only query counts if both tables exist
+        local table_names = {}
+        if tables then
+            for _, t in ipairs(tables) do
+                table_names[t.name] = true
+            end
+        end
         
-        local user_count = counts and counts[1] and counts[1].user_count or 0
-        local post_count = counts and counts[1] and counts[1].post_count or 0
+        local user_count, post_count = 0, 0
+        if table_names["users"] and table_names["posts"] then
+            local counts, counts_err = db:query([[
+                SELECT 
+                    (SELECT COUNT(*) FROM users) as user_count,
+                    (SELECT COUNT(*) FROM posts) as post_count
+            ]])
+            if counts_err then
+                response:status(500)
+                return { status = "error", message = "Failed to query counts: " .. tostring(counts_err) }
+            end
+            if counts and counts[1] then
+                user_count = counts[1].user_count or 0
+                post_count = counts[1].post_count or 0
+            end
+        end
         
         return {
             status = "success",
@@ -142,6 +195,7 @@ function handle(request, response, context)
     end
     
     -- POST - Initialize schema and optionally seed data
+    -- WARNING: In production, add authentication here!
     if method == "POST" then
         local body = request:body() or {}
         
@@ -152,9 +206,9 @@ function handle(request, response, context)
             return { status = "error", message = message }
         end
         
-        -- Seed data if requested
+        -- Seed data only if explicitly requested with boolean true
         local seed_message = nil
-        if body.seed then
+        if body.seed == true then
             local seed_success, seed_msg = seed_data(db)
             seed_message = seed_msg
         end

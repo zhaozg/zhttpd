@@ -389,7 +389,7 @@ The following are **optional enhancements** that could be considered for future 
 - [x] GraphQL playground UI - available at /graphql/playground
 - [x] Parse GraphQL queries with grapzig library
 - [x] Lua-based resolver system for custom data fetching
-- [x] Database integration (SQLite, PostgreSQL, MySQL) - via context:db() in Lua resolvers
+- [x] Database integration (SQLite; PostgreSQL/MySQL syntax support planned) - via context:db() in Lua resolvers
 - [x] GraphQL subscriptions over WebSocket - via /graphql/ws endpoint with Lua handlers
 - [x] Schema introspection support (__schema, __type, __typename queries)
 - [x] Query complexity analysis and rate limiting (MAX_QUERY_COMPLEXITY, MAX_QUERY_DEPTH)
