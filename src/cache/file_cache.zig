@@ -240,6 +240,152 @@ pub const FileCache = struct {
         return try std.fmt.allocPrint(allocator, "W/\"{x}-{x}\"", .{ file_size, mtime });
     }
 
+    /// Result from loadFileWithETag containing cached content and ETag
+    pub const CachedFileInfo = struct {
+        content: []const u8,
+        etag: []const u8,
+    };
+
+    /// Load file content with ETag, both cached
+    /// This method caches both the file content and ETag to avoid repeated file operations.
+    /// The returned content and etag are owned by the caller and must be freed.
+    /// - force: Always read from disk, regenerate ETag
+    /// - never: Use cache if available, otherwise read and cache
+    /// - auto: Check file mtime and reload if modified
+    pub fn loadFileWithETag(self: *FileCache, path: []const u8) !CachedFileInfo {
+        switch (self.reload_mode) {
+            .force => {
+                // Always read from disk, regenerate ETag
+                const file = try std.fs.cwd().openFile(path, .{});
+                defer file.close();
+                const stat = try file.stat();
+                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                errdefer self.allocator.free(content);
+                const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                return .{ .content = content, .etag = etag };
+            },
+            .never => {
+                // Use cache if available, otherwise read and cache
+                if (try self.getCachedContentWithETag(path)) |cached| {
+                    return cached;
+                }
+
+                // Check file size before reading
+                const file = try std.fs.cwd().openFile(path, .{});
+                defer file.close();
+                const stat = try file.stat();
+
+                // If file is too large, don't cache it
+                if (stat.size > self.max_cache_file_size) {
+                    const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    errdefer self.allocator.free(content);
+                    const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                    return .{ .content = content, .etag = etag };
+                }
+
+                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                errdefer self.allocator.free(content);
+                const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                errdefer self.allocator.free(etag);
+
+                // Cache makes its own copy, store mtime for consistency
+                try self.putCached(path, content, stat.mtime, etag);
+                return .{ .content = content, .etag = etag };
+            },
+            .auto => {
+                // First, check cache to see if we have a recent entry
+                if (self.cache.get(path)) |entry| {
+                    defer entry.release();
+                    const current_time = std.time.nanoTimestamp();
+                    // Skip stat check if we checked recently (within STAT_CHECK_INTERVAL_NS)
+                    if (current_time - entry.value.last_check_time < STAT_CHECK_INTERVAL_NS) {
+                        // Return cached content without stat check
+                        const content = try self.allocator.dupe(u8, entry.value.content);
+                        errdefer self.allocator.free(content);
+                        const etag = if (entry.value.etag) |e|
+                            try self.allocator.dupe(u8, e)
+                        else
+                            try generateETag(self.allocator, content.len, entry.value.mtime);
+                        return .{ .content = content, .etag = etag };
+                    }
+
+                    // Check file modification time
+                    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+                        if (err == error.FileNotFound) {
+                            return err;
+                        }
+                        // For other errors (permission, etc.), return cached content as fallback
+                        const content = try self.allocator.dupe(u8, entry.value.content);
+                        errdefer self.allocator.free(content);
+                        const etag = if (entry.value.etag) |e|
+                            try self.allocator.dupe(u8, e)
+                        else
+                            try generateETag(self.allocator, content.len, entry.value.mtime);
+                        return .{ .content = content, .etag = etag };
+                    };
+                    defer file.close();
+                    const stat = try file.stat();
+
+                    if (entry.value.mtime == stat.mtime) {
+                        // File hasn't changed, duplicate and update last_check_time
+                        const content = try self.allocator.dupe(u8, entry.value.content);
+                        errdefer self.allocator.free(content);
+                        const etag = if (entry.value.etag) |e|
+                            try self.allocator.dupe(u8, e)
+                        else
+                            try generateETag(self.allocator, content.len, entry.value.mtime);
+                        errdefer self.allocator.free(etag);
+
+                        // Update cache with new last_check_time
+                        self.putCached(path, content, entry.value.mtime, etag) catch |err| {
+                            std.log.debug("Failed to update file cache last_check_time for {s}: {}", .{ path, err });
+                        };
+                        return .{ .content = content, .etag = etag };
+                    }
+
+                    // File changed - continue to read new content below
+                    // (entry is released when we exit the if block)
+                }
+
+                // Not cached or cache is stale, read from disk
+                const file = try std.fs.cwd().openFile(path, .{});
+                defer file.close();
+                const stat = try file.stat();
+
+                // If file is too large, don't cache it
+                if (stat.size > self.max_cache_file_size) {
+                    const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    errdefer self.allocator.free(content);
+                    const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                    return .{ .content = content, .etag = etag };
+                }
+
+                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                errdefer self.allocator.free(content);
+                const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                errdefer self.allocator.free(etag);
+
+                try self.putCached(path, content, stat.mtime, etag);
+                return .{ .content = content, .etag = etag };
+            },
+        }
+    }
+
+    /// Get cached content with ETag, duplicating both to ensure safety
+    fn getCachedContentWithETag(self: *FileCache, key: []const u8) !?CachedFileInfo {
+        if (self.cache.get(key)) |entry| {
+            defer entry.release();
+            const content = try self.allocator.dupe(u8, entry.value.content);
+            errdefer self.allocator.free(content);
+            const etag = if (entry.value.etag) |e|
+                try self.allocator.dupe(u8, e)
+            else
+                try generateETag(self.allocator, content.len, entry.value.mtime);
+            return .{ .content = content, .etag = etag };
+        }
+        return null;
+    }
+
     /// Get file info with ETag support (for zero-copy serving)
     pub fn getFileInfo(file_cache: *FileCache, path: []const u8, allocator: std.mem.Allocator) !struct { size: u64, mtime: i128, etag: []const u8 } {
         _ = file_cache; // unused but kept for API consistency
@@ -334,4 +480,103 @@ test "file cache auto mode rate limiting" {
     defer allocator.free(content2);
     // Should still see original content because rate limiting skips stat check
     try testing.expectEqualStrings("original content", content2);
+}
+
+test "loadFileWithETag caches content and etag" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var file_cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer file_cache.deinit();
+
+    // Create a temporary file
+    const test_file = "test_load_with_etag.tmp";
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("cached content");
+    }
+    defer std.fs.cwd().deleteFile(test_file) catch {};
+
+    // First load - should read from disk and cache with ETag
+    const info1 = try file_cache.loadFileWithETag(test_file);
+    defer allocator.free(info1.content);
+    defer allocator.free(info1.etag);
+
+    try testing.expectEqualStrings("cached content", info1.content);
+    // ETag should start with W/" (weak ETag format)
+    try testing.expect(std.mem.startsWith(u8, info1.etag, "W/\""));
+
+    // Second load - should return cached content and etag
+    const info2 = try file_cache.loadFileWithETag(test_file);
+    defer allocator.free(info2.content);
+    defer allocator.free(info2.etag);
+
+    try testing.expectEqualStrings("cached content", info2.content);
+    // ETags should be identical since file hasn't changed
+    try testing.expectEqualStrings(info1.etag, info2.etag);
+}
+
+test "loadFileWithETag force mode always reads from disk" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var file_cache = FileCache.init(allocator, .force, 1024 * 1024);
+    defer file_cache.deinit();
+
+    // Create a temporary file
+    const test_file = "test_load_with_etag_force.tmp";
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("force content");
+    }
+    defer std.fs.cwd().deleteFile(test_file) catch {};
+
+    // Load in force mode - should always read from disk
+    const info = try file_cache.loadFileWithETag(test_file);
+    defer allocator.free(info.content);
+    defer allocator.free(info.etag);
+
+    try testing.expectEqualStrings("force content", info.content);
+    try testing.expect(std.mem.startsWith(u8, info.etag, "W/\""));
+}
+
+test "loadFileWithETag never mode caches" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var file_cache = FileCache.init(allocator, .never, 1024 * 1024);
+    defer file_cache.deinit();
+
+    // Create a temporary file
+    const test_file = "test_load_with_etag_never.tmp";
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("never reload content");
+    }
+    defer std.fs.cwd().deleteFile(test_file) catch {};
+
+    // First load
+    const info1 = try file_cache.loadFileWithETag(test_file);
+    defer allocator.free(info1.content);
+    defer allocator.free(info1.etag);
+
+    try testing.expectEqualStrings("never reload content", info1.content);
+
+    // Modify the file
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("modified content");
+    }
+
+    // Second load - should still return original cached content
+    const info2 = try file_cache.loadFileWithETag(test_file);
+    defer allocator.free(info2.content);
+    defer allocator.free(info2.etag);
+
+    // Should still see original content because reload mode is 'never'
+    try testing.expectEqualStrings("never reload content", info2.content);
 }
