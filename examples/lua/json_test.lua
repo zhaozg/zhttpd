@@ -1,5 +1,5 @@
--- Test script for cjson module
--- This tests the built-in cjson.encode and cjson.decode functions
+-- Test script for json module
+-- This tests the built-in json.encode and json.decode functions
 -- Including edge cases for special characters, empty values, and boundary conditions
 --
 -- Handler signature: function handle(request, response, context)
@@ -14,11 +14,11 @@ function handle(request, response, context)
             key = "value"
         }
     }
-    local encoded = cjson.encode(test_table)
+    local encoded = json.encode(test_table)
     
     -- Test 2: Decode basic JSON
     local json_str = '{"status":"ok","count":42}'
-    local decoded = cjson.decode(json_str)
+    local decoded = json.decode(json_str)
     
     -- Test 3: Strings with special characters (quotes, backslashes, control chars)
     local special_chars = {
@@ -28,23 +28,23 @@ function handle(request, response, context)
         tab_test = "col1\tcol2",
         carriage_return = "before\rafter"
     }
-    local special_encoded = cjson.encode(special_chars)
-    local special_decoded = cjson.decode(special_encoded)
+    local special_encoded = json.encode(special_chars)
+    local special_decoded = json.decode(special_encoded)
     
     -- Test 4: Keys with special characters
     local special_keys = {}
     special_keys["key with spaces"] = "value1"
     special_keys["key\"quote"] = "value2"
     special_keys["key\\backslash"] = "value3"
-    local keys_encoded = cjson.encode(special_keys)
+    local keys_encoded = json.encode(special_keys)
     
     -- Test 5: Empty table (object)
     local empty_obj = {}
-    local empty_encoded = cjson.encode(empty_obj)
+    local empty_encoded = json.encode(empty_obj)
     
     -- Test 6: Empty array
     local empty_arr = {}
-    local empty_arr_encoded = cjson.encode(empty_arr)
+    local empty_arr_encoded = json.encode(empty_arr)
     
     -- Test 7: Deeply nested structures
     local deep = {
@@ -58,15 +58,15 @@ function handle(request, response, context)
             }
         }
     }
-    local deep_encoded = cjson.encode(deep)
-    local deep_decoded = cjson.decode(deep_encoded)
+    local deep_encoded = json.encode(deep)
+    local deep_decoded = json.decode(deep_encoded)
     
     -- Test 8: Large integers (near JSON_MAX_SAFE_INTEGER boundary)
     local large_nums = {
         large_int = 9007199254740991,  -- MAX_SAFE_INTEGER - 1
         negative_large = -9007199254740991
     }
-    local large_encoded = cjson.encode(large_nums)
+    local large_encoded = json.encode(large_nums)
     
     -- Test 9: Boolean and null values
     local bool_null = {
@@ -74,7 +74,7 @@ function handle(request, response, context)
         bool_false = false,
         null_val = nil
     }
-    local bool_encoded = cjson.encode(bool_null)
+    local bool_encoded = json.encode(bool_null)
     
     -- Test 10: Float values
     local floats = {
@@ -82,7 +82,7 @@ function handle(request, response, context)
         negative = -2.5,
         scientific = 1.5e10
     }
-    local float_encoded = cjson.encode(floats)
+    local float_encoded = json.encode(floats)
     
     -- Verify special character escaping in decoded values
     local special_chars_valid = (special_decoded.quote_test == 'hello "world"') and
@@ -108,7 +108,7 @@ function handle(request, response, context)
         encoded_sample = encoded,
         decoded_status = decoded.status,
         decoded_count = decoded.count,
-        cjson_available = cjson ~= nil,
+        json_available = json ~= nil,
         -- Edge case results
         special_chars_encoded = special_encoded,
         special_chars_valid = special_chars_valid,

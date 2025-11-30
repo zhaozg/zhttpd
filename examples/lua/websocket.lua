@@ -87,10 +87,10 @@ end
 -- - Escaped quotes within strings
 -- - Arrays, numbers, or boolean values
 -- - Complex nested structures
--- For production use with complex JSON, integrate lua-cjson or similar library.
+-- For production use with complex JSON, use the built-in json module or integrate lua-cjson.
 local function parse_json(str)
     -- Try to use a simple pattern-based approach for common cases
-    -- This is a simplified parser - for production use cjson
+    -- This is a simplified parser - for production use json module
     if str == "" or str == nil then
         return {}
     end

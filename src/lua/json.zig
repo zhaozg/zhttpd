@@ -1,7 +1,7 @@
 //! JSON encoding/decoding module for Lua integration
 //!
 //! This module provides JSON serialization and deserialization for Lua values,
-//! including the cjson module that is exposed to Lua scripts.
+//! including the json module that is exposed to Lua scripts.
 //!
 //! The module handles:
 //! - Converting Lua values to JSON strings (encode)
@@ -47,42 +47,42 @@ pub fn appendJsonEscapedString(buf: *std.ArrayListUnmanaged(u8), allocator: std.
     }
 }
 
-/// Register the built-in cjson module
-/// Provides cjson-compatible API: cjson.encode() and cjson.decode()
+/// Register the built-in json module
+/// Provides json.encode() and json.decode() API
 /// Note: This function is called once per thread when the Lua VM is initialized.
 /// The allocator_getter is threadlocal to avoid data races between worker threads.
-pub fn registerCjsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) void {
+pub fn registerJsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) void {
     // Store the allocator getter in thread-local storage
     allocator_getter = getAllocator;
 
-    // Create the cjson table
+    // Create the json table
     lua.newTable();
 
     // Add encode function
-    lua.pushFunction(ziglua.wrap(cjsonEncode));
+    lua.pushFunction(ziglua.wrap(jsonEncode));
     lua.setField(-2, "encode");
 
     // Add decode function
-    lua.pushFunction(ziglua.wrap(cjsonDecode));
+    lua.pushFunction(ziglua.wrap(jsonDecode));
     lua.setField(-2, "decode");
 
-    // Add null value (cjson.null) - use a unique sentinel value
+    // Add null value (json.null) - use a unique sentinel value
     // We use a small integer as a sentinel since light userdata requires non-null
     lua.pushNil();
     lua.setField(-2, "null");
 
-    // Set as global 'cjson'
-    lua.setGlobal("cjson");
+    // Set as global 'json'
+    lua.setGlobal("json");
 }
 
 /// Thread-local storage for allocator getter function to avoid data races
 threadlocal var allocator_getter: ?*const fn () std.mem.Allocator = null;
 
-/// cjson.encode(value) - Convert Lua value to JSON string
-fn cjsonEncode(lua: *ziglua.Lua) i32 {
+/// json.encode(value) - Convert Lua value to JSON string
+fn jsonEncode(lua: *ziglua.Lua) i32 {
     // Check if we have an argument
     if (lua.getTop() < 1) {
-        _ = lua.pushString("cjson.encode: requires 1 argument");
+        _ = lua.pushString("json.encode: requires 1 argument");
         lua.raiseError();
     }
 
@@ -94,7 +94,7 @@ fn cjsonEncode(lua: *ziglua.Lua) i32 {
     defer arena.deinit();
 
     const json_str = luaValueToJson(arena.allocator(), lua, 1) catch {
-        _ = lua.pushString("cjson.encode: failed to encode value");
+        _ = lua.pushString("json.encode: failed to encode value");
         lua.raiseError();
     };
 
@@ -102,22 +102,22 @@ fn cjsonEncode(lua: *ziglua.Lua) i32 {
     return 1;
 }
 
-/// cjson.decode(json_string) - Parse JSON string to Lua value
-fn cjsonDecode(lua: *ziglua.Lua) i32 {
+/// json.decode(json_string) - Parse JSON string to Lua value
+fn jsonDecode(lua: *ziglua.Lua) i32 {
     // Check if we have an argument
     if (lua.getTop() < 1) {
-        _ = lua.pushString("cjson.decode: requires 1 argument");
+        _ = lua.pushString("json.decode: requires 1 argument");
         lua.raiseError();
     }
 
     // Check if argument is a string
     if (lua.typeOf(1) != .string) {
-        _ = lua.pushString("cjson.decode: argument must be a string");
+        _ = lua.pushString("json.decode: argument must be a string");
         lua.raiseError();
     }
 
     const json_str = lua.toString(1) catch {
-        _ = lua.pushString("cjson.decode: failed to get string");
+        _ = lua.pushString("json.decode: failed to get string");
         lua.raiseError();
     };
 
@@ -129,12 +129,12 @@ fn cjsonDecode(lua: *ziglua.Lua) i32 {
     defer arena.deinit();
 
     const parsed = std.json.parseFromSlice(std.json.Value, arena.allocator(), json_str, .{}) catch {
-        _ = lua.pushString("cjson.decode: invalid JSON");
+        _ = lua.pushString("json.decode: invalid JSON");
         lua.raiseError();
     };
 
     pushJsonValue(lua, parsed.value) catch {
-        _ = lua.pushString("cjson.decode: failed to convert JSON to Lua");
+        _ = lua.pushString("json.decode: failed to convert JSON to Lua");
         lua.raiseError();
     };
 
@@ -212,7 +212,7 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
         .table => {
             // Determine if table is an array (sequence) or object.
             // We use rawLen() which returns the length of the sequence part.
-            // A table is treated as an array if rawLen > 0, matching cjson behavior.
+            // A table is treated as an array if rawLen > 0.
             // Note: Mixed tables (with both integer and string keys) will serialize
             // only the sequence part when treated as array. For pure objects, use
             // tables with only string keys.
@@ -285,7 +285,7 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
             return try buf.toOwnedSlice(allocator);
         },
         .light_userdata => {
-            // cjson.null is represented as light userdata with null pointer
+            // json.null is represented as light userdata with null pointer
             return try allocator.dupe(u8, "null");
         },
         else => {
