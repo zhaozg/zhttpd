@@ -164,14 +164,20 @@ fn isPathSafe(path: []const u8) bool {
 
         // Check for ".." path component (path traversal)
         // The ".." must be a complete path component, not part of a filename like "..hidden" or "a..b"
-        // Valid patterns to block: "/..", "../", "/.../", start with "../"
+        // Valid patterns to block: "/..", "../", "/.../", start with ".."
         if (c == '.' and prev_char == '.') {
+            // When we see ".." at position i (second dot), the first dot is at i-1
             // Check if this ".." is at a path boundary
-            const at_start = i == 1; // Path is ".." at start
-            const after_slash = prev_prev_char == '/' or i == 1; // Preceded by "/" or at position 1 (after first char)
-            const at_end = i + 1 >= path.len; // ".." at end of path
-            const before_slash = i + 1 < path.len and path[i + 1] == '/'; // Followed by "/"
+            // at_start: ".." starts at position 0 (first dot at 0, second at 1)
+            const at_start = i == 1;
+            // after_slash: preceded by "/" (first dot right after slash)
+            const after_slash = prev_prev_char == '/';
+            // at_end: ".." is at end of path
+            const at_end = i + 1 >= path.len;
+            // before_slash: followed by "/"
+            const before_slash = i + 1 < path.len and path[i + 1] == '/';
 
+            // Block if ".." is a complete path component
             if ((at_start or after_slash) and (at_end or before_slash)) {
                 return false;
             }
