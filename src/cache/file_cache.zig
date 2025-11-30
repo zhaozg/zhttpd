@@ -17,7 +17,8 @@ const STAT_CHECK_INTERVAL_NS: i128 = 1_000_000_000;
 pub const FileCacheEntry = struct {
     content: []const u8,
     mtime: i128, // File modification time in nanoseconds
-    last_check_time: i128 = 0, // Last time we checked the file's mtime
+    /// Last time we verified the file's mtime (0 = never checked, triggers immediate stat)
+    last_check_time: i128 = 0,
     etag: ?[]const u8 = null, // ETag for cache validation
     allocator: std.mem.Allocator,
 
@@ -165,11 +166,12 @@ pub const FileCache = struct {
 
                     // Check file modification time
                     const file = std.fs.cwd().openFile(path, .{}) catch |err| {
-                        // If file open fails, return cached content as fallback
                         if (err == error.FileNotFound) {
+                            // File was deleted, cache is stale - free the duplicate and return error
                             self.allocator.free(cached.content);
                             return err;
                         }
+                        // For other errors (permission, etc.), return cached content as fallback
                         return cached.content;
                     };
                     defer file.close();
@@ -177,13 +179,14 @@ pub const FileCache = struct {
 
                     if (cached.mtime == stat.mtime) {
                         // File hasn't changed, update last_check_time in cache
-                        // putCached will create a new entry with updated last_check_time
-                        // and the old entry will be evicted (its content freed by removedFromCache)
-                        // We pass the already-duplicated content; putCached will dupe it again for cache
+                        // Note: This creates a new cache entry because cache.zig doesn't support
+                        // in-place updates. The double-duplication overhead is acceptable because:
+                        // 1. It only happens once per check interval (1 second)
+                        // 2. The old entry is immediately evicted and its memory freed
+                        // 3. The alternative (no update) would cause stat() on every request
                         self.putCached(path, cached.content, cached.mtime, null) catch {
                             // If cache update fails, still return the cached content
                         };
-                        // Return the duplicated content from getCachedContent
                         return cached.content;
                     }
 
