@@ -17,7 +17,7 @@ const STAT_CHECK_INTERVAL_NS: i128 = 1_000_000_000;
 pub const FileCacheEntry = struct {
     content: []const u8,
     mtime: i128, // File modification time in nanoseconds
-    /// Last time we verified the file's mtime (0 = never checked, triggers immediate stat)
+    /// Last time we verified the file's mtime (default 0 ensures first check is always performed)
     last_check_time: i128 = 0,
     etag: ?[]const u8 = null, // ETag for cache validation
     allocator: std.mem.Allocator,
@@ -298,4 +298,40 @@ test "file cache force mode" {
     const content1 = try file_cache.loadFile(test_file);
     defer allocator.free(content1);
     try testing.expectEqualStrings("test content", content1);
+}
+
+test "file cache auto mode rate limiting" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var file_cache = FileCache.init(allocator, .auto, 1024 * 1024);
+    defer file_cache.deinit();
+
+    // Create a temporary file
+    const test_file = "test_cache_auto_rate_limit.tmp";
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("original content");
+    }
+    defer std.fs.cwd().deleteFile(test_file) catch {};
+
+    // First load - should read from disk and cache
+    const content1 = try file_cache.loadFile(test_file);
+    defer allocator.free(content1);
+    try testing.expectEqualStrings("original content", content1);
+
+    // Modify the file
+    {
+        const file = try std.fs.cwd().createFile(test_file, .{});
+        defer file.close();
+        try file.writeAll("modified content");
+    }
+
+    // Immediate second load - should return cached content (stat check skipped)
+    // because we're within STAT_CHECK_INTERVAL_NS (1 second)
+    const content2 = try file_cache.loadFile(test_file);
+    defer allocator.free(content2);
+    // Should still see original content because rate limiting skips stat check
+    try testing.expectEqualStrings("original content", content2);
 }
