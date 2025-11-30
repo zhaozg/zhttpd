@@ -1,9 +1,9 @@
 # Project Status
 
-## Current Version: v0.4.0
+## Current Version: v0.5.0
 
 **Status:** ✅ Production Ready  
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-11-30
 
 ## Quick Status
 
@@ -12,10 +12,10 @@
 | Core HTTP Server | ✅ Complete | 100% |
 | Static File Serving | ✅ Complete | 100% |
 | Lua Dynamic Content | ✅ Complete | 100% |
-| GraphQL Support | ⚠️ Partial | 80% |
+| GraphQL Support | ✅ Complete | 95% |
 | Security Features | ✅ Complete | 95% |
 | Observability | ✅ Complete | 90% |
-| Database Integration | ⚠️ Basic | 70% |
+| Database Integration | ✅ Complete | 85% |
 | Documentation | ✅ Complete | 90% |
 
 ## Core Features
@@ -31,8 +31,11 @@ All primary objectives have been achieved:
 | Lua Integration | ✅ Complete | Dynamic content via ziglua |
 | Lua Sandbox | ✅ Complete | Instruction limits, dangerous functions removed |
 | LuaJIT Support | ✅ Complete | Optional via -Dlua-lang=luajit |
-| GraphQL API | ✅ Complete | Query/mutation support via grapzig |
+| GraphQL API | ✅ Complete | Query/mutation/subscription support via grapzig |
 | GraphQL Playground | ✅ Complete | Interactive IDE at /graphql/playground |
+| GraphQL Introspection | ✅ Complete | __schema, __type, __typename support |
+| GraphQL Complexity | ✅ Complete | Query complexity and depth limiting |
+| GraphQL Database | ✅ Complete | Database integration via context:db() |
 | WebSocket | ✅ Complete | Full duplex with Lua handlers |
 | SSE | ✅ Complete | Server-Sent Events streaming |
 | Security Headers | ✅ Complete | CSP, HSTS, X-Frame-Options, etc. |
@@ -44,7 +47,7 @@ All primary objectives have been achieved:
 | Health Check | ✅ Complete | Component status |
 | Request ID | ✅ Complete | X-Request-ID propagation |
 | Configuration | ✅ Complete | JSON and YAML support |
-| Database Plugin | ⚠️ Basic | SQLite, PostgreSQL, MySQL via zdbc |
+| Database Plugin | ✅ Complete | SQLite (current GraphQL impl); PostgreSQL/MySQL via zdbc |
 
 ## Build & Test Status
 

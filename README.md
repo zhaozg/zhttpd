@@ -329,30 +329,107 @@ mutation {
 }
 ```
 
+**内省查询（Introspection）：**
+
+GraphQL 支持内省查询，可以查询 schema 信息：
+
+```graphql
+query {
+  __schema {
+    queryType { name }
+    mutationType { name }
+    types { name kind }
+  }
+}
+
+query {
+  __type(name: "User") {
+    name
+    fields { name }
+  }
+}
+```
+
+**查询复杂度限制：**
+
+GraphQL 实现了查询复杂度分析，防止过于复杂的查询：
+- 最大复杂度：100
+- 最大嵌套深度：10
+
+超过限制的查询会返回错误：
+
+```json
+{
+  "errors": [{
+    "message": "Query too complex",
+    "extensions": {
+      "code": "QUERY_COMPLEXITY_EXCEEDED",
+      "complexity": 150,
+      "maxComplexity": 100
+    }
+  }]
+}
+```
+
+**数据库集成：**
+
+GraphQL 解析器支持数据库集成。当配置了 `enable_db: true` 时，数据会持久化到数据库：
+
+```lua
+-- 在 graphql.lua 中访问数据库
+local db = context.db  -- 获取数据库连接
+if db then
+    local users = db:query("SELECT * FROM users WHERE active = 1")
+    return users
+end
+```
+
 **Lua 自定义解析器：**
 
 GraphQL 查询执行可以委托给 Lua 脚本进行自定义数据解析。在 `lua_scripts_dir` 目录中创建 `graphql.lua` 文件：
 
 ```lua
 -- examples/lua/graphql.lua
-local users = { ... }  -- 数据存储
+-- 内存数据存储（用于演示）
+local memory_users = {
+    ["1"] = { id = "1", name = "Alice", email = "alice@example.com" }
+}
 
 local query_resolvers = {
     users = function(args, context)
-        return users
+        -- 优先使用数据库，回退到内存数据
+        local db = context.db
+        if db then
+            return db:query("SELECT * FROM users")
+        end
+        local result = {}
+        for _, user in pairs(memory_users) do
+            table.insert(result, user)
+        end
+        return result
     end,
     user = function(args, context)
-        return users[args.id]
+        local db = context.db
+        if db then
+            local result = db:query("SELECT * FROM users WHERE id = ?", args.id)
+            return result and result[1]
+        end
+        return memory_users[args.id]
     end
 }
 
-function handle_request(request)
+function handle(request, response, context)
     local operation = request.body.operation
-    -- 执行查询并返回结果
-    return { data = result }
+    local field_name = operation.selections[1].name
+    local resolver = query_resolvers[field_name]
+    if resolver then
+        local result = resolver(operation.selections[1].arguments or {}, context)
+        return { data = { [field_name] = result } }
+    end
+    return { data = {} }
 end
 
-return { handle = handle_request }
+return { handle = handle }
 ```
 
 #### WebSocket 支持
