@@ -280,6 +280,7 @@ pub const FileCache = struct {
                     const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
                     errdefer self.allocator.free(content);
                     const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                    errdefer self.allocator.free(etag);
                     return .{ .content = content, .etag = etag };
                 }
 
@@ -357,6 +358,7 @@ pub const FileCache = struct {
                     const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
                     errdefer self.allocator.free(content);
                     const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                    errdefer self.allocator.free(etag);
                     return .{ .content = content, .etag = etag };
                 }
 
@@ -381,6 +383,7 @@ pub const FileCache = struct {
                 try self.allocator.dupe(u8, e)
             else
                 try generateETag(self.allocator, content.len, entry.value.mtime);
+            errdefer self.allocator.free(etag);
             return .{ .content = content, .etag = etag };
         }
         return null;
