@@ -1,16 +1,16 @@
 //! Session Management
 //!
-//! This module provides session management for zhttpd using cache.zig.
+//! This module provides session management for zhttpd using zcache.
 //! Sessions are stored in memory with configurable TTL and LRU eviction.
 //!
 //! ## Features
-//! - Thread-safe session storage via cache.zig
+//! - Thread-safe session storage via zcache
 //! - Configurable max sessions and TTL
 //! - Automatic session cleanup on expiration
 //! - Session ID generation using cryptographic random
 //!
 //! ## Thread Safety
-//! All session operations are thread-safe. The SessionManager uses cache.zig
+//! All session operations are thread-safe. The SessionManager uses zcache
 //! which provides segment-based locking for concurrent access.
 //!
 //! ## Usage
@@ -26,7 +26,7 @@
 //! ```
 
 const std = @import("std");
-const cache = @import("cache");
+const zcache = @import("zcache");
 const SessionValue = @import("value.zig").SessionValue;
 
 /// Default session TTL in seconds (30 minutes)
@@ -101,7 +101,6 @@ pub const Session = struct {
     }
 
     /// Size estimation for cache eviction (in bytes)
-    /// Required by cache.zig for size-based eviction
     pub fn size(self: Self) u32 {
         var total: u32 = SESSION_ID_HEX_LEN + 16; // ID + timestamps
         var iter = self.data.iterator();
@@ -112,12 +111,6 @@ pub const Session = struct {
             total +|= entry.value_ptr.size();
         }
         return total;
-    }
-
-    /// Called by cache.zig when the session is removed from cache
-    pub fn removedFromCache(self: *Self, _: std.mem.Allocator) void {
-        // Use the session's own allocator for cleanup
-        self.deinit();
     }
 
     /// Get a value from the session
@@ -192,9 +185,9 @@ pub const Session = struct {
     }
 };
 
-/// Session Manager using cache.zig for thread-safe storage
+/// Session Manager using zcache for thread-safe storage
 pub const SessionManager = struct {
-    cache: cache.Cache(Session),
+    cache: zcache.Cache([]const u8, Session),
     allocator: std.mem.Allocator,
     config: SessionConfig,
 
@@ -202,10 +195,13 @@ pub const SessionManager = struct {
 
     /// Initialize a new session manager
     pub fn init(allocator: std.mem.Allocator, config: SessionConfig) !Self {
+        // Convert TTL from seconds to milliseconds for zcache
+        const ttl_ms: i64 = @as(i64, config.default_ttl) * 1000;
         return Self{
-            .cache = try cache.Cache(Session).init(allocator, .{
+            .cache = try zcache.Cache([]const u8, Session).init(allocator, .{
                 .max_size = config.max_sessions,
                 .segment_count = config.segment_count,
+                .default_ttl_ms = ttl_ms,
             }),
             .allocator = allocator,
             .config = config,
@@ -222,16 +218,15 @@ pub const SessionManager = struct {
         const session = try Session.create(self.allocator);
         const id = session.id;
 
-        try self.cache.put(&id, session, .{
-            .ttl = self.config.default_ttl,
-        });
+        // zcache uses default TTL configured at init
+        try self.cache.put(&id, session);
 
         return id;
     }
 
     /// Get a session by ID
     /// Returns the session entry which must be released after use
-    pub fn getEntry(self: *Self, session_id: []const u8) ?*cache.Entry(Session) {
+    pub fn getEntry(self: *Self, session_id: []const u8) ?*zcache.Cache([]const u8, Session).EntryType {
         if (session_id.len != SESSION_ID_HEX_LEN) {
             return null;
         }

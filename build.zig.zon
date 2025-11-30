@@ -24,9 +24,9 @@
             .url = "https://github.com/zhaozg/zdbc/archive/refs/tags/0.1.0.tar.gz",
             .hash = "zdbc-0.1.0-_uIxvogwAgCNhrdEfmSJKGQVN0mNw8DVmSFeqKz73OU5",
         },
-        .@"cache.zig" = .{
-            .url = "https://github.com/karlseguin/cache.zig/archive/9f3329b05b3e98da928fe9988d74971da70328b4.tar.gz",
-            .hash = "cache-0.0.0-winRwKaSAAAKIcUzY8IXwcbH050imeWPFMbPW_sCdPLF",
+        .zcache = .{
+            .url = "https://github.com/zhaozg/zcache/archive/364e8dffeae407600507a7d8f910db2253a5093a.tar.gz",
+            .hash = "N-V-__8AACTCAABDBQTrbPuLVPwnel8HlMw1m5t_T5kYpGYz",
         },
         .zlua = .{
             .url = "https://github.com/natecraddock/ziglua/archive/315b7f25efd29d9e2143d6c0ab685bb7f640450f.tar.gz",
