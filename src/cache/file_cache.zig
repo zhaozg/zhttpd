@@ -288,7 +288,7 @@ pub const FileCache = struct {
                 const etag = try generateETag(self.allocator, stat.size, stat.mtime);
                 errdefer self.allocator.free(etag);
 
-                // Cache makes its own copy, use stat.mtime for cache invalidation in auto mode
+                // Cache makes its own copy, store mtime for consistency
                 try self.putCached(path, content, stat.mtime, etag);
                 return .{ .content = content, .etag = etag };
             },
