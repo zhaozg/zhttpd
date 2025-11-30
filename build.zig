@@ -73,11 +73,12 @@ pub fn build(b: *std.Build) void {
     // Build lua-cjson as a static library for high-performance JSON handling
     // Source: https://github.com/mpx/lua-cjson (MIT License)
     // Performance optimizations:
-    // - Use release optimization for lua-cjson even in debug builds
-    // - Enable SIMD and fast math optimizations
+    // - Always use ReleaseFast for lua-cjson to maintain consistent performance
+    // - This ensures JSON operations are fast even during development
     const lua_cjson_module = b.createModule(.{
         .target = target,
-        // Always use ReleaseFast for lua-cjson for maximum performance
+        // Always use ReleaseFast for lua-cjson for maximum JSON performance
+        // Debug builds still get fast JSON, while other code remains debuggable
         .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
     });
     const lua_cjson = b.addLibrary(.{
@@ -96,14 +97,15 @@ pub fn build(b: *std.Build) void {
     };
 
     // Performance optimization flags for lua-cjson
+    // These flags maximize JSON encoding/decoding performance
     const cjson_cflags = [_][]const u8{
-        "-std=gnu99", // Use GNU99 to get strncasecmp
-        "-O3", // Maximum optimization
+        "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
+        "-O3", // Maximum optimization level
         "-funroll-loops", // Unroll loops for better performance
-        "-fomit-frame-pointer", // Free up a register
-        "-DNDEBUG", // Disable assertions
-        "-DCJSON_MODNAME=\"json\"", // Use "json" as module name
-        "-DENABLE_CJSON_GLOBAL", // Register as global "json" table
+        "-fomit-frame-pointer", // Free up a register for better optimization
+        "-DNDEBUG", // Disable assertions in release
+        "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
+        "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
     };
 
     // Add lua-cjson source files
