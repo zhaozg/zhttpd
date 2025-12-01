@@ -73,7 +73,8 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
     // Use the shared file cache to load file content and ETag efficiently.
     // The cache handles: reload modes (force/auto/never), mtime checking, and ETag caching.
     // Content is cached across requests to avoid repeated file reads.
-    const file_info = ctx.file_cache.loadFileWithETag(target_abs) catch |err| {
+    // Use loadFileWithETagAlloc to allocate directly into response arena, avoiding double copy.
+    const file_info = ctx.file_cache.loadFileWithETagAlloc(target_abs, res.arena) catch |err| {
         switch (err) {
             error.FileNotFound => {
                 res.status = 404;
@@ -92,10 +93,8 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
             },
         }
     };
-    // Content and etag are owned by the caller and must be freed.
-    // Defer cleanup - these run at function end, after we've copied to res.arena.
-    defer ctx.file_cache.allocator.free(file_info.content);
-    defer ctx.file_cache.allocator.free(file_info.etag);
+    // Content and etag are allocated in res.arena and will be freed automatically
+    // when the response is complete. No explicit cleanup needed.
 
     // Check file size
     if (file_info.content.len > MAX_FILE_SIZE) {
@@ -111,35 +110,18 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
             if (std.mem.eql(u8, client_etag, file_info.etag)) {
                 // File hasn't changed, return 304 Not Modified
                 res.status = 304;
-                // Copy ETag to response arena for header
-                const etag_copy = res.arena.dupe(u8, file_info.etag) catch {
-                    res.status = 500;
-                    res.body = "Internal Server Error";
-                    return;
-                };
-                res.headers.add("ETag", etag_copy);
+                // ETag is already in response arena, use it directly
+                res.headers.add("ETag", file_info.etag);
                 res.body = "";
                 return;
             }
         }
 
-        // Add ETag header to response (copy to response arena)
-        const etag_copy = res.arena.dupe(u8, file_info.etag) catch {
-            res.status = 500;
-            res.body = "Internal Server Error";
-            return;
-        };
-        res.headers.add("ETag", etag_copy);
+        // Add ETag header to response (already in response arena)
+        res.headers.add("ETag", file_info.etag);
         // Add Cache-Control header for better caching
         res.headers.add("Cache-Control", "public, max-age=3600");
     }
-
-    // Copy content to response arena for the response body
-    const content_copy = res.arena.dupe(u8, file_info.content) catch {
-        res.status = 500;
-        res.body = "Internal Server Error";
-        return;
-    };
 
     // Set content type
     res.content_type = getContentType(target_abs);
@@ -149,8 +131,8 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         addSecurityHeaders(res);
     }
 
-    // Set response body
-    res.body = content_copy;
+    // Set response body directly - content is already in response arena
+    res.body = file_info.content;
 }
 
 /// Get content type for a file path using httpz's built-in MIME type detection
