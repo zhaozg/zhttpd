@@ -47,257 +47,255 @@ pub const FileCacheEntry = struct {
     }
 };
 
-/// Simple thread-safe LRU cache implemented with std library primitives.
+/// Simple thread-safe LRU cache for string keys and FileCacheEntry values.
 /// Uses a hash map for O(1) lookups and a doubly-linked list for LRU ordering.
 /// All operations are protected by a single mutex for thread safety.
-pub fn LruCache(comptime K: type, comptime V: type) type {
-    return struct {
-        const Self = @This();
+const StringLruCache = struct {
+    const Self = @This();
 
-        /// Node in the doubly-linked list
-        const Node = struct {
-            key: K,
-            value: V,
-            prev: ?*Node = null,
-            next: ?*Node = null,
+    /// Node in the doubly-linked list
+    const Node = struct {
+        key: []const u8,
+        value: FileCacheEntry,
+        prev: ?*Node = null,
+        next: ?*Node = null,
+    };
+
+    /// Hash map for O(1) key lookups
+    map: std.StringHashMap(*Node),
+    /// Head of the LRU list (most recently used)
+    head: ?*Node = null,
+    /// Tail of the LRU list (least recently used)
+    tail: ?*Node = null,
+    /// Current number of entries
+    count: usize = 0,
+    /// Maximum number of entries
+    max_size: usize,
+    /// Current total size in bytes
+    current_size: usize = 0,
+    /// Maximum total size in bytes
+    max_bytes: usize,
+    /// Allocator for nodes
+    allocator: std.mem.Allocator,
+    /// Mutex for thread safety
+    mutex: std.Thread.Mutex = .{},
+
+    /// Initialize a new LRU cache
+    pub fn init(allocator: std.mem.Allocator, max_size: usize, max_bytes: usize) Self {
+        return Self{
+            .map = std.StringHashMap(*Node).init(allocator),
+            .allocator = allocator,
+            .max_size = max_size,
+            .max_bytes = max_bytes,
+        };
+    }
+
+    /// Clean up and free all resources
+    pub fn deinit(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Free all nodes and their values
+        var node = self.head;
+        while (node) |n| {
+            const next = n.next;
+            // Free the key (owned copy)
+            self.allocator.free(n.key);
+            // Free the value's content
+            var entry = n.value;
+            entry.deinit();
+            // Free the node itself
+            self.allocator.destroy(n);
+            node = next;
+        }
+        self.map.deinit();
+        self.head = null;
+        self.tail = null;
+        self.count = 0;
+        self.current_size = 0;
+    }
+
+    /// Get a value by key, returns null if not found or expired
+    /// The returned entry's content is duplicated and owned by the caller
+    pub fn get(self: *Self, key: []const u8, allocator: std.mem.Allocator) !?FileCacheEntry {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.map.get(key)) |node| {
+            // Check expiration
+            if (node.value.expired()) {
+                self.removeNodeLocked(node);
+                return null;
+            }
+            // Move to front (most recently used)
+            self.moveToFrontLocked(node);
+            // Return a copy with duplicated content
+            const content = try allocator.dupe(u8, node.value.content);
+            errdefer allocator.free(content);
+            const etag = if (node.value.etag) |e| try allocator.dupe(u8, e) else null;
+            return FileCacheEntry{
+                .content = content,
+                .mtime = node.value.mtime,
+                .last_check_time = node.value.last_check_time,
+                .etag = etag,
+                .allocator = allocator,
+                .expires_ms = node.value.expires_ms,
+            };
+        }
+        return null;
+    }
+
+    /// Put a value into the cache
+    /// The cache takes ownership of the content and etag in the value
+    pub fn put(self: *Self, key: []const u8, value: FileCacheEntry) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const entry_size = value.size();
+
+        // Check if key already exists
+        if (self.map.get(key)) |existing| {
+            // Update existing entry
+            self.current_size -= existing.value.size();
+            var old_value = existing.value;
+            old_value.deinit();
+            existing.value = value;
+            self.current_size += entry_size;
+            self.moveToFrontLocked(existing);
+            return;
+        }
+
+        // Create new node
+        const node = try self.allocator.create(Node);
+        errdefer self.allocator.destroy(node);
+
+        // Duplicate the key
+        const owned_key = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(owned_key);
+
+        node.* = Node{
+            .key = owned_key,
+            .value = value,
         };
 
-        /// Hash map for O(1) key lookups
-        map: std.StringHashMap(*Node),
-        /// Head of the LRU list (most recently used)
-        head: ?*Node = null,
-        /// Tail of the LRU list (least recently used)
-        tail: ?*Node = null,
-        /// Current number of entries
-        count: usize = 0,
-        /// Maximum number of entries
-        max_size: usize,
-        /// Current total size in bytes
-        current_size: usize = 0,
-        /// Maximum total size in bytes
-        max_bytes: usize,
-        /// Allocator for nodes
-        allocator: std.mem.Allocator,
-        /// Mutex for thread safety
-        mutex: std.Thread.Mutex = .{},
+        // Add to map
+        try self.map.put(owned_key, node);
 
-        /// Initialize a new LRU cache
-        pub fn init(allocator: std.mem.Allocator, max_size: usize, max_bytes: usize) Self {
-            return Self{
-                .map = std.StringHashMap(*Node).init(allocator),
-                .allocator = allocator,
-                .max_size = max_size,
-                .max_bytes = max_bytes,
-            };
+        // Add to front of list
+        self.addToFrontLocked(node);
+        self.count += 1;
+        self.current_size += entry_size;
+
+        // Evict if necessary
+        self.evictIfNeededLocked();
+    }
+
+    /// Remove an entry by key
+    pub fn remove(self: *Self, key: []const u8) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.map.get(key)) |node| {
+            self.removeNodeLocked(node);
+            return true;
         }
+        return false;
+    }
 
-        /// Clean up and free all resources
-        pub fn deinit(self: *Self) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+    /// Clear all entries
+    pub fn clear(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-            // Free all nodes and their values
-            var node = self.head;
-            while (node) |n| {
-                const next = n.next;
-                // Free the key (owned copy)
-                self.allocator.free(n.key);
-                // Free the value's content
-                var entry = n.value;
-                entry.deinit();
-                // Free the node itself
-                self.allocator.destroy(n);
-                node = next;
-            }
-            self.map.deinit();
-            self.head = null;
-            self.tail = null;
-            self.count = 0;
-            self.current_size = 0;
-        }
-
-        /// Get a value by key, returns null if not found or expired
-        /// The returned entry's content is duplicated and owned by the caller
-        pub fn get(self: *Self, key: K, allocator: std.mem.Allocator) !?FileCacheEntry {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
-            if (self.map.get(key)) |node| {
-                // Check expiration
-                if (node.value.expired()) {
-                    self.removeNodeLocked(node);
-                    return null;
-                }
-                // Move to front (most recently used)
-                self.moveToFrontLocked(node);
-                // Return a copy with duplicated content
-                const content = try allocator.dupe(u8, node.value.content);
-                errdefer allocator.free(content);
-                const etag = if (node.value.etag) |e| try allocator.dupe(u8, e) else null;
-                return FileCacheEntry{
-                    .content = content,
-                    .mtime = node.value.mtime,
-                    .last_check_time = node.value.last_check_time,
-                    .etag = etag,
-                    .allocator = allocator,
-                    .expires_ms = node.value.expires_ms,
-                };
-            }
-            return null;
-        }
-
-        /// Put a value into the cache
-        /// The cache takes ownership of the content and etag
-        pub fn put(self: *Self, key: K, value: V) !void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
-            const entry_size = value.size();
-
-            // Check if key already exists
-            if (self.map.get(key)) |existing| {
-                // Update existing entry
-                self.current_size -= existing.value.size();
-                var old_value = existing.value;
-                old_value.deinit();
-                existing.value = value;
-                self.current_size += entry_size;
-                self.moveToFrontLocked(existing);
-                return;
-            }
-
-            // Create new node
-            const node = try self.allocator.create(Node);
-            errdefer self.allocator.destroy(node);
-
-            // Duplicate the key
-            const owned_key = try self.allocator.dupe(u8, key);
-            errdefer self.allocator.free(owned_key);
-
-            node.* = Node{
-                .key = owned_key,
-                .value = value,
-            };
-
-            // Add to map
-            try self.map.put(owned_key, node);
-
-            // Add to front of list
-            self.addToFrontLocked(node);
-            self.count += 1;
-            self.current_size += entry_size;
-
-            // Evict if necessary
-            self.evictIfNeededLocked();
-        }
-
-        /// Remove an entry by key
-        pub fn remove(self: *Self, key: K) bool {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
-            if (self.map.get(key)) |node| {
-                self.removeNodeLocked(node);
-                return true;
-            }
-            return false;
-        }
-
-        /// Clear all entries
-        pub fn clear(self: *Self) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
-            var node = self.head;
-            while (node) |n| {
-                const next = n.next;
-                self.allocator.free(n.key);
-                var entry = n.value;
-                entry.deinit();
-                self.allocator.destroy(n);
-                node = next;
-            }
-            self.map.clearRetainingCapacity();
-            self.head = null;
-            self.tail = null;
-            self.count = 0;
-            self.current_size = 0;
-        }
-
-        /// Get the current number of entries
-        pub fn getCount(self: *Self) usize {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            return self.count;
-        }
-
-        // Internal: Move a node to the front of the list (must hold mutex)
-        fn moveToFrontLocked(self: *Self, node: *Node) void {
-            if (self.head == node) return; // Already at front
-
-            // Remove from current position
-            if (node.prev) |prev| prev.next = node.next;
-            if (node.next) |next| next.prev = node.prev;
-            if (self.tail == node) self.tail = node.prev;
-
-            // Add to front
-            node.prev = null;
-            node.next = self.head;
-            if (self.head) |head| head.prev = node;
-            self.head = node;
-            if (self.tail == null) self.tail = node;
-        }
-
-        // Internal: Add a node to the front of the list (must hold mutex)
-        fn addToFrontLocked(self: *Self, node: *Node) void {
-            node.prev = null;
-            node.next = self.head;
-            if (self.head) |head| head.prev = node;
-            self.head = node;
-            if (self.tail == null) self.tail = node;
-        }
-
-        // Internal: Remove a node from the list and map (must hold mutex)
-        fn removeNodeLocked(self: *Self, node: *Node) void {
-            // Remove from list
-            if (node.prev) |prev| prev.next = node.next;
-            if (node.next) |next| next.prev = node.prev;
-            if (self.head == node) self.head = node.next;
-            if (self.tail == node) self.tail = node.prev;
-
-            // Remove from map
-            _ = self.map.remove(node.key);
-
-            // Update counts
-            self.count -= 1;
-            self.current_size -= node.value.size();
-
-            // Free resources
-            self.allocator.free(node.key);
-            var entry = node.value;
+        var node = self.head;
+        while (node) |n| {
+            const next = n.next;
+            self.allocator.free(n.key);
+            var entry = n.value;
             entry.deinit();
-            self.allocator.destroy(node);
+            self.allocator.destroy(n);
+            node = next;
         }
+        self.map.clearRetainingCapacity();
+        self.head = null;
+        self.tail = null;
+        self.count = 0;
+        self.current_size = 0;
+    }
 
-        // Internal: Evict entries if over capacity (must hold mutex)
-        fn evictIfNeededLocked(self: *Self) void {
-            // Evict by count
-            while (self.count > self.max_size and self.tail != null) {
-                self.removeNodeLocked(self.tail.?);
-            }
-            // Evict by size
-            while (self.current_size > self.max_bytes and self.tail != null) {
-                self.removeNodeLocked(self.tail.?);
-            }
+    /// Get the current number of entries
+    pub fn getCount(self: *Self) usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.count;
+    }
+
+    // Internal: Move a node to the front of the list (must hold mutex)
+    fn moveToFrontLocked(self: *Self, node: *Node) void {
+        if (self.head == node) return; // Already at front
+
+        // Remove from current position
+        if (node.prev) |prev| prev.next = node.next;
+        if (node.next) |next| next.prev = node.prev;
+        if (self.tail == node) self.tail = node.prev;
+
+        // Add to front
+        node.prev = null;
+        node.next = self.head;
+        if (self.head) |head| head.prev = node;
+        self.head = node;
+        if (self.tail == null) self.tail = node;
+    }
+
+    // Internal: Add a node to the front of the list (must hold mutex)
+    fn addToFrontLocked(self: *Self, node: *Node) void {
+        node.prev = null;
+        node.next = self.head;
+        if (self.head) |head| head.prev = node;
+        self.head = node;
+        if (self.tail == null) self.tail = node;
+    }
+
+    // Internal: Remove a node from the list and map (must hold mutex)
+    fn removeNodeLocked(self: *Self, node: *Node) void {
+        // Remove from list
+        if (node.prev) |prev| prev.next = node.next;
+        if (node.next) |next| next.prev = node.prev;
+        if (self.head == node) self.head = node.next;
+        if (self.tail == node) self.tail = node.prev;
+
+        // Remove from map
+        _ = self.map.remove(node.key);
+
+        // Update counts
+        self.count -= 1;
+        self.current_size -= node.value.size();
+
+        // Free resources
+        self.allocator.free(node.key);
+        var entry = node.value;
+        entry.deinit();
+        self.allocator.destroy(node);
+    }
+
+    // Internal: Evict entries if over capacity (must hold mutex)
+    fn evictIfNeededLocked(self: *Self) void {
+        // Evict by count
+        while (self.count > self.max_size and self.tail != null) {
+            self.removeNodeLocked(self.tail.?);
         }
-    };
-}
+        // Evict by size
+        while (self.current_size > self.max_bytes and self.tail != null) {
+            self.removeNodeLocked(self.tail.?);
+        }
+    }
+};
 
 /// Thread-safe file cache supporting multiple reload strategies
 /// Uses a custom LRU cache implemented with std library primitives for
 /// full control over thread safety and memory management.
 pub const FileCache = struct {
-    cache: LruCache([]const u8, FileCacheEntry),
+    cache: StringLruCache,
     allocator: std.mem.Allocator,
     reload_mode: ReloadMode,
     max_cache_file_size: usize,
@@ -308,7 +306,7 @@ pub const FileCache = struct {
         const max_entries: usize = @min(max_cache_file_size / 10240 + 100, 10000);
 
         return FileCache{
-            .cache = LruCache([]const u8, FileCacheEntry).init(allocator, max_entries, max_cache_file_size),
+            .cache = StringLruCache.init(allocator, max_entries, max_cache_file_size),
             .allocator = allocator,
             .reload_mode = reload_mode,
             .max_cache_file_size = max_cache_file_size,
@@ -526,10 +524,12 @@ pub const FileCache = struct {
                     // Skip stat check if we checked recently (within STAT_CHECK_INTERVAL_NS)
                     if (current_time - entry.last_check_time < STAT_CHECK_INTERVAL_NS) {
                         // Return cached content without stat check
-                        const etag = if (entry.etag) |e|
-                            try self.allocator.dupe(u8, e)
-                        else
-                            try generateETag(self.allocator, entry.content.len, entry.mtime);
+                        // entry.content is already duplicated and owned by us
+                        // entry.etag may need duplication if present
+                        const etag = if (entry.etag) |e| blk: {
+                            // etag was already duplicated in cache.get()
+                            break :blk e;
+                        } else try generateETag(self.allocator, entry.content.len, entry.mtime);
                         return .{ .content = entry.content, .etag = etag };
                     }
 
@@ -542,25 +542,22 @@ pub const FileCache = struct {
                             return err;
                         }
                         // For other errors, return cached content as fallback
-                        const etag = if (entry.etag) |e|
-                            try self.allocator.dupe(u8, e)
-                        else
-                            try generateETag(self.allocator, entry.content.len, entry.mtime);
+                        const etag = if (entry.etag) |e| blk: {
+                            break :blk e;
+                        } else try generateETag(self.allocator, entry.content.len, entry.mtime);
                         return .{ .content = entry.content, .etag = etag };
                     };
                     defer file.close();
                     const stat = try file.stat();
 
                     if (entry.mtime == stat.mtime) {
-                        // File hasn't changed, update last_check_time
-                        const etag = if (entry.etag) |e|
-                            try self.allocator.dupe(u8, e)
-                        else
-                            try generateETag(self.allocator, entry.content.len, entry.mtime);
-                        errdefer self.allocator.free(etag);
-
-                        // Update cache with new last_check_time
-                        try self.putCached(path, entry.content, entry.mtime, etag);
+                        // File hasn't changed - return the entry as-is
+                        // The entry.content and entry.etag are already duplicated and owned by us
+                        const etag = if (entry.etag) |e| blk: {
+                            break :blk e;
+                        } else try generateETag(self.allocator, entry.content.len, entry.mtime);
+                        // Note: We don't update the cache here to avoid complexity.
+                        // The next request will update last_check_time.
                         return .{ .content = entry.content, .etag = etag };
                     }
 
@@ -627,11 +624,11 @@ pub const FileCache = struct {
     }
 };
 
-test "LruCache basic operations" {
+test "StringLruCache basic operations" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var cache = LruCache([]const u8, FileCacheEntry).init(allocator, 3, 1024 * 1024);
+    var cache = StringLruCache.init(allocator, 3, 1024 * 1024);
     defer cache.deinit();
 
     // Test put and get
@@ -655,11 +652,11 @@ test "LruCache basic operations" {
     try testing.expect(missing == null);
 }
 
-test "LruCache eviction" {
+test "StringLruCache eviction" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var cache = LruCache([]const u8, FileCacheEntry).init(allocator, 2, 1024 * 1024);
+    var cache = StringLruCache.init(allocator, 2, 1024 * 1024);
     defer cache.deinit();
 
     // Add 3 items to a cache with max size 2
