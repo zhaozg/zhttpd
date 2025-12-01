@@ -11,9 +11,9 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // Lua engine selection option
-    // LuaJIT provides better performance through JIT compilation
-    // Note: LuaJIT may have build issues on some platforms (especially cross-compilation)
-    const lua_lang = b.option(LuaLang, "lua-lang", "Lua language/engine to use (lua54 or luajit)") orelse .lua54;
+    // LuaJIT is the default for better performance through JIT compilation
+    // Use -Dlua-lang=lua54 for standard Lua 5.4 if needed
+    const lua_lang = b.option(LuaLang, "lua-lang", "Lua language/engine to use (lua54 or luajit)") orelse .luajit;
 
     // Warn about known LuaJIT issues on macOS/Darwin
     // This is an upstream issue in ziglua - it unconditionally links libunwind
@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
         std.log.warn(
             \\LuaJIT on macOS may have linking issues due to an upstream ziglua bug.
             \\The build might fail with "unexpected pointer encoding" error.
-            \\Consider using -Dlua-lang=lua54 (default) on macOS for now.
+            \\Consider using -Dlua-lang=lua54 on macOS for now.
             \\See: https://github.com/natecraddock/ziglua/issues for updates.
         , .{});
     }
@@ -92,20 +92,32 @@ pub fn build(b: *std.Build) void {
 
     // Performance optimization flags for lua-cjson
     // These flags maximize JSON encoding/decoding performance
-    const cjson_cflags = [_][]const u8{
-        "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
-        "-O3", // Maximum optimization level
-        "-funroll-loops", // Unroll loops for better performance
-        "-fomit-frame-pointer", // Free up a register for better optimization
-        "-DNDEBUG", // Disable assertions in release
-        "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
-        "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
-    };
+    const cjson_cflags = if (lua_lang == .luajit)
+        &[_][]const u8{
+            "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
+            "-O3", // Maximum optimization level
+            "-funroll-loops", // Unroll loops for better performance
+            "-fomit-frame-pointer", // Free up a register for better optimization
+            "-DNDEBUG", // Disable assertions in release
+            "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
+            "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
+            "-DLUAJIT_VERSION=1", // Define LUAJIT_VERSION to skip compat shims that LuaJIT already provides
+        }
+    else
+        &[_][]const u8{
+            "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
+            "-O3", // Maximum optimization level
+            "-funroll-loops", // Unroll loops for better performance
+            "-fomit-frame-pointer", // Free up a register for better optimization
+            "-DNDEBUG", // Disable assertions in release
+            "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
+            "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
+        };
 
     // Add lua-cjson source files
     lua_cjson_module.addCSourceFiles(.{
         .files = &cjson_sources,
-        .flags = &cjson_cflags,
+        .flags = cjson_cflags,
     });
 
     // Add lua-cjson include path (for strbuf.h, fpconv.h, etc.)
