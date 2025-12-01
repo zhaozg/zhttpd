@@ -1,17 +1,17 @@
 //! Session Management
 //!
-//! This module provides session management for zhttpd using zcache.
+//! This module provides session management for zhttpd using a custom LRU cache.
 //! Sessions are stored in memory with configurable TTL and LRU eviction.
 //!
 //! ## Features
-//! - Thread-safe session storage via zcache
+//! - Thread-safe session storage via LRU cache
 //! - Configurable max sessions and TTL
 //! - Automatic session cleanup on expiration
 //! - Session ID generation using cryptographic random
 //!
 //! ## Thread Safety
-//! All session operations are thread-safe. The SessionManager uses zcache
-//! which provides segment-based locking for concurrent access.
+//! All session operations are thread-safe. The SessionManager uses a mutex-protected
+//! LRU cache for concurrent access.
 //!
 //! ## Usage
 //! ```zig
@@ -26,7 +26,8 @@
 //! ```
 
 const std = @import("std");
-const zcache = @import("zcache");
+const LruCache = @import("../cache/lru_cache.zig").LruCache;
+const CacheConfig = @import("../cache/lru_cache.zig").CacheConfig;
 const SessionValue = @import("value.zig").SessionValue;
 
 /// Default session TTL in seconds (30 minutes)
@@ -45,8 +46,6 @@ pub const SessionConfig = struct {
     max_sessions: u32 = DEFAULT_MAX_SESSIONS,
     /// Default TTL for sessions in seconds
     default_ttl: u32 = DEFAULT_SESSION_TTL,
-    /// Number of cache segments (power of 2, default 8)
-    segment_count: u16 = 8,
     /// Cookie name for session ID
     cookie_name: []const u8 = "ZHTTPD_SESSION",
     /// Cookie secure flag (HTTPS only)
@@ -185,32 +184,30 @@ pub const Session = struct {
     }
 };
 
-/// Session Manager using zcache for thread-safe storage
+/// Session Manager using LRU cache for thread-safe storage
 pub const SessionManager = struct {
-    cache: zcache.Cache([]const u8, Session),
+    const SessionCache = LruCache([]const u8, Session, std.mem.Allocator);
+
+    cache: SessionCache,
     allocator: std.mem.Allocator,
     config: SessionConfig,
 
     const Self = @This();
 
-    /// Callback for zcache to clean up evicted sessions
-    fn onEvict(_: []const u8, value: Session, _: std.mem.Allocator) void {
-        // Use the session's stored allocator for cleanup
-        var session = value;
-        session.deinit();
+    /// Callback for LRU cache to clean up evicted sessions
+    fn onEvict(_: []const u8, value: *Session, _: std.mem.Allocator) void {
+        value.deinit();
     }
 
     /// Initialize a new session manager
     pub fn init(allocator: std.mem.Allocator, config: SessionConfig) !Self {
-        // Convert TTL from seconds to milliseconds for zcache
+        // Convert TTL from seconds to milliseconds
         const ttl_ms: i64 = @as(i64, config.default_ttl) * 1000;
         return Self{
-            .cache = try zcache.Cache([]const u8, Session).init(allocator, .{
+            .cache = SessionCache.init(allocator, .{
                 .max_size = config.max_sessions,
-                .segment_count = config.segment_count,
                 .default_ttl_ms = ttl_ms,
-                .on_evict = onEvict,
-            }),
+            }, allocator, onEvict),
             .allocator = allocator,
             .config = config,
         };
@@ -226,37 +223,34 @@ pub const SessionManager = struct {
         const session = try Session.create(self.allocator);
         const id = session.id;
 
-        // zcache uses default TTL configured at init
         try self.cache.put(&id, session);
 
         return id;
     }
 
-    /// Get a session by ID
-    /// Returns the session entry which must be released after use
-    pub fn getEntry(self: *Self, session_id: []const u8) ?*zcache.Cache([]const u8, Session).EntryType {
+    /// Get a session entry by ID (locks the cache - must call release())
+    fn getEntry(self: *Self, session_id: []const u8) ?struct { value: *Session, entry: SessionCache.Entry } {
         if (session_id.len != SESSION_ID_HEX_LEN) {
             return null;
         }
-        return self.cache.get(session_id);
+        return self.cache.getPtr(session_id);
     }
 
     /// Get a value from a session
     /// Returns a cloned value that the caller owns and must free with deinit()
     pub fn get(self: *Self, session_id: []const u8, key: []const u8) !?SessionValue {
-        if (self.getEntry(session_id)) |entry| {
-            defer entry.release();
-            return try entry.value.get(key);
+        if (self.getEntry(session_id)) |result| {
+            defer result.entry.release();
+            return try result.value.get(key);
         }
         return null;
     }
 
     /// Set a value in a session
     pub fn set(self: *Self, session_id: []const u8, key: []const u8, value: SessionValue) !void {
-        if (self.getEntry(session_id)) |entry| {
-            defer entry.release();
-            // Get mutable access to the session value
-            try entry.value.set(key, value);
+        if (self.getEntry(session_id)) |result| {
+            defer result.entry.release();
+            try result.value.set(key, value);
         } else {
             // Clean up value since we failed and own it
             var val_copy = value;
@@ -267,18 +261,18 @@ pub const SessionManager = struct {
 
     /// Delete a value from a session
     pub fn deleteValue(self: *Self, session_id: []const u8, key: []const u8) bool {
-        if (self.getEntry(session_id)) |entry| {
-            defer entry.release();
-            return entry.value.delete(key);
+        if (self.getEntry(session_id)) |result| {
+            defer result.entry.release();
+            return result.value.delete(key);
         }
         return false;
     }
 
     /// Clear all data in a session
     pub fn clearSession(self: *Self, session_id: []const u8) bool {
-        if (self.getEntry(session_id)) |entry| {
-            defer entry.release();
-            entry.value.clear();
+        if (self.getEntry(session_id)) |result| {
+            defer result.entry.release();
+            result.value.clear();
             return true;
         }
         return false;
@@ -294,11 +288,10 @@ pub const SessionManager = struct {
 
     /// Check if a session exists
     pub fn exists(self: *Self, session_id: []const u8) bool {
-        if (self.getEntry(session_id)) |entry| {
-            entry.release();
-            return true;
+        if (session_id.len != SESSION_ID_HEX_LEN) {
+            return false;
         }
-        return false;
+        return self.cache.contains(session_id);
     }
 
     /// Get or create a session
@@ -319,9 +312,9 @@ pub const SessionManager = struct {
 
     /// Refresh session TTL
     pub fn touch(self: *Self, session_id: []const u8) bool {
-        if (self.getEntry(session_id)) |entry| {
-            defer entry.release();
-            entry.value.last_accessed = std.time.timestamp();
+        if (self.getEntry(session_id)) |result| {
+            defer result.entry.release();
+            result.value.last_accessed = std.time.timestamp();
             return true;
         }
         return false;

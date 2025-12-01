@@ -64,13 +64,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // zcache - thread-safe, LRU cache for session management
-    // Replaces cache.zig with better concurrency support
-    const zcache = b.dependency("zcache", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
     // Build lua-cjson as a static library for high-performance JSON handling
     // Source: https://github.com/mpx/lua-cjson (MIT License)
     // Performance optimizations:
@@ -152,7 +145,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("grapzig", grapzig.module("grapzig"));
     exe.root_module.addImport("yaml", yaml.module("yaml"));
     exe.root_module.addImport("zdbc", zdbc.module("zdbc"));
-    exe.root_module.addImport("zcache", zcache.module("zcache"));
 
     // Link lua-cjson library
     exe.linkLibrary(lua_cjson);
@@ -185,7 +177,6 @@ pub fn build(b: *std.Build) void {
     exe_tests.root_module.addImport("grapzig", grapzig.module("grapzig"));
     exe_tests.root_module.addImport("yaml", yaml.module("yaml"));
     exe_tests.root_module.addImport("zdbc", zdbc.module("zdbc"));
-    exe_tests.root_module.addImport("zcache", zcache.module("zcache"));
     exe_tests.linkLibrary(lua_cjson);
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
