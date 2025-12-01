@@ -293,7 +293,12 @@ pub const LuaHandler = struct {
     /// Clear the module cache in the thread-local Lua registry.
     /// Call this to invalidate cached modules when scripts are reloaded.
     /// This creates a fresh empty table and replaces the old cache.
-    pub fn clearModuleCache() void {
+    ///
+    /// Note: This only affects the current thread's cache. Each worker thread
+    /// has its own thread-local Lua state with its own module cache.
+    /// To clear caches in all threads, call this from each worker thread.
+    pub fn clearModuleCache(self: *LuaHandler) void {
+        _ = self; // Instance method for API consistency with clearBytecodeCache
         if (tls_lua) |*tl| {
             // Unref the old cache table
             tl.lua.unref(ziglua.registry_index, tl.module_cache_ref);
@@ -312,16 +317,19 @@ pub const LuaHandler = struct {
     /// Returns true if module table is on top of stack, false on error.
     /// Uses zerocopy: script_content is passed directly to loadBuffer without copying.
     ///
-    /// Note: In 'force' reload mode, the module cache is bypassed.
-    /// In 'auto' and 'never' modes, modules are cached for performance.
+    /// Caching behavior by reload mode:
+    /// - 'force': Always skip cache, reload script every time
+    /// - 'never': Always use cache (file changes not detected)
+    /// - 'auto': Cache is bypassed since file content may change
     ///
     /// Stack effect on success: pushes module table
     /// Stack effect on failure: stack unchanged
     fn getOrLoadModule(self: *LuaHandler, lua: *ziglua.Lua, script_name: []const u8, script_content: []const u8) bool {
         const tl = tls_lua orelse return false;
 
-        // In force mode, skip cache and always reload
-        const use_cache = self.file_cache.reload_mode != .force;
+        // Only cache in 'never' mode where file content is guaranteed not to change.
+        // In 'force' and 'auto' modes, always reload to respect file changes.
+        const use_cache = self.file_cache.reload_mode == .never;
 
         if (use_cache) {
             // Get the module cache table from registry
@@ -348,7 +356,7 @@ pub const LuaHandler = struct {
 
         // Build chunk name for error messages (stack-allocated, null-terminated)
         var name_buf: [256]u8 = undefined;
-        const name_len = @min(script_name.len, name_buf.len - 5); // Reserve space for "@" prefix and ".lua" suffix and null
+        const name_len = @min(script_name.len, name_buf.len - 6); // Reserve space for "@" prefix, ".lua" suffix, and null terminator
         name_buf[0] = '@';
         @memcpy(name_buf[1 .. name_len + 1], script_name[0..name_len]);
         @memcpy(name_buf[name_len + 1 .. name_len + 5], ".lua");
@@ -358,12 +366,14 @@ pub const LuaHandler = struct {
         // Load script using loadBuffer (zerocopy - no duplication needed)
         // loadBuffer accepts []const u8 directly without null termination
         lua.loadBuffer(script_content, chunk_name, .text) catch {
+            lua.pop(1); // Pop error message left by loadBuffer
             if (use_cache) lua.pop(1); // Pop cache table
             return false;
         };
 
         // Execute the loaded chunk to get the module table
         lua.protectedCall(.{ .args = 0, .results = 1 }) catch {
+            lua.pop(1); // Pop error message left by protectedCall
             if (use_cache) lua.pop(1); // Pop cache table
             return false;
         };
@@ -770,7 +780,7 @@ test "lua handler module caching" {
     try testing.expect(std.mem.indexOf(u8, result2, "success") != null);
 
     // Clear module cache - should not fail
-    LuaHandler.clearModuleCache();
+    handler.clearModuleCache();
 }
 
 test "lua handler module cache bypassed in force mode" {
