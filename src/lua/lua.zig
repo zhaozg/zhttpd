@@ -498,11 +498,12 @@ pub const LuaHandler = struct {
         // Module table is now on stack, get the specified function
         // getField requires null-terminated string
         const func_z = try arena.dupeZ(u8, func);
-        defer arena.free(func_z);
         _ = lua.getField(-1, func_z);
         if (lua.typeOf(-1) != .function) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            // Return error indicating the specific function was not found
+            std.debug.print("Script '{s}' does not export function '{s}'\n", .{ script_name, func });
             return ERR_SCRIPT_MUST_EXPORT_HANDLE;
         }
 
@@ -545,7 +546,7 @@ pub const LuaHandler = struct {
                         lua.pop(1); // Pop the value we just pushed
                         continue;
                     };
-                    defer arena.free(key_z);
+                    // No need to free - arena allocator will clean up automatically
                     lua.setField(-2, key_z);
                 }
             }
