@@ -138,10 +138,11 @@ pub const WebSocketHandler = struct {
 
         // Temporary stub: Return simple JSON response based on event type
         // In the future, this should use a dedicated Lua VM for websocket
-        return switch (std.mem.eql(u8, event_type, "connect")) {
-            true => "{\"type\":\"connected\"}",
-            false => "{\"type\":\"ok\"}",
-        };
+        if (std.mem.eql(u8, event_type, "connect")) {
+            return "{\"type\":\"connected\"}";
+        } else {
+            return "{\"type\":\"ok\"}";
+        }
     }
 
     /// Close the connection

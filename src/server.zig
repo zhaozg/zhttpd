@@ -294,7 +294,8 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
 
             // If Lua handler is available, delegate token validation to Lua auth script
             if (ctx.lua_handler) |*handler| {
-                // Execute auth script - Lua side can access token via req:header()
+                // Execute auth script - Lua side should access authorization header directly
+                // via req:header() and perform its own token extraction and validation
                 const result = handler.executeScriptWithContext(auth.config.auth_script, "handle_request", req, res) catch {
                     res.status = 500;
                     res.body =
