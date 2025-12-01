@@ -365,7 +365,12 @@ pub const LuaHandler = struct {
 
         // Load script using loadBuffer (zerocopy - no duplication needed)
         // loadBuffer accepts []const u8 directly without null termination
-        lua.loadBuffer(script_content, chunk_name, .text) catch {
+        // Note: Lua 5.1/LuaJIT loadBuffer has 2 args, Lua 5.2+ has 3 args (includes mode)
+        const load_result = if (build_options.lua_lang == .luajit)
+            lua.loadBuffer(script_content, chunk_name)
+        else
+            lua.loadBuffer(script_content, chunk_name, .text);
+        load_result catch {
             lua.pop(1); // Pop error message left by loadBuffer
             if (use_cache) lua.pop(1); // Pop cache table
             return false;

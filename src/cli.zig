@@ -1,5 +1,6 @@
 const std = @import("std");
 const config = @import("config/config.zig");
+const lua = @import("lua/lua.zig");
 
 pub const VERSION = "0.1.2";
 
@@ -215,6 +216,7 @@ fn printHelp() void {
 /// Print version information
 fn printVersion() void {
     std.debug.print("zhttpd version {s}\n", .{VERSION});
+    std.debug.print("Lua backend: {s}\n", .{lua.getLuaEngineName()});
     std.debug.print("Built with Zig\n", .{});
     std.debug.print("https://github.com/zhaozg/zhttpd\n", .{});
 }
