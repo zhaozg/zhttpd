@@ -102,8 +102,8 @@ pub fn handlePost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !
                 return;
             };
 
-            // Execute Lua graphql resolver script
-            const result = lua_handler.executeScript(res.arena, "graphql", "POST", "/graphql", request_data) catch |err| {
+            // Execute Lua graphql resolver script with custom body
+            const result = lua_handler.executeScriptWithContext("graphql", "handle_request", req, res, request_data) catch |err| {
                 // If graphql.lua doesn't exist, fall back to default handler
                 if (err == error.InvalidScriptName or err == error.FileNotFound) {
                     const default_result = handler.executeQuery(res.arena, query) catch {

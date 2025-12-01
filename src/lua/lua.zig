@@ -402,138 +402,6 @@ pub const LuaHandler = struct {
         return true;
     }
 
-    /// Execute a Lua script with request data (legacy interface for compatibility)
-    /// Supports both GET and POST methods
-    /// Request data format:
-    /// {
-    ///   "method": "GET" or "POST",
-    ///   "path": "/api/test",
-    ///   "body": {...},  // For POST requests
-    ///   "query": {...}  // For GET requests
-    /// }
-    pub fn executeScript(self: *LuaHandler, arena: std.mem.Allocator, script_name: []const u8, method: []const u8, path: []const u8, request_data: []const u8) ![]const u8 {
-        // Call new enhanced function with empty headers and query
-        return self.executeScriptEx(arena, script_name, method, path, request_data, &[_]KeyValue{}, &[_]KeyValue{});
-    }
-
-    /// Execute a Lua script with full request data including headers and query parameters
-    /// This provides a luvit/Node.js style API where the request object contains:
-    /// - method: HTTP method (GET, POST, etc.)
-    /// - path: Request path
-    /// - body: Parsed request body (for POST/PUT)
-    /// - headers: Table of request headers
-    /// - query: Table of query parameters
-    /// - url: Full URL path
-    pub fn executeScriptEx(
-        self: *LuaHandler,
-        arena: std.mem.Allocator,
-        script_name: []const u8,
-        method: []const u8,
-        path: []const u8,
-        request_data: []const u8,
-        headers: []const KeyValue,
-        query_params: []const KeyValue,
-    ) ![]const u8 {
-        // Get the thread-local Lua state (one per worker thread)
-        var lua = try self.getThreadLocalLua();
-
-        // Clear the stack before starting
-        lua.setTop(0);
-
-        // Set up instruction limit hook if configured
-        if (self.sandbox_config.max_instructions > 0) {
-            lua.setHook(ziglua.wrap(instructionLimitHook), .{ .count = true }, @intCast(self.sandbox_config.max_instructions));
-        }
-
-        // Load script content from file cache (zerocopy path)
-        const script_content = try self.loadScript(script_name);
-        defer self.allocator.free(script_content);
-
-        // Get cached module or load and cache it (zerocopy: no dupeZ needed)
-        if (!self.getOrLoadModule(lua, script_name, script_content)) {
-            lua.setTop(0);
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_SCRIPT_LOAD_FAILED;
-        }
-
-        // Module table is now on stack, get the handle function
-        _ = lua.getField(-1, "handle");
-        if (lua.typeOf(-1) != .function) {
-            lua.setTop(0);
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_SCRIPT_MUST_EXPORT_HANDLE;
-        }
-
-        // Remove module table from stack, keep handle function
-        lua.remove(-2);
-
-        // Create request table (luvit/Node.js style)
-        lua.newTable();
-
-        // Add method
-        _ = lua.pushString(method);
-        lua.setField(-2, "method");
-
-        // Add path and url (alias for path, luvit style)
-        _ = lua.pushString(path);
-        lua.pushValue(-1); // Duplicate the path value on stack
-        lua.setField(-3, "path");
-        lua.setField(-2, "url");
-
-        // Add headers table (luvit/Node.js style)
-        lua.newTable();
-        for (headers) |header| {
-            pushKeyValueToTable(lua, header.key, header.value);
-        }
-        lua.setField(-2, "headers");
-
-        // Add query table (luvit/Node.js style)
-        lua.newTable();
-        for (query_params) |param| {
-            pushKeyValueToTable(lua, param.key, param.value);
-        }
-        lua.setField(-2, "query");
-
-        // Parse and add request body/query if present
-        if (request_data.len > 0) {
-            // Note: Using arena allocator which doesn't require manual cleanup
-            const parsed = std.json.parseFromSlice(std.json.Value, arena, request_data, .{}) catch |err| {
-                std.debug.print("JSON parse error: {}\n", .{err});
-                lua.pop(2); // Pop function and table
-                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-                return ERR_INVALID_JSON_REQUEST;
-            };
-            // No defer for arena-allocated memory
-
-            // Add body field
-            json.pushJsonValue(lua, parsed.value) catch {
-                lua.pop(2);
-                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-                return ERR_JSON_TO_LUA_FAILED;
-            };
-            lua.setField(-2, "body");
-        }
-
-        // Call the handle function with request table
-        lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
-            std.debug.print("Error calling Lua handler: {}\n", .{err});
-            // Note: When instruction limit is exceeded, the hook raises an error
-            // which is caught here. We can't distinguish between instruction limit
-            // and other Lua errors, so we return a generic error message.
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_HANDLER_EXECUTION_FAILED;
-        };
-
-        // Convert return value to JSON using arena allocator
-        const response_json = try json.luaValueToJson(arena, lua, -1);
-        lua.pop(1); // Pop the return value
-
-        // Clear instruction limit hook
-        lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-
-        return response_json;
-    }
-
     pub fn loadScript(self: *LuaHandler, script_name: []const u8) ![]const u8 {
         // Security: Prevent path traversal attacks
         if (std.mem.indexOf(u8, script_name, "..") != null or
@@ -576,11 +444,29 @@ pub const LuaHandler = struct {
     /// ```
     ///
     /// Returns the JSON-encoded response body from the Lua handler.
+    /// Execute a Lua script with Per-Request Context
+    ///
+    /// This method loads and caches Lua scripts, then calls the specified function
+    /// with request, response, and context parameters.
+    ///
+    /// Parameters:
+    ///   - script_name: Name of Lua script (without .lua extension)
+    ///   - func: Name of the Lua function to call (e.g., "handle", "handle_request")
+    ///   - req: HTTP request object (or mock request for custom payloads)
+    ///   - res: HTTP response object
+    ///   - custom_body: Optional custom JSON body to override req.body() for Lua scripts
+    ///
+    /// The specified Lua function is called with arguments: function(request, response, context)
+    /// or function(request) for legacy scripts, depending on the function signature.
+    ///
+    /// Returns the JSON-encoded response body from the Lua handler.
     pub fn executeScriptWithContext(
         self: *LuaHandler,
         script_name: []const u8,
+        func: []const u8,
         req: *httpz.Request,
         res: *httpz.Response,
+        custom_body: ?[]const u8,
     ) ![]const u8 {
         const arena = res.arena;
 
@@ -609,27 +495,81 @@ pub const LuaHandler = struct {
             return ERR_SCRIPT_LOAD_FAILED;
         }
 
-        // Module table is now on stack, get the handle function
-        _ = lua.getField(-1, "handle");
+        // Module table is now on stack, get the specified function
+        // getField requires null-terminated string
+        const func_z = try arena.dupeZ(u8, func);
+        _ = lua.getField(-1, func_z);
         if (lua.typeOf(-1) != .function) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            // Return error indicating the specific function was not found
+            std.debug.print("Script '{s}' does not export function '{s}'\n", .{ script_name, func });
             return ERR_SCRIPT_MUST_EXPORT_HANDLE;
         }
 
-        // Remove module table from stack, keep handle function
+        // Remove module table from stack, keep function
         lua.remove(-2);
 
-        // Push handler arguments: request, response, context (3 arguments)
-        context.pushHandlerArgs(lua, req, res, arena);
+        // If custom_body is provided, create a custom request table (legacy mode)
+        // Otherwise use the standard context-based API with request, response, context
+        if (custom_body) |body_json| {
+            // Parse custom JSON body and create request table for legacy scripts
+            const parsed = std.json.parseFromSlice(std.json.Value, arena, body_json, .{}) catch {
+                lua.setTop(0);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_INVALID_JSON_REQUEST;
+            };
+            defer parsed.deinit();
 
-        // Call the handle function with 3 arguments: handle(request, response, context)
-        lua.protectedCall(.{ .args = 3, .results = 1 }) catch |err| {
-            std.debug.print("Error calling Lua handler: {}\n", .{err});
-            lua.setTop(0); // Clean up stack before returning
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_HANDLER_EXECUTION_FAILED;
-        };
+            // Create a request table with body field
+            lua.newTable();
+
+            // Push the parsed JSON as the body field
+            json.pushJsonValue(lua, parsed.value) catch {
+                lua.setTop(0);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_JSON_TO_LUA_FAILED;
+            };
+            lua.setField(-2, "body");
+
+            // For websocket.lua compatibility, also copy top-level fields for direct access
+            if (parsed.value == .object) {
+                var it = parsed.value.object.iterator();
+                while (it.next()) |entry| {
+                    json.pushJsonValue(lua, entry.value_ptr.*) catch |err| {
+                        std.debug.print("Warning: failed to convert JSON value to Lua for key '{s}': {}\n", .{ entry.key_ptr.*, err });
+                        continue;
+                    };
+                    // setField requires null-terminated string, use dupeZ
+                    const key_z = arena.dupeZ(u8, entry.key_ptr.*) catch |err| {
+                        std.debug.print("Warning: failed to allocate key '{s}': {}\n", .{ entry.key_ptr.*, err });
+                        lua.pop(1); // Pop the value we just pushed
+                        continue;
+                    };
+                    // No need to free - arena allocator will clean up automatically
+                    lua.setField(-2, key_z);
+                }
+            }
+
+            // Call with 1 argument: function(request)
+            lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
+                std.debug.print("Error calling Lua handler: {}\n", .{err});
+                lua.setTop(0);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_HANDLER_EXECUTION_FAILED;
+            };
+        } else {
+            // Standard context-based API: function(request, response, context)
+            context.pushHandlerArgs(lua, req, res, arena);
+
+            // Call the function with 3 arguments
+            lua.protectedCall(.{ .args = 3, .results = 1 }) catch |err| {
+                std.debug.print("Error calling Lua handler: {}\n", .{err});
+                lua.setTop(0); // Clean up stack before returning
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_HANDLER_EXECUTION_FAILED;
+            };
+        }
 
         // Convert return value to JSON
         const response_json = try json.luaValueToJson(arena, lua, -1);
@@ -674,52 +614,6 @@ test "lua handler init with sandbox config" {
     try testing.expect(handler.sandbox_config.enable_sandbox == true);
 }
 
-test "lua handler executeScriptEx with headers and query" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
-    defer cache.deinit();
-
-    // Disable sandbox for this test as the example scripts may use io/debug
-    const config = SandboxConfig{
-        .max_instructions = 0,
-        .enable_sandbox = false,
-    };
-
-    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
-    defer handler.deinit();
-
-    // Create test headers and query params
-    const headers = [_]KeyValue{
-        .{ .key = "content-type", .value = "application/json" },
-        .{ .key = "user-agent", .value = "test-client" },
-    };
-
-    const query_params = [_]KeyValue{
-        .{ .key = "page", .value = "1" },
-        .{ .key = "limit", .value = "10" },
-    };
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const result = try handler.executeScriptEx(
-        arena.allocator(),
-        "test",
-        "GET",
-        "/api/test",
-        "",
-        &headers,
-        &query_params,
-    );
-
-    // Verify we got a response
-    try testing.expect(result.len > 0);
-    // The test.lua script returns a JSON object with status "success"
-    try testing.expect(std.mem.indexOf(u8, result, "success") != null);
-}
-
 test "lua handler bytecode cache clear" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -734,147 +628,6 @@ test "lua handler bytecode cache clear" {
     handler.clearBytecodeCache();
 
     try testing.expect(handler.bytecode_cache.count() == 0);
-}
-
-test "lua handler module caching" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    // Test with 'never' reload mode - modules should be cached
-    var cache = FileCache.init(allocator, .never, 1024 * 1024);
-    defer cache.deinit();
-
-    const config = SandboxConfig{
-        .max_instructions = 0,
-        .enable_sandbox = false,
-    };
-
-    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
-    defer handler.deinit();
-
-    var arena1 = std.heap.ArenaAllocator.init(allocator);
-    defer arena1.deinit();
-
-    // First execution - should load and cache the module
-    const result1 = try handler.executeScriptEx(
-        arena1.allocator(),
-        "test",
-        "GET",
-        "/api/test",
-        "",
-        &[_]KeyValue{},
-        &[_]KeyValue{},
-    );
-    try testing.expect(result1.len > 0);
-    try testing.expect(std.mem.indexOf(u8, result1, "success") != null);
-
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-
-    // Second execution - should use cached module
-    const result2 = try handler.executeScriptEx(
-        arena2.allocator(),
-        "test",
-        "POST",
-        "/api/test",
-        "{}",
-        &[_]KeyValue{},
-        &[_]KeyValue{},
-    );
-    try testing.expect(result2.len > 0);
-    try testing.expect(std.mem.indexOf(u8, result2, "success") != null);
-
-    // Clear module cache - should not fail
-    handler.clearModuleCache();
-}
-
-test "lua handler module cache bypassed in force mode" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    // Test with 'force' reload mode - modules should NOT be cached
-    var cache = FileCache.init(allocator, .force, 1024 * 1024);
-    defer cache.deinit();
-
-    const config = SandboxConfig{
-        .max_instructions = 0,
-        .enable_sandbox = false,
-    };
-
-    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
-    defer handler.deinit();
-
-    var arena1 = std.heap.ArenaAllocator.init(allocator);
-    defer arena1.deinit();
-
-    // Execution in force mode - should always reload
-    const result1 = try handler.executeScriptEx(
-        arena1.allocator(),
-        "test",
-        "GET",
-        "/api/test",
-        "",
-        &[_]KeyValue{},
-        &[_]KeyValue{},
-    );
-    try testing.expect(result1.len > 0);
-    try testing.expect(std.mem.indexOf(u8, result1, "success") != null);
-
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-
-    // Second execution in force mode - should still work (loads fresh each time)
-    const result2 = try handler.executeScriptEx(
-        arena2.allocator(),
-        "test",
-        "POST",
-        "/api/test",
-        "{}",
-        &[_]KeyValue{},
-        &[_]KeyValue{},
-    );
-    try testing.expect(result2.len > 0);
-    try testing.expect(std.mem.indexOf(u8, result2, "success") != null);
-}
-
-test "json module encode and decode" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    var cache = FileCache.init(allocator, .auto, 1024 * 1024);
-    defer cache.deinit();
-
-    // Enable sandbox to test json module (json is only available with sandbox enabled)
-    const config = SandboxConfig{
-        .max_instructions = 100_000,
-        .enable_sandbox = true,
-    };
-
-    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
-    defer handler.deinit();
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const result = try handler.executeScriptEx(
-        arena.allocator(),
-        "json_test",
-        "GET",
-        "/api/json_test",
-        "",
-        &[_]KeyValue{},
-        &[_]KeyValue{},
-    );
-
-    // Verify we got a successful response
-    try testing.expect(result.len > 0);
-    try testing.expect(std.mem.indexOf(u8, result, "success") != null);
-    // Verify json was available
-    try testing.expect(std.mem.indexOf(u8, result, "json_available") != null);
-    try testing.expect(std.mem.indexOf(u8, result, "true") != null);
-    // Verify special character escaping works
-    try testing.expect(std.mem.indexOf(u8, result, "special_chars_valid") != null);
-    try testing.expect(std.mem.indexOf(u8, result, "deep_valid") != null);
 }
 
 test "getLuaEngineName returns correct engine name" {

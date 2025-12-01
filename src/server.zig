@@ -304,7 +304,7 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
                     return false;
                 };
 
-                const result = handler.executeScript(res.arena, auth.config.auth_script, "POST", "/auth/validate", auth_request) catch {
+                const result = handler.executeScriptWithContext(auth.config.auth_script, "handle_request", req, res, auth_request) catch {
                     res.status = 500;
                     res.body =
                         \\{"error":"Internal Server Error","message":"Auth script execution failed"}
