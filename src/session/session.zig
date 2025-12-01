@@ -193,6 +193,13 @@ pub const SessionManager = struct {
 
     const Self = @This();
 
+    /// Callback for zcache to clean up evicted sessions
+    fn onEvict(_: []const u8, value: Session, _: std.mem.Allocator) void {
+        // Use the session's stored allocator for cleanup
+        var session = value;
+        session.deinit();
+    }
+
     /// Initialize a new session manager
     pub fn init(allocator: std.mem.Allocator, config: SessionConfig) !Self {
         // Convert TTL from seconds to milliseconds for zcache
@@ -202,6 +209,7 @@ pub const SessionManager = struct {
                 .max_size = config.max_sessions,
                 .segment_count = config.segment_count,
                 .default_ttl_ms = ttl_ms,
+                .on_evict = onEvict,
             }),
             .allocator = allocator,
             .config = config,

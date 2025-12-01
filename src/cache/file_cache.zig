@@ -48,6 +48,13 @@ pub const FileCache = struct {
     reload_mode: ReloadMode,
     max_cache_file_size: usize, // Maximum file size to cache (files larger than this won't be cached)
 
+    /// Callback for zcache to clean up evicted entries
+    fn onEvict(_: []const u8, value: FileCacheEntry, _: std.mem.Allocator) void {
+        // Use the entry's stored allocator for cleanup
+        var entry = value;
+        entry.deinit();
+    }
+
     /// Initialize a new file cache with the specified reload mode and max cache file size
     pub fn init(allocator: std.mem.Allocator, reload_mode: ReloadMode, max_cache_file_size: usize) FileCache {
         // Calculate max cache entries based on average file size assumption (10KB)
@@ -58,12 +65,14 @@ pub const FileCache = struct {
             .max_size = max_entries,
             .segment_count = 8,
             .default_ttl_ms = DEFAULT_FILE_TTL_MS,
+            .on_evict = onEvict,
         }) catch blk: {
             // Fallback to minimal cache on error
             break :blk zcache.Cache([]const u8, FileCacheEntry).init(allocator, .{
                 .max_size = 100,
                 .segment_count = 1,
                 .default_ttl_ms = DEFAULT_FILE_TTL_MS,
+                .on_evict = onEvict,
             }) catch unreachable;
         };
 
@@ -94,29 +103,8 @@ pub const FileCache = struct {
     }
 
     /// Update the cache with new file content and modification time
-    /// Note: zcache doesn't have a callback for entry removal, so when entries are
-    /// evicted (via LRU or replacement), the FileCacheEntry's content/etag memory
-    /// will not be freed. This is a known limitation. In practice, for file caches,
-    /// the leak is bounded by the number of evictions and the typical small entry sizes.
+    /// Memory cleanup for replaced/evicted entries is handled by on_evict callback
     fn putCached(self: *FileCache, key: []const u8, content: []const u8, mtime: i128, etag: ?[]const u8) !void {
-        // First, try to manually clean up any existing entry to prevent memory leaks
-        if (self.cache.get(key)) |existing| {
-            // We have an existing entry - copy its content/etag pointers for cleanup
-            const old_content = existing.value.content;
-            const old_etag = existing.value.etag;
-            const old_allocator = existing.value.allocator;
-            existing.release();
-
-            // Delete the old entry from cache
-            _ = self.cache.del(key);
-
-            // Now free the old allocations
-            old_allocator.free(old_content);
-            if (old_etag) |e| {
-                old_allocator.free(e);
-            }
-        }
-
         // Store the new content with owned copies
         const owned_content = try self.allocator.dupe(u8, content);
         errdefer self.allocator.free(owned_content);
@@ -132,7 +120,7 @@ pub const FileCache = struct {
             .allocator = self.allocator,
         };
 
-        // zcache is thread-safe, no need for additional mutex
+        // zcache is thread-safe and on_evict handles cleanup of replaced entries
         _ = try self.cache.putWithConfig(key, entry, .{
             .ttl_ms = DEFAULT_FILE_TTL_MS,
             .size = entry.size(),
@@ -422,12 +410,8 @@ pub const FileCache = struct {
     }
 
     /// Clear all cached entries (useful for testing or manual cache invalidation)
-    /// Note: zcache doesn't have a bulk clear method, so this is a no-op.
-    /// Entries will be evicted naturally via LRU or TTL expiration.
     pub fn clear(self: *FileCache) void {
-        _ = self;
-        // zcache doesn't have a clear/delPrefix method
-        // Entries will be evicted naturally via LRU or TTL expiration
+        self.cache.clear();
     }
 
     /// Get the number of cached entries
