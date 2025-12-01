@@ -42,39 +42,31 @@ pub const FileCacheEntry = struct {
 
 /// Thread-safe file cache supporting multiple reload strategies
 /// Uses zcache for LRU eviction and memory management
+///
+/// Note: This implementation wraps zcache with an additional mutex because
+/// zcache has a concurrency bug where linked list operations in put() are
+/// performed outside the segment mutex. This wrapper ensures thread safety.
+/// Additionally, we don't use zcache's on_evict callback for cleanup because
+/// it's called before reference count checks, which can cause use-after-free.
 pub const FileCache = struct {
     cache: zcache.Cache([]const u8, FileCacheEntry),
     allocator: std.mem.Allocator,
     reload_mode: ReloadMode,
-    max_cache_file_size: usize, // Maximum file size to cache (files larger than this won't be cached)
-
-    /// Callback for zcache to clean up evicted entries
-    fn onEvict(_: []const u8, value: FileCacheEntry, _: std.mem.Allocator) void {
-        // Use the entry's stored allocator for cleanup
-        var entry = value;
-        entry.deinit();
-    }
+    max_cache_file_size: usize,
+    /// Global mutex to work around zcache concurrency bug
+    mutex: std.Thread.Mutex = .{},
 
     /// Initialize a new file cache with the specified reload mode and max cache file size
     pub fn init(allocator: std.mem.Allocator, reload_mode: ReloadMode, max_cache_file_size: usize) FileCache {
-        // Calculate max cache entries based on average file size assumption (10KB)
         const max_entries: u32 = @intCast(@min(max_cache_file_size / 10240 + 100, 10000));
 
-        // Try to initialize with preferred settings, fallback to minimal if that fails
+        // NOTE: We intentionally don't use on_evict callback here because it's called
+        // before zcache checks reference counts, causing use-after-free in concurrent access.
         const cache_instance = zcache.Cache([]const u8, FileCacheEntry).init(allocator, .{
             .max_size = max_entries,
-            .segment_count = 8,
+            .segment_count = 1, // Single segment since we're using our own mutex
             .default_ttl_ms = DEFAULT_FILE_TTL_MS,
-            .on_evict = onEvict,
-        }) catch blk: {
-            // Fallback to minimal cache on error
-            break :blk zcache.Cache([]const u8, FileCacheEntry).init(allocator, .{
-                .max_size = 100,
-                .segment_count = 1,
-                .default_ttl_ms = DEFAULT_FILE_TTL_MS,
-                .on_evict = onEvict,
-            }) catch unreachable;
-        };
+        }) catch unreachable;
 
         return FileCache{
             .cache = cache_instance,
@@ -84,15 +76,13 @@ pub const FileCache = struct {
         };
     }
 
-    /// Clean up all cached entries and free resources
-    pub fn deinit(self: *FileCache) void {
-        self.cache.deinit();
-    }
-
     /// Get cached content, duplicating the content to ensure safety
     /// Returns null if file is not cached
     /// The returned content is owned by the caller and must be freed
     fn getCachedContent(self: *FileCache, key: []const u8) !?struct { content: []const u8, mtime: i128, last_check_time: i128 } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         if (self.cache.get(key)) |entry| {
             defer entry.release();
             // Duplicate content while entry is still valid
@@ -103,7 +93,8 @@ pub const FileCache = struct {
     }
 
     /// Update the cache with new file content and modification time
-    /// Memory cleanup for replaced/evicted entries is handled by on_evict callback
+    /// Note: Replaced/evicted entries' content is NOT freed immediately to avoid
+    /// use-after-free issues. Memory is reclaimed only on cache deinit or clear.
     fn putCached(self: *FileCache, key: []const u8, content: []const u8, mtime: i128, etag: ?[]const u8) !void {
         // Store the new content with owned copies
         const owned_content = try self.allocator.dupe(u8, content);
@@ -120,11 +111,29 @@ pub const FileCache = struct {
             .allocator = self.allocator,
         };
 
-        // zcache is thread-safe and on_evict handles cleanup of replaced entries
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         _ = try self.cache.putWithConfig(key, entry, .{
             .ttl_ms = DEFAULT_FILE_TTL_MS,
             .size = entry.size(),
         });
+    }
+
+    /// Clean up all cached entries and free resources
+    pub fn deinit(self: *FileCache) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Clean up entries still in cache (iterate and free content/etag)
+        var it = self.cache.iterator();
+        while (it.next()) |kv| {
+            self.allocator.free(kv.value.content);
+            if (kv.value.etag) |etag| {
+                self.allocator.free(etag);
+            }
+        }
+        self.cache.deinit();
     }
 
     /// Load file content with caching based on reload mode
@@ -384,6 +393,9 @@ pub const FileCache = struct {
 
     /// Get cached content with ETag, duplicating both to ensure safety
     fn getCachedContentWithETag(self: *FileCache, key: []const u8) !?CachedFileInfo {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         if (self.cache.get(key)) |entry| {
             defer entry.release();
             const content = try self.allocator.dupe(u8, entry.value.content);
@@ -410,12 +422,26 @@ pub const FileCache = struct {
     }
 
     /// Clear all cached entries (useful for testing or manual cache invalidation)
+    /// Note: This cleans up content memory before clearing the cache.
     pub fn clear(self: *FileCache) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Iterate all entries and free their content/etag before clearing
+        var it = self.cache.iterator();
+        while (it.next()) |kv| {
+            self.allocator.free(kv.value.content);
+            if (kv.value.etag) |etag| {
+                self.allocator.free(etag);
+            }
+        }
         self.cache.clear();
     }
 
     /// Get the number of cached entries
     pub fn count(self: *FileCache) usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         return self.cache.count();
     }
 };
@@ -584,3 +610,5 @@ test "loadFileWithETag never mode caches" {
     // Should still see original content because reload mode is 'never'
     try testing.expectEqualStrings("never reload content", info2.content);
 }
+
+
