@@ -295,26 +295,35 @@ const StringLruCache = struct {
 
         // Check if key already exists
         if (self.map.get(key)) |existing| {
+            // Acquire reference for the cache first, before modifying anything
+            const acquired = ref_data.acquire() orelse {
+                // ref_data is being freed, cannot use it - leave existing entry unchanged
+                return;
+            };
             // Update existing entry
             self.current_size -= existing.value.size();
             var old_value = existing.value;
             old_value.deinit();
-            // Acquire reference for the cache
-            if (ref_data.acquire()) |acquired| {
-                existing.value = FileCacheEntry{
-                    .content = acquired.data,
-                    .mtime = mtime,
-                    .last_check_time = std.time.nanoTimestamp(),
-                    .etag = etag,
-                    .allocator = self.allocator,
-                    .expires_ms = expires_ms,
-                    .ref_data = acquired,
-                };
-                self.current_size += entry_size;
-                self.moveToFrontLocked(existing);
-            }
+            existing.value = FileCacheEntry{
+                .content = acquired.data,
+                .mtime = mtime,
+                .last_check_time = std.time.nanoTimestamp(),
+                .etag = etag,
+                .allocator = self.allocator,
+                .expires_ms = expires_ms,
+                .ref_data = acquired,
+            };
+            self.current_size += entry_size;
+            self.moveToFrontLocked(existing);
             return;
         }
+
+        // Acquire reference for the cache first, before allocating resources
+        const acquired = ref_data.acquire() orelse {
+            // ref_data is being freed, cannot use it
+            return;
+        };
+        errdefer acquired.release();
 
         // Create new node
         const node = try self.allocator.create(Node);
@@ -324,32 +333,29 @@ const StringLruCache = struct {
         const owned_key = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(owned_key);
 
-        // Acquire reference for the cache
-        if (ref_data.acquire()) |acquired| {
-            node.* = Node{
-                .key = owned_key,
-                .value = FileCacheEntry{
-                    .content = acquired.data,
-                    .mtime = mtime,
-                    .last_check_time = std.time.nanoTimestamp(),
-                    .etag = etag,
-                    .allocator = self.allocator,
-                    .expires_ms = expires_ms,
-                    .ref_data = acquired,
-                },
-            };
+        node.* = Node{
+            .key = owned_key,
+            .value = FileCacheEntry{
+                .content = acquired.data,
+                .mtime = mtime,
+                .last_check_time = std.time.nanoTimestamp(),
+                .etag = etag,
+                .allocator = self.allocator,
+                .expires_ms = expires_ms,
+                .ref_data = acquired,
+            },
+        };
 
-            // Add to map
-            try self.map.put(owned_key, node);
+        // Add to map
+        try self.map.put(owned_key, node);
 
-            // Add to front of list
-            self.addToFrontLocked(node);
-            self.count += 1;
-            self.current_size += entry_size;
+        // Add to front of list
+        self.addToFrontLocked(node);
+        self.count += 1;
+        self.current_size += entry_size;
 
-            // Evict if necessary
-            self.evictIfNeededLocked();
-        }
+        // Evict if necessary
+        self.evictIfNeededLocked();
     }
 
     /// Put a value into the cache
@@ -973,7 +979,7 @@ pub const FileCache = struct {
 
                 // Read file content into self.allocator for caching
                 const cache_content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
-                defer self.allocator.free(cache_content); // Will be copied by putCachedWithRef
+                defer self.allocator.free(cache_content); // Will be duplicated by putCachedWithRef
                 const cache_etag = try generateETag(self.allocator, stat.size, stat.mtime);
                 errdefer self.allocator.free(cache_etag);
 
@@ -1044,7 +1050,7 @@ pub const FileCache = struct {
 
                 // Read file content into self.allocator for caching
                 const cache_content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
-                defer self.allocator.free(cache_content); // Will be copied by putCachedWithRef
+                defer self.allocator.free(cache_content); // Will be duplicated by putCachedWithRef
                 const cache_etag = try generateETag(self.allocator, stat.size, stat.mtime);
                 errdefer self.allocator.free(cache_etag);
 
