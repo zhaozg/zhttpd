@@ -88,12 +88,19 @@ fn instructionLimitHook(lua: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo)
 /// No-op hook used to reset hooks after script execution
 fn noopHook(_: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo) void {}
 
+/// Registry key for the module cache table
+/// The module cache stores compiled Lua script modules by script name.
+/// This avoids re-parsing scripts on every request for better performance.
+const MODULE_CACHE_REGISTRY_KEY = "zhttpd.module_cache";
+
 /// Thread-local Lua state wrapper
 /// Each HTTP worker thread gets its own Lua VM for optimal performance
 const ThreadLocalLua = struct {
     lua: *ziglua.Lua,
     allocator: std.mem.Allocator,
     sandbox_config: SandboxConfig,
+    /// Reference to the module cache table in Lua registry
+    module_cache_ref: i32,
 
     fn init(allocator: std.mem.Allocator, sandbox_config: SandboxConfig) !ThreadLocalLua {
         var lua = try ziglua.Lua.init(allocator);
@@ -108,14 +115,25 @@ const ThreadLocalLua = struct {
         if (sandbox_config.enable_sandbox) {
             applySandbox(lua);
         }
+
+        // Create module cache table and store reference in registry
+        lua.newTable();
+        const module_cache_ref = lua.ref(ziglua.registry_index) catch {
+            lua.deinit();
+            return error.LuaError;
+        };
+
         return ThreadLocalLua{
             .lua = lua,
             .allocator = allocator,
             .sandbox_config = sandbox_config,
+            .module_cache_ref = module_cache_ref,
         };
     }
 
     fn deinit(self: *ThreadLocalLua) void {
+        // Release the module cache reference before deinitializing
+        self.lua.unref(ziglua.registry_index, self.module_cache_ref);
         self.lua.deinit();
     }
 
@@ -277,6 +295,105 @@ pub const LuaHandler = struct {
         self.bytecode_cache.clearRetainingCapacity();
     }
 
+    /// Clear the module cache in the thread-local Lua registry.
+    /// Call this to invalidate cached modules when scripts are reloaded.
+    pub fn clearModuleCache() void {
+        if (tls_lua) |tl| {
+            // Get the module cache table from registry
+            _ = tl.lua.rawGetIndex(ziglua.registry_index, tl.module_cache_ref);
+            if (tl.lua.typeOf(-1) == .table) {
+                // Iterate over the table and set all values to nil
+                tl.lua.pushNil();
+                while (tl.lua.next(-2)) {
+                    tl.lua.pop(1); // Pop value
+                    tl.lua.pushValue(-1); // Copy key
+                    tl.lua.pushNil();
+                    tl.lua.rawSetTable(-4); // Set cache[key] = nil
+                }
+            }
+            tl.lua.pop(1); // Pop the module cache table
+        }
+    }
+
+    /// Get cached module table or load and cache it.
+    /// Returns true if module table is on top of stack, false on error.
+    /// Uses zerocopy: script_content is passed directly to loadBuffer without copying.
+    ///
+    /// Note: In 'force' reload mode, the module cache is bypassed.
+    /// In 'auto' and 'never' modes, modules are cached for performance.
+    ///
+    /// Stack effect on success: pushes module table
+    /// Stack effect on failure: stack unchanged
+    fn getOrLoadModule(self: *LuaHandler, lua: *ziglua.Lua, script_name: []const u8, script_content: []const u8) bool {
+        const tl = tls_lua orelse return false;
+
+        // In force mode, skip cache and always reload
+        const use_cache = self.file_cache.reload_mode != .force;
+
+        if (use_cache) {
+            // Get the module cache table from registry
+            _ = lua.rawGetIndex(ziglua.registry_index, tl.module_cache_ref);
+            if (lua.typeOf(-1) != .table) {
+                lua.pop(1);
+                return false;
+            }
+
+            // Check if script_name is in the cache
+            _ = lua.pushString(script_name);
+            _ = lua.rawGetTable(-2); // Get cache[script_name]
+
+            if (lua.typeOf(-1) == .table) {
+                // Cache hit! Module table is on stack
+                // Remove the cache table, keeping only the module table
+                lua.remove(-2);
+                return true;
+            }
+
+            // Cache miss - need to load and compile the script
+            lua.pop(1); // Pop nil
+        }
+
+        // Build chunk name for error messages (stack-allocated, null-terminated)
+        var name_buf: [256]u8 = undefined;
+        const name_len = @min(script_name.len, name_buf.len - 5); // Reserve space for "@" prefix and ".lua" suffix and null
+        name_buf[0] = '@';
+        @memcpy(name_buf[1 .. name_len + 1], script_name[0..name_len]);
+        @memcpy(name_buf[name_len + 1 .. name_len + 5], ".lua");
+        name_buf[name_len + 5] = 0;
+        const chunk_name: [:0]const u8 = name_buf[0 .. name_len + 5 :0];
+
+        // Load script using loadBuffer (zerocopy - no duplication needed)
+        // loadBuffer accepts []const u8 directly without null termination
+        lua.loadBuffer(script_content, chunk_name, .text) catch {
+            if (use_cache) lua.pop(1); // Pop cache table
+            return false;
+        };
+
+        // Execute the loaded chunk to get the module table
+        lua.protectedCall(.{ .args = 0, .results = 1 }) catch {
+            if (use_cache) lua.pop(1); // Pop cache table
+            return false;
+        };
+
+        // Verify result is a table
+        if (lua.typeOf(-1) != .table) {
+            lua.pop(1); // Pop result
+            if (use_cache) lua.pop(1); // Pop cache table
+            return false;
+        }
+
+        if (use_cache) {
+            // Cache the module: cache[script_name] = module_table
+            _ = lua.pushString(script_name);
+            lua.pushValue(-2); // Copy module table
+            lua.rawSetTable(-4); // cache[script_name] = module_table
+
+            // Remove the cache table, keeping only the module table
+            lua.remove(-2);
+        }
+        return true;
+    }
+
     /// Execute a Lua script with request data (legacy interface for compatibility)
     /// Supports both GET and POST methods
     /// Request data format:
@@ -320,35 +437,27 @@ pub const LuaHandler = struct {
             lua.setHook(ziglua.wrap(instructionLimitHook), .{ .count = true }, @intCast(self.sandbox_config.max_instructions));
         }
 
-        // Load and execute script file
-        // Note: loadScript returns memory allocated by file_cache.allocator (which is self.allocator)
+        // Load script content from file cache (zerocopy path)
         const script_content = try self.loadScript(script_name);
         defer self.allocator.free(script_content);
 
-        // Convert to null-terminated string for Lua using arena allocator
-        const script_z = try arena.dupeZ(u8, script_content);
-        // No defer needed for arena-allocated memory
-
-        // Load the script (doesn't execute yet)
-        lua.doString(script_z) catch |err| {
-            std.debug.print("Error loading Lua script: {}\n", .{err});
+        // Get cached module or load and cache it (zerocopy: no dupeZ needed)
+        if (!self.getOrLoadModule(lua, script_name, script_content)) {
+            lua.setTop(0);
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return ERR_SCRIPT_LOAD_FAILED;
-        };
-
-        // The script should return a table with a 'handle' function
-        // Get the module table from the stack
-        if (lua.getTop() != 1) {
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_SCRIPT_MUST_RETURN_TABLE;
         }
 
-        // Get the handle function from the table
-        _ = lua.getField(1, "handle");
+        // Module table is now on stack, get the handle function
+        _ = lua.getField(-1, "handle");
         if (lua.typeOf(-1) != .function) {
+            lua.setTop(0);
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return ERR_SCRIPT_MUST_EXPORT_HANDLE;
         }
+
+        // Remove module table from stack, keep handle function
+        lua.remove(-2);
 
         // Create request table (luvit/Node.js style)
         lua.newTable();
@@ -481,35 +590,27 @@ pub const LuaHandler = struct {
         // Ensure context is cleared on exit
         defer context.clearContext();
 
-        // Load and execute script file
+        // Load script content from file cache (zerocopy path)
         const script_content = try self.loadScript(script_name);
         defer self.allocator.free(script_content);
 
-        // Convert to null-terminated string for Lua
-        const script_z = try arena.dupeZ(u8, script_content);
-
-        // Load the script
-        lua.doString(script_z) catch |err| {
-            std.debug.print("Error loading Lua script: {}\n", .{err});
-            lua.setTop(0); // Clean up stack before returning
+        // Get cached module or load and cache it (zerocopy: no dupeZ needed)
+        if (!self.getOrLoadModule(lua, script_name, script_content)) {
+            lua.setTop(0);
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return ERR_SCRIPT_LOAD_FAILED;
-        };
-
-        // The script should return a table with a 'handle' function
-        if (lua.getTop() != 1) {
-            lua.setTop(0); // Clean up stack before returning
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_SCRIPT_MUST_RETURN_TABLE;
         }
 
-        // Get the handle function from the table
-        _ = lua.getField(1, "handle");
+        // Module table is now on stack, get the handle function
+        _ = lua.getField(-1, "handle");
         if (lua.typeOf(-1) != .function) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return ERR_SCRIPT_MUST_EXPORT_HANDLE;
         }
+
+        // Remove module table from stack, keep handle function
+        lua.remove(-2);
 
         // Push handler arguments: request, response, context (3 arguments)
         context.pushHandlerArgs(lua, req, res, arena);
