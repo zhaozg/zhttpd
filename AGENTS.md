@@ -16,6 +16,7 @@
 3. 基于 [grapzig](https://github.com/yousif-wali/grapzig)，集成 GraphQL API 能力, 支持 Lua 动态生成响应
 4. 注意 HTTP 协议的安全性处理，默认加载HTTP头部的安全参数
 5. 基于 h2load 进行长连接的性能基准测试，将性能测试数据更新到 README.md
+6. 单个代码文件不超过 500 行，必要时进行模块拆分
 
 ## Build/Lint/Test Commands
 
