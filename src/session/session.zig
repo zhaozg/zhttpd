@@ -229,7 +229,7 @@ pub const SessionManager = struct {
     }
 
     /// Get a session entry by ID (locks the cache - must call release())
-    fn getEntry(self: *Self, session_id: []const u8) ?struct { value: *Session, entry: SessionCache.Entry } {
+    pub fn getEntry(self: *Self, session_id: []const u8) ?SessionCache.GetPtrResult {
         if (session_id.len != SESSION_ID_HEX_LEN) {
             return null;
         }

@@ -52,9 +52,15 @@ pub fn LruCache(comptime K: type, comptime V: type, comptime Context: type) type
             node: *Node,
             cache: *Self,
 
-            pub fn release(self: *Entry) void {
+            pub fn release(self: *const Entry) void {
                 self.cache.mutex.unlock();
             }
+        };
+
+        /// Result type for getPtr operations
+        pub const GetPtrResult = struct {
+            value: *V,
+            entry: Entry,
         };
 
         /// Hash map for O(1) key lookups
@@ -148,9 +154,9 @@ pub fn LruCache(comptime K: type, comptime V: type, comptime Context: type) type
 
         /// Get a pointer to the value, locking the cache
         /// Caller must call release() on the returned entry when done
-        pub fn getPtr(self: *Self, key: K) ?struct { value: *V, entry: Entry } {
+        pub fn getPtr(self: *Self, key: K) ?GetPtrResult {
             if (self.getEntry(key)) |entry| {
-                return .{ .value = &entry.node.value, .entry = entry };
+                return GetPtrResult{ .value = &entry.node.value, .entry = entry };
             }
             return null;
         }

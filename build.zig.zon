@@ -21,8 +21,8 @@
             .hash = "zig_yaml-0.2.0-C1161pmrAgDnipDTh_4v4RQD27XN5GNaVlzzvlXf1jfW",
         },
         .zdbc = .{
-            .url = "https://github.com/zhaozg/zdbc/archive/refs/tags/0.1.0.tar.gz",
-            .hash = "zdbc-0.1.0-_uIxvogwAgCNhrdEfmSJKGQVN0mNw8DVmSFeqKz73OU5",
+            .url = "https://github.com/zhaozg/zdbc/archive/960374e93277d54bacf41b37d288f57bc68022df.tar.gz",
+            .hash = "zdbc-0.1.0-_uIxvogwAgAlxMBvqMhckt1NJ5D_G8Mo-vKsJDI8KE1k",
         },
         .zlua = .{
             .url = "https://github.com/natecraddock/ziglua/archive/315b7f25efd29d9e2143d6c0ab685bb7f640450f.tar.gz",
