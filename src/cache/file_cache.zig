@@ -55,11 +55,16 @@ pub const RefCountedData = struct {
 
     /// Acquire a reference to this data block.
     /// The caller must call release() when done.
-    /// Returns null if the data has been invalidated (ref_count was 0).
+    /// Returns null if the data has been invalidated (ref_count was 0) or if
+    /// the reference count would overflow.
     pub fn acquire(self: *RefCountedData) ?*RefCountedData {
         // Use compare-exchange loop to safely increment ref count
         var current = self.ref_count.load(.acquire);
         while (current > 0) {
+            // Overflow protection - cannot acquire more references if at max
+            if (current == std.math.maxInt(u32)) {
+                return null;
+            }
             if (self.ref_count.cmpxchgWeak(current, current + 1, .release, .acquire)) |new_value| {
                 current = new_value;
             } else {
@@ -287,6 +292,7 @@ const StringLruCache = struct {
 
     /// Put a value with ref-counted data into the cache.
     /// The cache acquires its own reference to the RefCountedData.
+    /// Takes ownership of the etag parameter on success; caller must free on error.
     pub fn putWithRef(self: *Self, key: []const u8, ref_data: *RefCountedData, mtime: i128, etag: ?[]const u8, expires_ms: i64) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -297,8 +303,8 @@ const StringLruCache = struct {
         if (self.map.get(key)) |existing| {
             // Acquire reference for the cache first, before modifying anything
             const acquired = ref_data.acquire() orelse {
-                // ref_data is being freed, cannot use it - leave existing entry unchanged
-                return;
+                // ref_data is being freed, cannot use it
+                return error.RefCountedDataFreed;
             };
             // Update existing entry
             self.current_size -= existing.value.size();
@@ -321,7 +327,7 @@ const StringLruCache = struct {
         // Acquire reference for the cache first, before allocating resources
         const acquired = ref_data.acquire() orelse {
             // ref_data is being freed, cannot use it
-            return;
+            return error.RefCountedDataFreed;
         };
         errdefer acquired.release();
 
@@ -893,33 +899,53 @@ pub const FileCache = struct {
             // Check if file needs revalidation in auto mode
             if (self.reload_mode == .auto) {
                 const current_time = std.time.nanoTimestamp();
-                // Skip validation if checked recently
+                // Only revalidate if stat check interval has elapsed
                 if (current_time - cache_ref.last_check_time >= STAT_CHECK_INTERVAL_NS) {
-                    // Need to validate file - release ref and return null to trigger reload
-                    cache_ref.release();
-                    return null;
+                    // Check if file has changed
+                    const file = std.fs.cwd().openFile(path, .{}) catch {
+                        // File error (not found, permission, etc.) - keep cached version
+                        return self.buildZeroCopyRef(cache_ref);
+                    };
+                    defer file.close();
+                    const stat = file.stat() catch {
+                        // Stat error - keep cached version
+                        return self.buildZeroCopyRef(cache_ref);
+                    };
+
+                    if (cache_ref.mtime != stat.mtime) {
+                        // File changed - need to reload
+                        cache_ref.release();
+                        return null;
+                    }
+                    // File unchanged - continue with cached version
+                    // Note: last_check_time is not updated here since we don't hold a write lock
                 }
             }
 
-            // Generate ETag if not cached
-            const etag = cache_ref.etag orelse blk: {
-                // Need to generate ETag - use self.allocator
-                const generated = generateETag(self.allocator, cache_ref.content.len, cache_ref.mtime) catch {
-                    cache_ref.release();
-                    return null;
-                };
-                break :blk generated;
-            };
-
-            return ZeroCopyFileRef{
-                .content = cache_ref.content,
-                .etag = etag,
-                .cache_ref = cache_ref,
-                .etag_allocator = if (cache_ref.etag == null) self.allocator else null,
-            };
+            return self.buildZeroCopyRef(cache_ref);
         }
 
         return null;
+    }
+
+    /// Helper to build a ZeroCopyFileRef from a cache reference
+    fn buildZeroCopyRef(self: *FileCache, cache_ref: StringLruCache.ZeroCopyRef) ?ZeroCopyFileRef {
+        // Generate ETag if not cached
+        const etag = cache_ref.etag orelse blk: {
+            // Need to generate ETag - use self.allocator
+            const generated = generateETag(self.allocator, cache_ref.content.len, cache_ref.mtime) catch {
+                cache_ref.release();
+                return null;
+            };
+            break :blk generated;
+        };
+
+        return ZeroCopyFileRef{
+            .content = cache_ref.content,
+            .etag = etag,
+            .cache_ref = cache_ref,
+            .etag_allocator = if (cache_ref.etag == null) self.allocator else null,
+        };
     }
 
     /// Store content with zerocopy optimization using reference counting.
@@ -1534,4 +1560,57 @@ test "StringLruCache zerocopy operations" {
     // Non-existent key should return null
     const missing = cache.getZeroCopy("nonexistent");
     try testing.expect(missing == null);
+}
+
+test "StringLruCache eviction with ref-counted data" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var cache = StringLruCache.init(allocator, 2, 1024 * 1024);
+    defer cache.deinit();
+
+    // Create ref-counted data for first entry
+    const ref1 = try RefCountedData.create(allocator, "data1");
+    defer ref1.release();
+    const etag1 = try allocator.dupe(u8, "etag1");
+    errdefer allocator.free(etag1);
+    try cache.putWithRef("key1", ref1, 1, etag1, 0);
+
+    // Get a zerocopy reference before eviction
+    const zc_ref = cache.getZeroCopy("key1").?;
+    defer zc_ref.release();
+
+    // Add more items to trigger eviction (cache max_size is 2)
+    const ref2 = try RefCountedData.create(allocator, "data2");
+    defer ref2.release();
+    const etag2 = try allocator.dupe(u8, "etag2");
+    errdefer allocator.free(etag2);
+    try cache.putWithRef("key2", ref2, 2, etag2, 0);
+
+    const ref3 = try RefCountedData.create(allocator, "data3");
+    defer ref3.release();
+    const etag3 = try allocator.dupe(u8, "etag3");
+    errdefer allocator.free(etag3);
+    try cache.putWithRef("key3", ref3, 3, etag3, 0);
+
+    // key1 should be evicted from cache, but zc_ref should still be valid
+    try testing.expect(cache.getZeroCopy("key1") == null);
+    // The data should still be accessible through our reference
+    try testing.expectEqualStrings("data1", zc_ref.content);
+}
+
+test "RefCountedData overflow protection" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const data = try RefCountedData.create(allocator, "overflow test");
+    defer data.release();
+
+    // Verify initial ref count
+    try testing.expect(data.getRefCount() == 1);
+
+    // Normal acquire should work
+    const ref2 = data.acquire();
+    try testing.expect(ref2 != null);
+    ref2.?.release();
 }
