@@ -1,13 +1,13 @@
 const std = @import("std");
 const Config = @import("../config/config.zig");
 const ReloadMode = Config.ReloadMode;
-const cache = @import("cache");
+const zcache = @import("zcache");
 
 /// Maximum file size for reading (100MB)
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
-/// Default file cache TTL in seconds (1 hour)
-const DEFAULT_FILE_TTL: u32 = 3600;
+/// Default file cache TTL in milliseconds (1 hour)
+const DEFAULT_FILE_TTL_MS: i64 = 3600 * 1000;
 
 /// Minimum interval between file stat checks in nanoseconds (1 second)
 /// This reduces the overhead of stat() syscalls in auto reload mode
@@ -23,7 +23,6 @@ pub const FileCacheEntry = struct {
     allocator: std.mem.Allocator,
 
     /// Size estimation for cache eviction (in bytes)
-    /// Required by cache.zig for size-based eviction
     pub fn size(self: FileCacheEntry) u32 {
         var total: u32 = @intCast(@min(self.content.len, std.math.maxInt(u32)));
         if (self.etag) |e| {
@@ -32,9 +31,8 @@ pub const FileCacheEntry = struct {
         return total;
     }
 
-    /// Called by cache.zig when entry is removed from cache
-    pub fn removedFromCache(self: *FileCacheEntry, _: std.mem.Allocator) void {
-        // Use the entry's own allocator for cleanup
+    /// Free memory when entry is no longer needed
+    pub fn deinit(self: *FileCacheEntry) void {
         self.allocator.free(self.content);
         if (self.etag) |e| {
             self.allocator.free(e);
@@ -43,16 +41,19 @@ pub const FileCacheEntry = struct {
 };
 
 /// Thread-safe file cache supporting multiple reload strategies
-/// Uses cache.zig for LRU eviction and memory management
+/// Uses zcache for LRU eviction and memory management
 pub const FileCache = struct {
-    cache: cache.Cache(FileCacheEntry),
+    cache: zcache.Cache([]const u8, FileCacheEntry),
     allocator: std.mem.Allocator,
     reload_mode: ReloadMode,
     max_cache_file_size: usize, // Maximum file size to cache (files larger than this won't be cached)
-    /// Mutex to serialize cache put operations. This works around a race condition
-    /// in the cache.zig library where the removeTail function in list.zig doesn't
-    /// acquire the list's mutex, causing crashes under high concurrency.
-    put_mutex: std.Thread.Mutex = .{},
+
+    /// Callback for zcache to clean up evicted entries
+    fn onEvict(_: []const u8, value: FileCacheEntry, _: std.mem.Allocator) void {
+        // Use the entry's stored allocator for cleanup
+        var entry = value;
+        entry.deinit();
+    }
 
     /// Initialize a new file cache with the specified reload mode and max cache file size
     pub fn init(allocator: std.mem.Allocator, reload_mode: ReloadMode, max_cache_file_size: usize) FileCache {
@@ -60,14 +61,18 @@ pub const FileCache = struct {
         const max_entries: u32 = @intCast(@min(max_cache_file_size / 10240 + 100, 10000));
 
         // Try to initialize with preferred settings, fallback to minimal if that fails
-        const cache_instance = cache.Cache(FileCacheEntry).init(allocator, .{
+        const cache_instance = zcache.Cache([]const u8, FileCacheEntry).init(allocator, .{
             .max_size = max_entries,
             .segment_count = 8,
+            .default_ttl_ms = DEFAULT_FILE_TTL_MS,
+            .on_evict = onEvict,
         }) catch blk: {
             // Fallback to minimal cache on error
-            break :blk cache.Cache(FileCacheEntry).init(allocator, .{
+            break :blk zcache.Cache([]const u8, FileCacheEntry).init(allocator, .{
                 .max_size = 100,
                 .segment_count = 1,
+                .default_ttl_ms = DEFAULT_FILE_TTL_MS,
+                .on_evict = onEvict,
             }) catch unreachable;
         };
 
@@ -76,7 +81,6 @@ pub const FileCache = struct {
             .allocator = allocator,
             .reload_mode = reload_mode,
             .max_cache_file_size = max_cache_file_size,
-            .put_mutex = .{},
         };
     }
 
@@ -99,6 +103,7 @@ pub const FileCache = struct {
     }
 
     /// Update the cache with new file content and modification time
+    /// Memory cleanup for replaced/evicted entries is handled by on_evict callback
     fn putCached(self: *FileCache, key: []const u8, content: []const u8, mtime: i128, etag: ?[]const u8) !void {
         // Store the new content with owned copies
         const owned_content = try self.allocator.dupe(u8, content);
@@ -115,15 +120,9 @@ pub const FileCache = struct {
             .allocator = self.allocator,
         };
 
-        // Acquire the put_mutex to serialize cache.put operations.
-        // This is a workaround for a race condition in the cache.zig library
-        // where concurrent put operations can cause crashes during LRU eviction.
-        self.put_mutex.lock();
-        defer self.put_mutex.unlock();
-
-        // If put fails, errdefer will handle cleanup
-        try self.cache.put(key, entry, .{
-            .ttl = DEFAULT_FILE_TTL,
+        // zcache is thread-safe and on_evict handles cleanup of replaced entries
+        _ = try self.cache.putWithConfig(key, entry, .{
+            .ttl_ms = DEFAULT_FILE_TTL_MS,
             .size = entry.size(),
         });
     }
@@ -188,7 +187,7 @@ pub const FileCache = struct {
 
                     if (cached.mtime == stat.mtime) {
                         // File hasn't changed, update last_check_time in cache
-                        // Note: This creates a new cache entry because cache.zig doesn't support
+                        // Note: This creates a new cache entry because zcache doesn't support
                         // in-place updates. The double-duplication overhead is acceptable because:
                         // 1. It only happens once per check interval (1 second)
                         // 2. The old entry is immediately evicted and its memory freed
@@ -412,20 +411,12 @@ pub const FileCache = struct {
 
     /// Clear all cached entries (useful for testing or manual cache invalidation)
     pub fn clear(self: *FileCache) void {
-        // cache.zig doesn't have a clear method, but we can delete by prefix with empty prefix
-        self.cache.delPrefix("") catch |err| {
-            std.log.warn("Failed to clear file cache: {}", .{err});
-        };
+        self.cache.clear();
     }
 
     /// Get the number of cached entries
-    /// Note: cache.zig doesn't expose count directly, so this always returns 0
-    /// This method is kept for API compatibility but should not be relied upon
     pub fn count(self: *FileCache) usize {
-        _ = self;
-        // cache.zig doesn't provide a way to get the count
-        // This is a known limitation
-        return 0;
+        return self.cache.count();
     }
 };
 
