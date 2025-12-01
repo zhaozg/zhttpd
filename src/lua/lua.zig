@@ -576,6 +576,7 @@ pub const LuaHandler = struct {
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return ERR_INVALID_JSON_REQUEST;
         };
+        defer parsed.deinit();
 
         // Create a request table with body field (old-style compatibility)
         // For graphql.lua and auth.lua, they expect request.body
@@ -594,9 +595,16 @@ pub const LuaHandler = struct {
         if (parsed.value == .object) {
             var it = parsed.value.object.iterator();
             while (it.next()) |entry| {
-                json.pushJsonValue(lua, entry.value_ptr.*) catch continue;
+                json.pushJsonValue(lua, entry.value_ptr.*) catch |err| {
+                    std.debug.print("Warning: failed to convert JSON value to Lua for key '{s}': {}\n", .{ entry.key_ptr.*, err });
+                    continue;
+                };
                 // setField requires null-terminated string, use dupeZ
-                const key_z = allocator.dupeZ(u8, entry.key_ptr.*) catch continue;
+                const key_z = allocator.dupeZ(u8, entry.key_ptr.*) catch |err| {
+                    std.debug.print("Warning: failed to allocate key '{s}': {}\n", .{ entry.key_ptr.*, err });
+                    lua.pop(1); // Pop the value we just pushed
+                    continue;
+                };
                 defer allocator.free(key_z);
                 lua.setField(-2, key_z);
             }
