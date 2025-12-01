@@ -297,10 +297,10 @@ fn sessionKeys(lua: *ziglua.Lua) i32 {
 
     lua.newTable();
 
-    if (manager.getEntry(session_id)) |entry| {
-        defer entry.release();
+    if (manager.getEntry(session_id)) |result| {
+        defer result.entry.release();
         var idx: i32 = 1;
-        var iter = entry.value.data.iterator();
+        var iter = result.value.data.iterator();
         while (iter.next()) |kv| {
             _ = lua.pushString(kv.key_ptr.*);
             lua.rawSetIndex(-2, idx);
