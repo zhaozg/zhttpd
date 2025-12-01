@@ -2,7 +2,7 @@
 
 This document provides comprehensive API documentation for zhttpd, covering both internal (Zig) and external (HTTP/Lua) interfaces.
 
-**Version:** 0.4.0  
+**Version:** 0.4.0
 **Last Updated:** 2025-11-29
 
 ---
@@ -351,7 +351,7 @@ The `context` parameter is a Lua table for per-request data storage.
 function handle(request, response, context)
     context.start_time = os.time()
     context.user_id = nil
-    
+
     -- Use later in the handler
     local elapsed = os.time() - context.start_time
 end
@@ -609,7 +609,6 @@ pub const LuaHandler = struct {
     pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8, file_cache: *FileCache) !LuaHandler;
     pub fn initWithConfig(allocator: std.mem.Allocator, scripts_dir: []const u8, file_cache: *FileCache, config: SandboxConfig) !LuaHandler;
     pub fn deinit(self: *LuaHandler) void;
-    pub fn executeScript(self: *LuaHandler, arena: std.mem.Allocator, script_name: []const u8, method: []const u8, path: []const u8, body: []const u8) ![]const u8;
     pub fn executeScriptWithContext(self: *LuaHandler, script_name: []const u8, req: *httpz.Request, res: *httpz.Response) ![]const u8;
     pub fn loadScript(self: *LuaHandler, script_name: []const u8) ![]const u8;
     pub fn clearBytecodeCache(self: *LuaHandler) void;
