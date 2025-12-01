@@ -88,11 +88,6 @@ fn instructionLimitHook(lua: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo)
 /// No-op hook used to reset hooks after script execution
 fn noopHook(_: *ziglua.Lua, _: ziglua.Event, _: *ziglua.DebugInfo) void {}
 
-/// Registry key for the module cache table
-/// The module cache stores compiled Lua script modules by script name.
-/// This avoids re-parsing scripts on every request for better performance.
-const MODULE_CACHE_REGISTRY_KEY = "zhttpd.module_cache";
-
 /// Thread-local Lua state wrapper
 /// Each HTTP worker thread gets its own Lua VM for optimal performance
 const ThreadLocalLua = struct {
@@ -297,21 +292,19 @@ pub const LuaHandler = struct {
 
     /// Clear the module cache in the thread-local Lua registry.
     /// Call this to invalidate cached modules when scripts are reloaded.
+    /// This creates a fresh empty table and replaces the old cache.
     pub fn clearModuleCache() void {
-        if (tls_lua) |tl| {
-            // Get the module cache table from registry
-            _ = tl.lua.rawGetIndex(ziglua.registry_index, tl.module_cache_ref);
-            if (tl.lua.typeOf(-1) == .table) {
-                // Iterate over the table and set all values to nil
-                tl.lua.pushNil();
-                while (tl.lua.next(-2)) {
-                    tl.lua.pop(1); // Pop value
-                    tl.lua.pushValue(-1); // Copy key
-                    tl.lua.pushNil();
-                    tl.lua.rawSetTable(-4); // Set cache[key] = nil
-                }
-            }
-            tl.lua.pop(1); // Pop the module cache table
+        if (tls_lua) |*tl| {
+            // Unref the old cache table
+            tl.lua.unref(ziglua.registry_index, tl.module_cache_ref);
+            // Create a new empty cache table
+            tl.lua.newTable();
+            tl.module_cache_ref = tl.lua.ref(ziglua.registry_index) catch {
+                // If ref fails (very unlikely), reset to an invalid ref
+                // The module will just not use caching
+                tl.module_cache_ref = ziglua.ref_nil;
+                return;
+            };
         }
     }
 
@@ -726,6 +719,107 @@ test "lua handler bytecode cache clear" {
     handler.clearBytecodeCache();
 
     try testing.expect(handler.bytecode_cache.count() == 0);
+}
+
+test "lua handler module caching" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test with 'never' reload mode - modules should be cached
+    var cache = FileCache.init(allocator, .never, 1024 * 1024);
+    defer cache.deinit();
+
+    const config = SandboxConfig{
+        .max_instructions = 0,
+        .enable_sandbox = false,
+    };
+
+    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
+    defer handler.deinit();
+
+    var arena1 = std.heap.ArenaAllocator.init(allocator);
+    defer arena1.deinit();
+
+    // First execution - should load and cache the module
+    const result1 = try handler.executeScriptEx(
+        arena1.allocator(),
+        "test",
+        "GET",
+        "/api/test",
+        "",
+        &[_]KeyValue{},
+        &[_]KeyValue{},
+    );
+    try testing.expect(result1.len > 0);
+    try testing.expect(std.mem.indexOf(u8, result1, "success") != null);
+
+    var arena2 = std.heap.ArenaAllocator.init(allocator);
+    defer arena2.deinit();
+
+    // Second execution - should use cached module
+    const result2 = try handler.executeScriptEx(
+        arena2.allocator(),
+        "test",
+        "POST",
+        "/api/test",
+        "{}",
+        &[_]KeyValue{},
+        &[_]KeyValue{},
+    );
+    try testing.expect(result2.len > 0);
+    try testing.expect(std.mem.indexOf(u8, result2, "success") != null);
+
+    // Clear module cache - should not fail
+    LuaHandler.clearModuleCache();
+}
+
+test "lua handler module cache bypassed in force mode" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test with 'force' reload mode - modules should NOT be cached
+    var cache = FileCache.init(allocator, .force, 1024 * 1024);
+    defer cache.deinit();
+
+    const config = SandboxConfig{
+        .max_instructions = 0,
+        .enable_sandbox = false,
+    };
+
+    var handler = try LuaHandler.initWithConfig(allocator, "./examples/lua", &cache, config);
+    defer handler.deinit();
+
+    var arena1 = std.heap.ArenaAllocator.init(allocator);
+    defer arena1.deinit();
+
+    // Execution in force mode - should always reload
+    const result1 = try handler.executeScriptEx(
+        arena1.allocator(),
+        "test",
+        "GET",
+        "/api/test",
+        "",
+        &[_]KeyValue{},
+        &[_]KeyValue{},
+    );
+    try testing.expect(result1.len > 0);
+    try testing.expect(std.mem.indexOf(u8, result1, "success") != null);
+
+    var arena2 = std.heap.ArenaAllocator.init(allocator);
+    defer arena2.deinit();
+
+    // Second execution in force mode - should still work (loads fresh each time)
+    const result2 = try handler.executeScriptEx(
+        arena2.allocator(),
+        "test",
+        "POST",
+        "/api/test",
+        "{}",
+        &[_]KeyValue{},
+        &[_]KeyValue{},
+    );
+    try testing.expect(result2.len > 0);
+    try testing.expect(std.mem.indexOf(u8, result2, "success") != null);
 }
 
 test "json module encode and decode" {
