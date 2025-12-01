@@ -508,6 +508,117 @@ pub const LuaHandler = struct {
 
         return response_json;
     }
+
+    /// Legacy method: Execute a Lua script with JSON request data (string)
+    /// This method is provided for backward compatibility with code that
+    /// passes custom JSON payloads (e.g., GraphQL operations, WebSocket events).
+    ///
+    /// Parameters:
+    ///   - allocator: Arena allocator for response
+    ///   - script_name: Name of Lua script (without .lua extension)
+    ///   - method: HTTP method (for compatibility, not used in legacy mode)
+    ///   - path: Request path (for compatibility, not used in legacy mode)
+    ///   - request_json: JSON string containing request data
+    ///
+    /// The JSON data is parsed and passed to the Lua handler as request.body
+    /// Returns the JSON-encoded response from the Lua handler.
+    pub fn executeScript(
+        self: *LuaHandler,
+        allocator: std.mem.Allocator,
+        script_name: []const u8,
+        method: []const u8,
+        path: []const u8,
+        request_json: []const u8,
+    ) ![]const u8 {
+        _ = method; // Not used in legacy mode
+        _ = path; // Not used in legacy mode
+
+        // Get the thread-local Lua state
+        var lua = try self.getThreadLocalLua();
+
+        // Clear the stack before starting
+        lua.setTop(0);
+
+        // Set up instruction limit hook if configured
+        if (self.sandbox_config.max_instructions > 0) {
+            lua.setHook(ziglua.wrap(instructionLimitHook), .{ .count = true }, @intCast(self.sandbox_config.max_instructions));
+        }
+
+        // Load script content from file cache
+        const script_content = try self.loadScript(script_name);
+        defer self.allocator.free(script_content);
+
+        // Get cached module or load and cache it
+        if (!self.getOrLoadModule(lua, script_name, script_content)) {
+            lua.setTop(0);
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return ERR_SCRIPT_LOAD_FAILED;
+        }
+
+        // Module table is on stack, get the handle_request or handle function
+        _ = lua.getField(-1, "handle_request");
+        if (lua.typeOf(-1) != .function) {
+            lua.pop(1); // Pop nil
+            _ = lua.getField(-1, "handle");
+            if (lua.typeOf(-1) != .function) {
+                lua.setTop(0);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_SCRIPT_MUST_EXPORT_HANDLE;
+            }
+        }
+
+        // Remove module table from stack, keep handle function
+        lua.remove(-2);
+
+        // Parse JSON request data and push as Lua table
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, request_json, .{}) catch {
+            lua.setTop(0);
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return ERR_INVALID_JSON_REQUEST;
+        };
+
+        // Create a request table with body field (old-style compatibility)
+        // For graphql.lua and auth.lua, they expect request.body
+        // For websocket.lua, we also copy top-level fields for direct access
+        lua.newTable();
+
+        // Push the parsed JSON as the body field
+        json.pushJsonValue(lua, parsed.value) catch {
+            lua.setTop(0);
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return ERR_JSON_TO_LUA_FAILED;
+        };
+        lua.setField(-2, "body");
+
+        // For websocket.lua compatibility, also copy top-level fields
+        if (parsed.value == .object) {
+            var it = parsed.value.object.iterator();
+            while (it.next()) |entry| {
+                json.pushJsonValue(lua, entry.value_ptr.*) catch continue;
+                // setField requires null-terminated string, use dupeZ
+                const key_z = allocator.dupeZ(u8, entry.key_ptr.*) catch continue;
+                defer allocator.free(key_z);
+                lua.setField(-2, key_z);
+            }
+        }
+
+        // Call the handle function with 1 argument: handle(request)
+        lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
+            std.debug.print("Error calling Lua handler: {}\n", .{err});
+            lua.setTop(0);
+            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+            return ERR_HANDLER_EXECUTION_FAILED;
+        };
+
+        // Convert return value to JSON
+        const response_json = try json.luaValueToJson(allocator, lua, -1);
+        lua.pop(1);
+
+        // Clear instruction limit hook
+        lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+
+        return response_json;
+    }
 };
 
 test "lua handler init" {
