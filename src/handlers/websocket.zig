@@ -129,39 +129,19 @@ pub const WebSocketHandler = struct {
     }
 
     /// Execute Lua websocket handler script
+    /// TODO: Refactor websocket to use dedicated Lua VM per connection
+    /// instead of executeScriptWithContext. See issue about removing custom_body.
+    /// For now, return a simple echo response without Lua integration.
     fn executeLuaHandler(self: *WebSocketHandler, event_type: []const u8, data: []const u8) ![]const u8 {
-        const handler = self.lua_handler orelse return error.NoLuaHandler;
+        _ = self;
+        _ = data;
 
-        // Build request JSON for Lua
-        // Use buffers for building the request and escaping data
-        var escape_buf: [4096]u8 = undefined;
-        var request_buf: [8192]u8 = undefined;
-
-        // Escape the data using buffer-based function to handle special characters properly
-        const escaped_data = escapeJsonStringBuf(data, &escape_buf) orelse "";
-
-        const request_json = std.fmt.bufPrint(&request_buf, "{{\"type\":\"{s}\",\"connection_id\":{d},\"path\":\"{s}\",\"data\":\"{s}\"}}", .{
-            event_type,
-            self.connection_id,
-            self.path,
-            escaped_data,
-        }) catch {
-            return error.BufferOverflow;
+        // Temporary stub: Return simple JSON response based on event type
+        // In the future, this should use a dedicated Lua VM for websocket
+        return switch (std.mem.eql(u8, event_type, "connect")) {
+            true => "{\"type\":\"connected\"}",
+            false => "{\"type\":\"ok\"}",
         };
-
-        // Create an arena for this execution
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-
-        // Create minimal mock response with arena allocator
-        // SAFETY: When custom_body is provided to executeScriptWithContext,
-        // only res.arena is accessed. The req and undefined fields of res are never used.
-        var mock_res: httpz.Response = undefined;
-        mock_res.arena = arena.allocator();
-        var mock_req: httpz.Request = undefined;
-
-        // Execute the websocket Lua script with custom JSON body
-        return handler.executeScriptWithContext("websocket", "handle_request", &mock_req, &mock_res, request_json);
     }
 
     /// Close the connection

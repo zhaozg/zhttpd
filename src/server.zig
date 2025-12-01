@@ -294,17 +294,8 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
 
             // If Lua handler is available, delegate token validation to Lua auth script
             if (ctx.lua_handler) |*handler| {
-                const method = @tagName(req.method);
-                const auth_request = auth.buildAuthRequest(res.arena, token, method, req.url.path) catch {
-                    res.status = 500;
-                    res.body =
-                        \\{"error":"Internal Server Error","message":"Failed to build auth request"}
-                    ;
-                    res.headers.add("Content-Type", "application/json");
-                    return false;
-                };
-
-                const result = handler.executeScriptWithContext(auth.config.auth_script, "handle_request", req, res, auth_request) catch {
+                // Execute auth script - Lua side can access token via req:header()
+                const result = handler.executeScriptWithContext(auth.config.auth_script, "handle_request", req, res) catch {
                     res.status = 500;
                     res.body =
                         \\{"error":"Internal Server Error","message":"Auth script execution failed"}
