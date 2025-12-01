@@ -2,8 +2,8 @@ const std = @import("std");
 
 /// Lua language/engine options
 pub const LuaLang = enum {
-    lua54, // Standard Lua 5.4 (default, stable)
-    luajit, // LuaJIT (faster, JIT compilation)
+    lua54, // Standard Lua 5.4 (stable, full compatibility)
+    luajit, // LuaJIT (default, faster JIT compilation)
 };
 
 pub fn build(b: *std.Build) void {
@@ -92,27 +92,21 @@ pub fn build(b: *std.Build) void {
 
     // Performance optimization flags for lua-cjson
     // These flags maximize JSON encoding/decoding performance
-    const cjson_cflags = if (lua_lang == .luajit)
-        &[_][]const u8{
-            "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
-            "-O3", // Maximum optimization level
-            "-funroll-loops", // Unroll loops for better performance
-            "-fomit-frame-pointer", // Free up a register for better optimization
-            "-DNDEBUG", // Disable assertions in release
-            "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
-            "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
-            "-DLUAJIT_VERSION=1", // Define LUAJIT_VERSION to skip compat shims that LuaJIT already provides
-        }
-    else
-        &[_][]const u8{
-            "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
-            "-O3", // Maximum optimization level
-            "-funroll-loops", // Unroll loops for better performance
-            "-fomit-frame-pointer", // Free up a register for better optimization
-            "-DNDEBUG", // Disable assertions in release
-            "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
-            "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
-        };
+    // Common flags used by both Lua 5.4 and LuaJIT
+    const cjson_base_cflags = [_][]const u8{
+        "-std=gnu99", // Use GNU99 for strncasecmp and other POSIX functions
+        "-O3", // Maximum optimization level
+        "-funroll-loops", // Unroll loops for better performance
+        "-fomit-frame-pointer", // Free up a register for better optimization
+        "-DNDEBUG", // Disable assertions in release
+        "-DCJSON_MODNAME=\"json\"", // Override default 'cjson' module name to 'json'
+        "-DENABLE_CJSON_GLOBAL", // Auto-register as global Lua table during luaopen_cjson()
+    };
+    // LuaJIT needs additional flag to skip compat shims that it already provides
+    const cjson_luajit_cflags = cjson_base_cflags ++ [_][]const u8{
+        "-DLUAJIT_VERSION=1",
+    };
+    const cjson_cflags: []const []const u8 = if (lua_lang == .luajit) &cjson_luajit_cflags else &cjson_base_cflags;
 
     // Add lua-cjson source files
     lua_cjson_module.addCSourceFiles(.{
