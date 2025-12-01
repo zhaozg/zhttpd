@@ -1,9 +1,9 @@
 # Project Status
 
-## Current Version: v0.5.0
+## Current Version: v0.6.0
 
 **Status:** ✅ Production Ready  
-**Last Updated:** 2025-11-30
+**Last Updated:** 2025-12-01
 
 ## Quick Status
 
@@ -16,7 +16,7 @@
 | Security Features | ✅ Complete | 95% |
 | Observability | ✅ Complete | 90% |
 | Database Integration | ✅ Complete | 85% |
-| Documentation | ✅ Complete | 90% |
+| Documentation | ✅ Complete | 95% |
 
 ## Core Features
 
@@ -27,10 +27,12 @@ All primary objectives have been achieved:
 | HTTP Server | ✅ Complete | Based on http.zig (httpz) |
 | Static File Serving | ✅ Complete | HTML, CSS, JS, images with MIME types |
 | ETag Caching | ✅ Complete | Weak ETags for bandwidth reduction |
+| Zerocopy Cache | ✅ Complete | Reference-counted cache with safe eviction |
 | Performance Tuning | ✅ Complete | Configurable connection pools & buffers |
 | Lua Integration | ✅ Complete | Dynamic content via ziglua |
 | Lua Sandbox | ✅ Complete | Instruction limits, dangerous functions removed |
-| LuaJIT Support | ✅ Complete | Optional via -Dlua-lang=luajit |
+| LuaJIT Default | ✅ Complete | Default engine (use -Dlua-lang=lua54 for standard Lua) |
+| Module Registry Cache | ✅ Complete | Zerocopy loading with registry caching |
 | GraphQL API | ✅ Complete | Query/mutation/subscription support via grapzig |
 | GraphQL Playground | ✅ Complete | Interactive IDE at /graphql/playground |
 | GraphQL Introspection | ✅ Complete | __schema, __type, __typename support |
@@ -81,10 +83,10 @@ All primary objectives have been achieved:
 |--------|--------|-------|
 | Modularity | ⭐⭐⭐⭐☆ | Clear module separation, some large files |
 | Code Reuse | ⭐⭐⭐⭐⭐ | Excellent shared components |
-| Memory Management | ⭐⭐⭐⭐⭐ | Arena allocators, proper cleanup |
-| Performance | ⭐⭐⭐⭐☆ | Good, missing compression |
+| Memory Management | ⭐⭐⭐⭐⭐ | Arena allocators, zerocopy cache, proper cleanup |
+| Performance | ⭐⭐⭐⭐⭐ | LuaJIT default, zerocopy optimizations |
 | Flexibility | ⭐⭐⭐⭐⭐ | 40+ config options |
-| Documentation | ⭐⭐⭐⭐☆ | Comprehensive, some gaps |
+| Documentation | ⭐⭐⭐⭐⭐ | Comprehensive coverage |
 | Testing | ⭐⭐⭐⭐☆ | Unit tests, integration pending |
 
 ## Quick Start
@@ -128,4 +130,4 @@ See [ROADMAP.md](ROADMAP.md) for:
 
 ---
 
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-12-01

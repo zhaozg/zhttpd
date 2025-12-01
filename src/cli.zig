@@ -2,7 +2,7 @@ const std = @import("std");
 const config = @import("config/config.zig");
 const lua = @import("lua/lua.zig");
 
-pub const VERSION = "0.1.2";
+pub const VERSION = "0.6.0";
 
 /// Command-line argument parsing result
 pub const CliResult = union(enum) {

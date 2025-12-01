@@ -570,18 +570,18 @@ zig build -Doptimize=ReleaseFast
 
 zhttpd 支持两种 Lua 引擎：
 
-- **Lua 5.4**（默认）：标准 Lua 解释器，稳定可靠
-- **LuaJIT**：JIT 编译，性能更优
+- **LuaJIT**（默认）：JIT 编译，性能更优
+- **Lua 5.4**：标准 Lua 解释器，稳定可靠
 
-使用 LuaJIT 构建：
+使用 Lua 5.4 构建（如需要）：
 
 ```bash
-zig build -Dlua-lang=luajit
-zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # 生产构建
+zig build -Dlua-lang=lua54
+zig build -Dlua-lang=lua54 -Doptimize=ReleaseFast  # 生产构建
 ```
 
 > ⚠️ **macOS 用户注意**：由于上游 ziglua 库的问题，LuaJIT 在 macOS 上可能会出现链接错误（"unexpected pointer encoding"）。
-> 建议 macOS 用户暂时使用默认的 Lua 5.4 引擎。详见 [ziglua#issues](https://github.com/natecraddock/ziglua/issues)。
+> 建议 macOS 用户使用 Lua 5.4 引擎：`zig build -Dlua-lang=lua54`。详见 [ziglua#issues](https://github.com/natecraddock/ziglua/issues)。
 
 #### 内置 json 模块
 
@@ -662,14 +662,16 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 
 查看 [ROADMAP.md](ROADMAP.md) 了解项目的未来发展计划和增强功能。
 
-当前版本 (v0.3.0) 已完成所有核心功能和高级中间件，处于生产就绪状态。已完成：
+当前版本 (v0.6.0) 已完成所有核心功能和高级中间件，处于生产就绪状态。已完成：
 - ✅ 高级中间件支持 (速率限制、CORS、认证)
 - ✅ SSE 实时推送
 - ✅ JWT/OAuth 认证接口
 - ✅ WebSocket 支持 (Lua 消息处理)
 - ✅ GraphQL 订阅
-- ✅ LuaJIT 支持（可选构建选项）
+- ✅ LuaJIT 默认引擎（更高性能）
 - ✅ 内置 json 模块
+- ✅ 零拷贝缓存优化
+- ✅ Lua 模块注册表缓存
 
 未来的增强包括：
 - 完整的 GraphQL 实现
@@ -882,14 +884,16 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 
 See [ROADMAP.md](ROADMAP.md) for the project's future development plans and enhancement opportunities.
 
-Current version (v0.3.0) has completed all core features and advanced middleware, and is production-ready. Completed:
+Current version (v0.6.0) has completed all core features and advanced middleware, and is production-ready. Completed:
 - ✅ Advanced middleware support (Rate limiting, CORS, Authentication)
 - ✅ SSE real-time streaming
 - ✅ JWT/OAuth authentication interface
 - ✅ WebSocket support with Lua message handling
 - ✅ GraphQL subscriptions
-- ✅ LuaJIT support (optional build option)
+- ✅ LuaJIT as default engine (better performance)
 - ✅ Built-in json module
+- ✅ Zerocopy cache optimization
+- ✅ Lua module registry caching
 
 Future enhancements include:
 - Full GraphQL implementation
@@ -915,18 +919,18 @@ zig build -Doptimize=ReleaseFast
 
 zhttpd supports two Lua engines:
 
-- **Lua 5.4** (default): Standard Lua interpreter, stable and well-tested
-- **LuaJIT**: JIT compilation for better performance
+- **LuaJIT** (default): JIT compilation for better performance
+- **Lua 5.4**: Standard Lua interpreter, stable and well-tested
 
-Build with LuaJIT:
+Build with Lua 5.4 (if needed):
 
 ```bash
-zig build -Dlua-lang=luajit
-zig build -Dlua-lang=luajit -Doptimize=ReleaseFast  # Production build
+zig build -Dlua-lang=lua54
+zig build -Dlua-lang=lua54 -Doptimize=ReleaseFast  # Production build
 ```
 
 > ⚠️ **macOS Users Note**: Due to an upstream issue in the ziglua library, LuaJIT may fail to link on macOS with an "unexpected pointer encoding" error.
-> macOS users are recommended to use the default Lua 5.4 engine for now. See [ziglua#issues](https://github.com/natecraddock/ziglua/issues) for updates.
+> macOS users are recommended to use Lua 5.4 engine: `zig build -Dlua-lang=lua54`. See [ziglua#issues](https://github.com/natecraddock/ziglua/issues) for updates.
 
 #### Built-in json Module
 

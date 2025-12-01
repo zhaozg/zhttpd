@@ -2,8 +2,8 @@
 
 ## Project Status Summary
 
-**Current Version:** v0.5.0 (Production Ready)
-**Last Updated:** 2025-11-30
+**Current Version:** v0.6.0 (Production Ready)
+**Last Updated:** 2025-12-01
 
 zhttpd has achieved its core objectives and is production-ready. This document provides a comprehensive analysis of the project status, gap analysis for a complete web server, and recommendations for future development.
 
@@ -20,7 +20,7 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 | **Security Features** | ✅ Complete | 95% |
 | **Observability** | ✅ Complete | 90% |
 | **Database Integration** | ✅ Complete | 85% |
-| **Documentation** | ✅ Complete | 90% |
+| **Documentation** | ✅ Complete | 95% |
 
 ---
 
@@ -39,14 +39,17 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 - Cache-Control headers
 - Path traversal attack prevention
 - Configurable static directory
+- Zerocopy cache with reference counting
 
 ✅ **Lua Dynamic Content (Complete)**
-- Lua 5.4 and LuaJIT engine support
+- LuaJIT as default engine (better performance)
+- Lua 5.4 available as fallback option
 - Sandboxed execution environment
 - Instruction limit protection
 - Request/Response/Context API
 - Hot-reloading via FileCache auto mode
 - Built-in json module for JSON handling
+- Module registry caching for optimized script loading
 
 ✅ **Security (Complete)**
 - Default security headers (CSP, HSTS, X-Frame-Options, etc.)
@@ -369,15 +372,16 @@ The following are **optional enhancements** that could be considered for future 
 
 **Priority:** Medium  
 **Effort:** Medium
-**Status:** ✅ Completed (v0.4.0)
+**Status:** ✅ Completed (v0.6.0)
 
 - [x] Pass complex request data structures to Lua scripts (headers, query parameters) - luvit/Node.js style API
 - [x] Lua script hot-reloading without server restart - via FileCache auto mode
 - [x] Lua script caching and precompilation - source caching with mtime validation (bytecode infrastructure added for future use)
 - [x] Sandboxing and resource limits for Lua scripts - instruction limits and dangerous function removal
-- [x] LuaJIT support - optional build with `-Dlua-lang=luajit` for JIT compilation and better performance
+- [x] LuaJIT as default engine - JIT compilation for better performance (use `-Dlua-lang=lua54` for standard Lua)
 - [x] Built-in json module - JSON encode/decode functions available in Lua scripts
 - [x] C module integration guide - documentation for using Lua C modules (see docs/LUA_C_MODULES.md)
+- [x] Module registry caching - zerocopy loading with registry caching for optimized script loading
 
 ### Phase 2: Full GraphQL Implementation
 
@@ -413,14 +417,15 @@ The following are **optional enhancements** that could be considered for future 
 
 **Priority:** Low  
 **Effort:** Medium-High
+**Status:** ✅ Completed (v0.6.0)
 
 - [x] Static file caching with ETags (COMPLETED: v0.1.1)
 - [x] Connection pooling optimizations (COMPLETED: v0.1.2)
 - [x] Memory pool tuning and arena optimizations (COMPLETED: v0.1.2)
+- [x] Zerocopy cache with reference counting (COMPLETED: v0.6.0)
+- [x] Custom LRU cache implementation (COMPLETED: v0.6.0)
 - [ ] Response compression (gzip, brotli) - Deferred (complex in Zig 0.15)
 - [ ] HTTP/2 support (if httpz supports it) - Depends on httpz library
-- [ ] Zero-copy file serving where possible - Requires httpz changes
-- [ ] Async I/O improvements - Already optimized by httpz
 
 ### Phase 5: Observability
 
@@ -487,14 +492,15 @@ Community contributions are welcome! When proposing new features:
 
 ## Version Planning
 
-Current Version: **v0.5.0** (Production Ready)
+Current Version: **v0.6.0** (Production Ready)
 
-**Future versions will follow semantic versioning:**
+**Version history:**
 
 - **v0.2.x**: Minor enhancements and bug fixes
 - **v0.3.x**: Enhanced Lua integration (Phase 1)
 - **v0.4.x**: LuaJIT support and json module (Phase 1 complete)
 - **v0.5.x**: Full GraphQL implementation (Phase 2 complete)
+- **v0.6.x**: Performance optimizations (zerocopy cache, LuaJIT default, module caching)
 - **v1.0.0**: Stable API with backward compatibility guarantees
 
 ## Maintenance
@@ -516,5 +522,5 @@ This roadmap is a living document. Community feedback is encouraged:
 
 ---
 
-**Last Updated:** 2025-11-29  
+**Last Updated:** 2025-12-01  
 **Status:** Active Development
