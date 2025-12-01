@@ -444,11 +444,29 @@ pub const LuaHandler = struct {
     /// ```
     ///
     /// Returns the JSON-encoded response body from the Lua handler.
+    /// Execute a Lua script with Per-Request Context
+    ///
+    /// This method loads and caches Lua scripts, then calls the specified function
+    /// with request, response, and context parameters.
+    ///
+    /// Parameters:
+    ///   - script_name: Name of Lua script (without .lua extension)
+    ///   - func: Name of the Lua function to call (e.g., "handle", "handle_request")
+    ///   - req: HTTP request object (or mock request for custom payloads)
+    ///   - res: HTTP response object
+    ///   - custom_body: Optional custom JSON body to override req.body() for Lua scripts
+    ///
+    /// The specified Lua function is called with arguments: function(request, response, context)
+    /// or function(request) for legacy scripts, depending on the function signature.
+    ///
+    /// Returns the JSON-encoded response body from the Lua handler.
     pub fn executeScriptWithContext(
         self: *LuaHandler,
         script_name: []const u8,
+        func: []const u8,
         req: *httpz.Request,
         res: *httpz.Response,
+        custom_body: ?[]const u8,
     ) ![]const u8 {
         const arena = res.arena;
 
@@ -477,149 +495,83 @@ pub const LuaHandler = struct {
             return ERR_SCRIPT_LOAD_FAILED;
         }
 
-        // Module table is now on stack, get the handle function
-        _ = lua.getField(-1, "handle");
+        // Module table is now on stack, get the specified function
+        // getField requires null-terminated string
+        const func_z = try arena.dupeZ(u8, func);
+        defer arena.free(func_z);
+        _ = lua.getField(-1, func_z);
         if (lua.typeOf(-1) != .function) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return ERR_SCRIPT_MUST_EXPORT_HANDLE;
         }
 
-        // Remove module table from stack, keep handle function
+        // Remove module table from stack, keep function
         lua.remove(-2);
 
-        // Push handler arguments: request, response, context (3 arguments)
-        context.pushHandlerArgs(lua, req, res, arena);
+        // If custom_body is provided, create a custom request table (legacy mode)
+        // Otherwise use the standard context-based API with request, response, context
+        if (custom_body) |body_json| {
+            // Parse custom JSON body and create request table for legacy scripts
+            const parsed = std.json.parseFromSlice(std.json.Value, arena, body_json, .{}) catch {
+                lua.setTop(0);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_INVALID_JSON_REQUEST;
+            };
+            defer parsed.deinit();
 
-        // Call the handle function with 3 arguments: handle(request, response, context)
-        lua.protectedCall(.{ .args = 3, .results = 1 }) catch |err| {
-            std.debug.print("Error calling Lua handler: {}\n", .{err});
-            lua.setTop(0); // Clean up stack before returning
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_HANDLER_EXECUTION_FAILED;
-        };
+            // Create a request table with body field
+            lua.newTable();
+
+            // Push the parsed JSON as the body field
+            json.pushJsonValue(lua, parsed.value) catch {
+                lua.setTop(0);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_JSON_TO_LUA_FAILED;
+            };
+            lua.setField(-2, "body");
+
+            // For websocket.lua compatibility, also copy top-level fields for direct access
+            if (parsed.value == .object) {
+                var it = parsed.value.object.iterator();
+                while (it.next()) |entry| {
+                    json.pushJsonValue(lua, entry.value_ptr.*) catch |err| {
+                        std.debug.print("Warning: failed to convert JSON value to Lua for key '{s}': {}\n", .{ entry.key_ptr.*, err });
+                        continue;
+                    };
+                    // setField requires null-terminated string, use dupeZ
+                    const key_z = arena.dupeZ(u8, entry.key_ptr.*) catch |err| {
+                        std.debug.print("Warning: failed to allocate key '{s}': {}\n", .{ entry.key_ptr.*, err });
+                        lua.pop(1); // Pop the value we just pushed
+                        continue;
+                    };
+                    defer arena.free(key_z);
+                    lua.setField(-2, key_z);
+                }
+            }
+
+            // Call with 1 argument: function(request)
+            lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
+                std.debug.print("Error calling Lua handler: {}\n", .{err});
+                lua.setTop(0);
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_HANDLER_EXECUTION_FAILED;
+            };
+        } else {
+            // Standard context-based API: function(request, response, context)
+            context.pushHandlerArgs(lua, req, res, arena);
+
+            // Call the function with 3 arguments
+            lua.protectedCall(.{ .args = 3, .results = 1 }) catch |err| {
+                std.debug.print("Error calling Lua handler: {}\n", .{err});
+                lua.setTop(0); // Clean up stack before returning
+                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
+                return ERR_HANDLER_EXECUTION_FAILED;
+            };
+        }
 
         // Convert return value to JSON
         const response_json = try json.luaValueToJson(arena, lua, -1);
-        lua.pop(1);
-
-        // Clear instruction limit hook
-        lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-
-        return response_json;
-    }
-
-    /// Legacy method: Execute a Lua script with JSON request data (string)
-    /// This method is provided for backward compatibility with code that
-    /// passes custom JSON payloads (e.g., GraphQL operations, WebSocket events).
-    ///
-    /// Parameters:
-    ///   - allocator: Arena allocator for response
-    ///   - script_name: Name of Lua script (without .lua extension)
-    ///   - method: HTTP method (for compatibility, not used in legacy mode)
-    ///   - path: Request path (for compatibility, not used in legacy mode)
-    ///   - request_json: JSON string containing request data
-    ///
-    /// The JSON data is parsed and passed to the Lua handler as request.body
-    /// Returns the JSON-encoded response from the Lua handler.
-    pub fn executeScript(
-        self: *LuaHandler,
-        allocator: std.mem.Allocator,
-        script_name: []const u8,
-        method: []const u8,
-        path: []const u8,
-        request_json: []const u8,
-    ) ![]const u8 {
-        _ = method; // Not used in legacy mode
-        _ = path; // Not used in legacy mode
-
-        // Get the thread-local Lua state
-        var lua = try self.getThreadLocalLua();
-
-        // Clear the stack before starting
-        lua.setTop(0);
-
-        // Set up instruction limit hook if configured
-        if (self.sandbox_config.max_instructions > 0) {
-            lua.setHook(ziglua.wrap(instructionLimitHook), .{ .count = true }, @intCast(self.sandbox_config.max_instructions));
-        }
-
-        // Load script content from file cache
-        const script_content = try self.loadScript(script_name);
-        defer self.allocator.free(script_content);
-
-        // Get cached module or load and cache it
-        if (!self.getOrLoadModule(lua, script_name, script_content)) {
-            lua.setTop(0);
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_SCRIPT_LOAD_FAILED;
-        }
-
-        // Module table is on stack, get the handle_request or handle function
-        _ = lua.getField(-1, "handle_request");
-        if (lua.typeOf(-1) != .function) {
-            lua.pop(1); // Pop nil
-            _ = lua.getField(-1, "handle");
-            if (lua.typeOf(-1) != .function) {
-                lua.setTop(0);
-                lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-                return ERR_SCRIPT_MUST_EXPORT_HANDLE;
-            }
-        }
-
-        // Remove module table from stack, keep handle function
-        lua.remove(-2);
-
-        // Parse JSON request data and push as Lua table
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, request_json, .{}) catch {
-            lua.setTop(0);
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_INVALID_JSON_REQUEST;
-        };
-        defer parsed.deinit();
-
-        // Create a request table with body field (old-style compatibility)
-        // For graphql.lua and auth.lua, they expect request.body
-        // For websocket.lua, we also copy top-level fields for direct access
-        lua.newTable();
-
-        // Push the parsed JSON as the body field
-        json.pushJsonValue(lua, parsed.value) catch {
-            lua.setTop(0);
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_JSON_TO_LUA_FAILED;
-        };
-        lua.setField(-2, "body");
-
-        // For websocket.lua compatibility, also copy top-level fields
-        if (parsed.value == .object) {
-            var it = parsed.value.object.iterator();
-            while (it.next()) |entry| {
-                json.pushJsonValue(lua, entry.value_ptr.*) catch |err| {
-                    std.debug.print("Warning: failed to convert JSON value to Lua for key '{s}': {}\n", .{ entry.key_ptr.*, err });
-                    continue;
-                };
-                // setField requires null-terminated string, use dupeZ
-                const key_z = allocator.dupeZ(u8, entry.key_ptr.*) catch |err| {
-                    std.debug.print("Warning: failed to allocate key '{s}': {}\n", .{ entry.key_ptr.*, err });
-                    lua.pop(1); // Pop the value we just pushed
-                    continue;
-                };
-                defer allocator.free(key_z);
-                lua.setField(-2, key_z);
-            }
-        }
-
-        // Call the handle function with 1 argument: handle(request)
-        lua.protectedCall(.{ .args = 1, .results = 1 }) catch |err| {
-            std.debug.print("Error calling Lua handler: {}\n", .{err});
-            lua.setTop(0);
-            lua.setHook(ziglua.wrap(noopHook), .{}, 0);
-            return ERR_HANDLER_EXECUTION_FAILED;
-        };
-
-        // Convert return value to JSON
-        const response_json = try json.luaValueToJson(allocator, lua, -1);
         lua.pop(1);
 
         // Clear instruction limit hook

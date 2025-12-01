@@ -153,8 +153,15 @@ pub const WebSocketHandler = struct {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
 
-        // Execute the websocket Lua script
-        return handler.executeScript(arena.allocator(), "websocket", "WEBSOCKET", self.path, request_json);
+        // Create mock request and response for websocket context
+        // We use undefined values for fields we don't need, since websocket Lua scripts
+        // only access the custom JSON body we're passing
+        var mock_req: httpz.Request = undefined;
+        var mock_res: httpz.Response = undefined;
+        mock_res.arena = arena.allocator();
+
+        // Execute the websocket Lua script with custom JSON body
+        return handler.executeScriptWithContext("websocket", "handle_request", &mock_req, &mock_res, request_json);
     }
 
     /// Close the connection
