@@ -29,4 +29,5 @@
 - Must build and test pass with zig 0.15.x, download URL in https://ziglang.org/download/index.json
 - All CI must pass.
 - Update benchmark results with ReleaseFast mode in README.md if applicable.
+- Must build and test pass with Lua54 and LuaJIT2.1
 - Push PR after `zig fmt src`
