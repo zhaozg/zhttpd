@@ -80,6 +80,7 @@ pub const Config = struct {
     enable_ip_blacklist: bool, // Enable IP blacklist/whitelist
     ip_blacklist: []const u8, // Comma-separated list of blocked IPs/CIDRs
     ip_whitelist: []const u8, // Comma-separated list of whitelisted IPs/CIDRs
+    ip_access_cache_size: u32, // LRU cache size for IP access decisions (0 to disable)
     // Database plugin configuration
     enable_db: bool, // Enable database plugin
     db_uri: []const u8, // Default database connection URI (for backward compatibility)
@@ -247,6 +248,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_ip_blacklist = false,
         .ip_blacklist = try allocator.dupe(u8, ""),
         .ip_whitelist = try allocator.dupe(u8, ""),
+        .ip_access_cache_size = 10000, // Default cache size for IP access decisions
         // Database plugin (disabled by default)
         .enable_db = false,
         .db_uri = try allocator.dupe(u8, ""),
@@ -313,6 +315,7 @@ const YamlConfig = struct {
     enable_ip_blacklist: ?bool = null,
     ip_blacklist: ?[]const u8 = null,
     ip_whitelist: ?[]const u8 = null,
+    ip_access_cache_size: ?u32 = null,
     // Database plugin configuration
     enable_db: ?bool = null,
     db_uri: ?[]const u8 = null,
@@ -394,6 +397,7 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_ip_blacklist = parsed.enable_ip_blacklist orelse false,
         .ip_blacklist = try allocator.dupe(u8, parsed.ip_blacklist orelse ""),
         .ip_whitelist = try allocator.dupe(u8, parsed.ip_whitelist orelse ""),
+        .ip_access_cache_size = parsed.ip_access_cache_size orelse 10000,
         // Database plugin configuration
         .enable_db = parsed.enable_db orelse false,
         .db_uri = try allocator.dupe(u8, parsed.db_uri orelse ""),

@@ -90,6 +90,12 @@ enable_ip_blacklist: false
 ip_blacklist: ""
 ip_whitelist: ""
 
+# IP Access Cache Size
+# LRU cache for IP access decisions (improves performance for persistent connections)
+# Recommended: 10000 for production, 0 to disable caching
+# Higher values use more memory (~20 bytes per cached IP) but improve performance
+ip_access_cache_size: 10000
+
 # Database Plugin Configuration
 # -----------------------------
 # Enable database connectivity through zdbc

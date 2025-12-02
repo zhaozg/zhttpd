@@ -211,12 +211,21 @@ pub const AppContext = struct {
                 .enabled = true,
                 .blacklist = config.ip_blacklist,
                 .whitelist = config.ip_whitelist,
+                .cache_size = config.ip_access_cache_size,
             });
             ctx.ip_access_control = ip_access_control;
-            ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries)", .{
-                ip_access_control.getBlacklistCount(),
-                ip_access_control.getWhitelistCount(),
-            });
+            if (ip_access_control.getCacheStats()) |stats| {
+                ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries, cache: {d})", .{
+                    ip_access_control.getBlacklistCount(),
+                    ip_access_control.getWhitelistCount(),
+                    stats.max_size,
+                });
+            } else {
+                ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries, cache: disabled)", .{
+                    ip_access_control.getBlacklistCount(),
+                    ip_access_control.getWhitelistCount(),
+                });
+            }
         }
 
         // Log WebSocket and SSE status
