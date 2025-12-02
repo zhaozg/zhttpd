@@ -135,7 +135,6 @@ The main request processing module containing:
 
 - **AppContext** - Shared application state (handlers, caches, middleware)
 - **HttpzServer** - Server wrapper with route setup
-- **Route Handlers** - Static files, API, GraphQL, WebSocket, SSE
 
 ### 3. Middleware Chain (`middleware/`)
 
@@ -211,7 +210,6 @@ Production-ready observability:
    ├─▶ /health → Health Check (no metrics)
    ├─▶ /metrics → Prometheus Export (no metrics)
    ├─▶ /ws → WebSocket Upgrade
-   ├─▶ /graphql → GraphQL Processing
    ├─▶ /api/* → Lua Script Execution
    └─▶ /* → Static File Serving
    │

@@ -94,7 +94,6 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 2. **Content Delivery**
    - ✅ Static file serving
    - ✅ Dynamic content via Lua
-   - ✅ GraphQL API
    - ✅ WebSocket support
    - ✅ Server-Sent Events (SSE)
 
@@ -128,7 +127,6 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 | HTTP/2 | ❌ | ✅ | ✅ | ✅ |
 | Native TLS | ❌ | ✅ | ✅ | ✅ |
 | Lua Scripting | ✅ | ✅* | ❌ | ❌ |
-| GraphQL | ✅ | ❌ | ❌ | ❌ |
 | Config Format | YAML | Custom | Custom | Caddyfile |
 | Memory Safety | ✅ | ❌ | ❌ | ✅ |
 
@@ -146,7 +144,6 @@ zhttpd has achieved its core objectives and is production-ready. This document p
   - `middleware/` - Composable middleware chain
   - `security/` - Security features
   - `lua/` - Lua integration
-  - `graphql/` - GraphQL support
   - `cache/` - File caching
   - `observability/` - Metrics and health
   - `plugins/` - Database plugins
@@ -239,7 +236,6 @@ errdefer file_cache.deinit();
 ```yaml
 # Enable/disable features
 enable_lua: true
-enable_graphql: true
 enable_websocket: true
 enable_rate_limit: true
 
@@ -277,9 +273,6 @@ request_buffer_size: 65536
 | Interface | Endpoint | Status | Documentation |
 |-----------|----------|--------|---------------|
 | REST API | `/api/*` | ✅ Stable | ✅ Documented |
-| GraphQL | `/graphql` | ✅ Stable | ✅ Documented |
-| GraphQL Playground | `/graphql/playground` | ✅ Stable | ✅ Documented |
-| WebSocket | `/ws`, `/graphql/ws` | ✅ Stable | ✅ Documented |
 | SSE | `/events` | ✅ Stable | ⚠️ Partial |
 | Health | `/health` | ✅ Stable | ✅ Documented |
 | Metrics | `/metrics` | ✅ Stable | ✅ Documented |
@@ -372,18 +365,14 @@ The following are **optional enhancements** that could be considered for future 
 - [x] C module integration guide - documentation for using Lua C modules (see docs/LUA_C_MODULES.md)
 - [x] Module registry caching - zerocopy loading with registry caching for optimized script loading
 
-### Phase 2: Full GraphQL Implementation
 
 **Priority:** Medium  
 **Effort:** High
 **Status:** ✅ Completed (v0.5.0)
 
 - [x] Define actual data resolvers with business logic - via Lua resolver API
-- [x] GraphQL playground UI - available at /graphql/playground
-- [x] Parse GraphQL queries with grapzig library
 - [x] Lua-based resolver system for custom data fetching
 - [x] Database integration (SQLite; PostgreSQL/MySQL syntax support planned) - via context:db() in Lua resolvers
-- [x] GraphQL subscriptions over WebSocket - via /graphql/ws endpoint with Lua handlers
 - [x] Schema introspection support (__schema, __type, __typename queries)
 - [x] Query complexity analysis and rate limiting (MAX_QUERY_COMPLEXITY, MAX_QUERY_DEPTH)
 - [ ] DataLoader pattern for N+1 query optimization - deferred (can be implemented in Lua)
@@ -488,7 +477,6 @@ Current Version: **v0.6.0** (Production Ready)
 - **v0.2.x**: Minor enhancements and bug fixes
 - **v0.3.x**: Enhanced Lua integration (Phase 1)
 - **v0.4.x**: LuaJIT support and json module (Phase 1 complete)
-- **v0.5.x**: Full GraphQL implementation (Phase 2 complete)
 - **v0.6.x**: Performance optimizations (zerocopy cache, LuaJIT default, module caching)
 - **v1.0.0**: Stable API with backward compatibility guarantees
 

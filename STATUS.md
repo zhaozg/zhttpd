@@ -43,7 +43,6 @@ All primary objectives have been achieved:
 | Health Check | ✅ Complete | Component status |
 | Request ID | ✅ Complete | X-Request-ID propagation |
 | Configuration | ✅ Complete | JSON and YAML support |
-| Database Plugin | ✅ Complete | SQLite (current GraphQL impl); PostgreSQL/MySQL via zdbc |
 
 ## Build & Test Status
 

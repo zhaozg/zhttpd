@@ -22,7 +22,6 @@
 //! - `AppContext`: Shared application state (handlers, caches, middleware)
 //! - `HttpzServer`: Server wrapper with route configuration
 //! - `applyMiddleware`: Middleware chain execution
-//! - Route handlers: Static files, Lua API, GraphQL, WebSocket, SSE
 //!
 //! ## Extension Points
 //!

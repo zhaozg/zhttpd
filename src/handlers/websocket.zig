@@ -13,7 +13,6 @@ const json = @import("../lua/json.zig");
 /// - Each WebSocket connection uses the thread-local Lua VM (shared with HTTP handlers)
 /// - Messages are handled by calling Lua functions for each event
 /// - Supports text and binary messages
-/// - Integrates with GraphQL subscriptions
 ///
 /// Lua Interface:
 /// The websocket.lua script should export:

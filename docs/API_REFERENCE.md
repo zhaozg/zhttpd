@@ -134,7 +134,6 @@ Returns server health status.
   "uptime": 3600,
   "components": {
     "lua": { "status": "healthy" },
-    "graphql": { "status": "healthy" },
     "database": { "status": "healthy" }
   }
 }
@@ -424,9 +423,6 @@ lua_sandbox_enabled: true     # Enable sandbox
 lua_max_instructions: 100000  # Instruction limit (0 = unlimited)
 reload: "auto"                # Cache mode: never, auto, force
 
-# GraphQL
-enable_graphql: true
-graphql_endpoint: "/graphql"
 
 # WebSocket & SSE
 enable_websocket: false
@@ -478,10 +474,6 @@ handlers:
     handler: Handler.MetricsHandler
   - pattern: /ws
     handler: Handler.WebSocketHandler
-  - pattern: /graphql/playground
-    handler: Handler.GraphQLPlaygroundHandler
-  - pattern: /graphql
-    handler: Handler.GraphQLHandler
   - pattern: /api/*
     handler: Handler.LuaHandler
   - pattern: /events
@@ -496,8 +488,6 @@ handlers:
 |---------|-------------|
 | `Handler.StaticFileHandler` | Serve static files |
 | `Handler.LuaHandler` | Execute Lua scripts |
-| `Handler.GraphQLHandler` | GraphQL queries/mutations |
-| `Handler.GraphQLPlaygroundHandler` | GraphQL IDE |
 | `Handler.WebSocketHandler` | WebSocket connections |
 | `Handler.SSEHandler` | Server-Sent Events |
 | `Handler.HealthCheckHandler` | Health status |
@@ -517,7 +507,6 @@ pub const AppContext = struct {
     config: Config,
     file_cache: *FileCache,
     lua_handler: ?LuaHandler,
-    graphql_handler: ?GraphQLHandler,
     logger: Logger,
     access_logger: ?Logger,
     rate_limiter: ?*RateLimiter,
@@ -638,7 +627,6 @@ pub const Logger = struct {
 }
 ```
 
-### GraphQL Error Responses
 
 ```json
 {

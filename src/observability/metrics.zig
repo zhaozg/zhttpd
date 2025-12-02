@@ -281,7 +281,6 @@ pub const Metrics = struct {
         try writer.print("# TYPE zhttpd_lua_errors_total counter\n", .{});
         try writer.print("zhttpd_lua_errors_total {d}\n\n", .{self.lua_errors.get()});
 
-        // GraphQL metrics
         // WebSocket metrics
         try writer.print("# HELP zhttpd_websocket_connections_active Current WebSocket connections\n", .{});
         try writer.print("# TYPE zhttpd_websocket_connections_active gauge\n", .{});
