@@ -229,6 +229,86 @@ response:body("<html><body><h1>Hello!</h1></body></html>")
 -- Return nil to prevent JSON serialization from overwriting the body
 ```
 
+### `response:chunk(data)`
+
+Sends a chunk of data for streaming/chunked HTTP responses. This enables HTTP chunked transfer encoding for streaming large responses or real-time data.
+
+Once `chunk()` is called, the response enters chunked mode and subsequent calls will send additional chunks. Each chunk is sent immediately to the client without buffering.
+
+> **Important:** When using `response:chunk()`, you should return `nil` from your handler function to prevent the automatic JSON serialization from interfering with the chunked response.
+
+**Use cases:**
+- Streaming large files or data
+- Progressive HTML rendering
+- Server-Sent Events (SSE)
+- Real-time data feeds
+- Long-running computations with incremental results
+
+```lua
+function handle(request, response, context)
+    response:content_type("text/plain")
+    
+    -- Send first chunk
+    response:chunk("Processing started...\n")
+    
+    -- Do some work and send progress
+    response:chunk("Step 1 complete\n")
+    response:chunk("Step 2 complete\n")
+    
+    -- Send final chunk
+    response:chunk("Done!\n")
+    
+    -- Return nil to avoid JSON serialization
+    return nil
+end
+```
+
+**HTML Streaming Example:**
+
+```lua
+function handle(request, response, context)
+    response:content_type("text/html")
+    
+    -- Send initial HTML structure
+    response:chunk("<!DOCTYPE html><html><body>")
+    response:chunk("<h1>Loading data...</h1>")
+    
+    -- Progressively load and send data
+    response:chunk("<ul>")
+    for i = 1, 10 do
+        local item = string.format("<li>Item %d</li>", i)
+        response:chunk(item)
+    end
+    response:chunk("</ul>")
+    
+    -- Close HTML
+    response:chunk("</body></html>")
+    
+    return nil
+end
+```
+
+**Server-Sent Events (SSE) Example:**
+
+```lua
+function handle(request, response, context)
+    response:content_type("text/event-stream")
+    response:header("Cache-Control", "no-cache")
+    response:header("Connection", "keep-alive")
+    
+    -- Send events
+    response:chunk("event: message\n")
+    response:chunk("data: {\"text\":\"Hello from SSE\"}\n\n")
+    
+    response:chunk("event: update\n")
+    response:chunk("data: {\"count\":42}\n\n")
+    
+    return nil
+end
+```
+
+For a complete working example, see `examples/lua/chunk_example.lua`.
+
 ## Context Data Storage
 
 The `context` parameter is a Lua table that persists for the duration of the request. Use it to:
