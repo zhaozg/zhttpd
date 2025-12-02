@@ -127,6 +127,54 @@ pub fn build(b: *std.Build) void {
     // Link libc for C standard library functions
     lua_cjson.linkLibC();
 
+    // Build lpeg as a static library for pattern matching
+    // Source: http://www.inf.puc-rio.br/~roberto/lpeg/ (MIT License)
+    // LPeg provides powerful pattern matching based on Parsing Expression Grammars (PEGs)
+    const lua_lpeg_module = b.createModule(.{
+        .target = target,
+        // Use the same optimization as the main build
+        .optimize = optimize,
+    });
+    const lua_lpeg = b.addLibrary(.{
+        .name = "lua_lpeg",
+        .linkage = .static,
+        .root_module = lua_lpeg_module,
+    });
+
+    // lpeg C source files
+    const lpeg_sources = [_][]const u8{
+        "vendor/lpeg/lpvm.c",
+        "vendor/lpeg/lpcap.c",
+        "vendor/lpeg/lptree.c",
+        "vendor/lpeg/lpcode.c",
+        "vendor/lpeg/lpprint.c",
+    };
+
+    // Optimization flags for lpeg
+    // Common flags used by both Lua 5.4 and LuaJIT
+    const lpeg_cflags = [_][]const u8{
+        "-std=c99", // Use C99 standard
+        "-O2", // Optimization level
+        "-DLPEG_MODNAME=\"lpeg\"", // Module name
+    };
+
+    // Add lpeg source files
+    lua_lpeg_module.addCSourceFiles(.{
+        .files = &lpeg_sources,
+        .flags = &lpeg_cflags,
+    });
+
+    // Add lpeg include path
+    lua_lpeg_module.addIncludePath(b.path("vendor/lpeg"));
+
+    // Get Lua include path from ziglua's upstream dependency
+    if (ziglua.builder.lazyDependency(lua_upstream_name, .{})) |upstream| {
+        lua_lpeg_module.addIncludePath(upstream.path("src"));
+    }
+
+    // Link libc for C standard library functions
+    lua_lpeg.linkLibC();
+
     // Build configuration options to expose to the runtime
     const build_options = b.addOptions();
     build_options.addOption(LuaLang, "lua_lang", lua_lang);
@@ -154,6 +202,9 @@ pub fn build(b: *std.Build) void {
 
     // Link lua-cjson library
     exe.linkLibrary(lua_cjson);
+
+    // Link lua-lpeg library
+    exe.linkLibrary(lua_lpeg);
 
     b.installArtifact(exe);
 
@@ -184,6 +235,7 @@ pub fn build(b: *std.Build) void {
     exe_tests.root_module.addImport("yaml", yaml.module("yaml"));
     exe_tests.root_module.addImport("zdbc", zdbc.module("zdbc"));
     exe_tests.linkLibrary(lua_cjson);
+    exe_tests.linkLibrary(lua_lpeg);
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
