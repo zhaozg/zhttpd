@@ -195,6 +195,13 @@ pub const IpAccessResult = enum {
 /// The cache stores up to 10,000 IP access decisions by default, which provides
 /// significant performance improvement for long-lived connections and high-traffic
 /// scenarios while using minimal memory (~200KB).
+///
+/// Thread Safety and Lock Ordering:
+/// - The IpAccessControl mutex protects the blacklist/whitelist entries
+/// - The LRU cache has its own internal mutex for thread safety
+/// - Lock ordering: IpAccessControl mutex is always acquired before cache mutex
+/// - Cache operations are performed inside the main mutex to prevent race conditions
+///   where the blacklist/whitelist could change between cache check and list iteration
 pub const IpAccessControl = struct {
     /// Configuration for IP access control
     pub const Config = struct {
@@ -326,7 +333,14 @@ pub const IpAccessControl = struct {
             return .allowed;
         }
 
+        // Acquire lock once for entire operation to avoid race conditions
+        // between cache check and list iteration
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         // Try cache first if enabled (optimization for persistent connections)
+        // Note: Cache lookup is done inside mutex to prevent race conditions
+        // where blacklist/whitelist could change between cache check and list iteration
         if (self.access_cache) |*cache| {
             if (cache.getPtr(ip_str)) |result| {
                 defer result.entry.release();
@@ -337,14 +351,18 @@ pub const IpAccessControl = struct {
         // Parse the IP address
         const ip_bytes = parseIpAddress(ip_str) orelse return .allowed;
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
         // Check whitelist first (whitelisted IPs bypass all checks)
         for (self.whitelist_entries.items) |*entry| {
             if (entry.matches(ip_bytes)) {
                 // Cache the decision before returning
+                // Note: Cache operations are done inside the main mutex to maintain
+                // consistency. The LRU cache has its own internal mutex, but this
+                // is acceptable as the cache mutex is always acquired after the
+                // IP access control mutex (consistent lock ordering).
                 if (self.access_cache) |*cache| {
+                    // Silently ignore cache failures as they don't affect correctness
+                    // Cache failures indicate memory pressure or cache corruption
+                    // but the IP check result is still valid
                     cache.put(ip_str, .whitelisted) catch {};
                 }
                 return .whitelisted;
