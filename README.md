@@ -584,9 +584,13 @@ zig build -Dlua-lang=lua54 -Doptimize=ReleaseFast  # 生产构建
 > ⚠️ **macOS 用户注意**：由于上游 ziglua 库的问题，LuaJIT 在 macOS 上可能会出现链接错误（"unexpected pointer encoding"）。
 > 建议 macOS 用户使用 Lua 5.4 引擎：`zig build -Dlua-lang=lua54`。详见 [ziglua#issues](https://github.com/natecraddock/ziglua/issues)。
 
-#### 内置 json 模块
+#### 内置 Lua C 模块
 
-zhttpd 内置了高性能 json 模块（基于 [lua-cjson](https://github.com/mpx/lua-cjson)），提供 JSON 编解码功能：
+zhttpd 内置了两个强大的 Lua C 模块，可在所有 Lua 脚本中直接使用：
+
+##### json 模块
+
+高性能 json 模块（基于 [lua-cjson](https://github.com/mpx/lua-cjson)），提供 JSON 编解码功能：
 
 ```lua
 -- 在 Lua 脚本中使用
@@ -605,6 +609,34 @@ local parsed = json.decode(json_str)  -- 解码 JSON
 | 复杂解码 | ~138,000 ops/s | 复杂嵌套结构 |
 
 > 💡 zhttpd 的 json 模块集成了 lua-cjson (MIT License)，使用 `-O3` 优化编译，提供原生级别的 JSON 处理性能。
+
+##### lpeg 模块
+
+强大的模式匹配模块（基于 [LPeg](http://www.inf.puc-rio.br/~roberto/lpeg/)），基于解析表达式文法（PEG）提供：
+
+```lua
+-- 在 Lua 脚本中使用
+local lpeg = lpeg
+
+-- 匹配数字模式
+local digit = lpeg.R("09")
+local number = lpeg.C(digit^1)
+local result = lpeg.match(number, "12345abc")  -- 返回 "12345"
+
+-- 复杂模式：解析邮箱
+local letter = lpeg.R("az", "AZ")
+local username = (letter + digit)^1
+local email = username * lpeg.P("@") * username * lpeg.P(".") * letter^2
+local matched = lpeg.match(email, "user@example.com")
+```
+
+**LPeg 的优势：**
+- 比正则表达式更强大，可处理嵌套结构
+- 可组合的模式，易于构建复杂解析器
+- 支持捕获和语法定义
+- 适用于输入验证、词法分析、配置文件解析等场景
+
+> 💡 zhttpd 的 lpeg 模块集成了 LPeg (MIT License)，提供比传统正则表达式更强大的模式匹配能力。
 
 详细文档请参阅 [Lua C 模块集成指南](docs/LUA_C_MODULES.md)。
 
@@ -934,9 +966,13 @@ zig build -Dlua-lang=lua54 -Doptimize=ReleaseFast  # Production build
 > ⚠️ **macOS Users Note**: Due to an upstream issue in the ziglua library, LuaJIT may fail to link on macOS with an "unexpected pointer encoding" error.
 > macOS users are recommended to use Lua 5.4 engine: `zig build -Dlua-lang=lua54`. See [ziglua#issues](https://github.com/natecraddock/ziglua/issues) for updates.
 
-#### Built-in json Module
+#### Built-in Lua C Modules
 
-zhttpd includes a high-performance json module (based on [lua-cjson](https://github.com/mpx/lua-cjson)) for JSON encoding/decoding:
+zhttpd includes two powerful built-in Lua C modules available in all Lua scripts:
+
+##### json Module
+
+High-performance json module (based on [lua-cjson](https://github.com/mpx/lua-cjson)) for JSON encoding/decoding:
 
 ```lua
 -- In Lua scripts
@@ -955,6 +991,34 @@ local parsed = json.decode(json_str)  -- Decode JSON
 | Complex Decode | ~138,000 ops/s | Complex nested structures |
 
 > 💡 zhttpd's json module integrates lua-cjson (MIT License), compiled with `-O3` optimization for native-level JSON processing performance.
+
+##### lpeg Module
+
+Powerful pattern matching module (based on [LPeg](http://www.inf.puc-rio.br/~roberto/lpeg/)) using Parsing Expression Grammars (PEGs):
+
+```lua
+-- In Lua scripts
+local lpeg = lpeg
+
+-- Match number patterns
+local digit = lpeg.R("09")
+local number = lpeg.C(digit^1)
+local result = lpeg.match(number, "12345abc")  -- Returns "12345"
+
+-- Complex pattern: Email parsing
+local letter = lpeg.R("az", "AZ")
+local username = (letter + digit)^1
+local email = username * lpeg.P("@") * username * lpeg.P(".") * letter^2
+local matched = lpeg.match(email, "user@example.com")
+```
+
+**LPeg Advantages:**
+- More powerful than regular expressions, handles nested structures
+- Composable patterns for building complex parsers
+- Support for captures and grammar definitions
+- Ideal for input validation, lexical analysis, and config parsing
+
+> 💡 zhttpd's lpeg module integrates LPeg (MIT License), providing pattern matching capabilities beyond traditional regex.
 
 See [Lua C Module Integration Guide](docs/LUA_C_MODULES.md) for details.
 

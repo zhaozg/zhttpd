@@ -4,6 +4,7 @@ const httpz = @import("httpz");
 const FileCache = @import("../cache/file_cache.zig").FileCache;
 const build_options = @import("build_options");
 const json = @import("json.zig");
+const lpeg = @import("lpeg.zig");
 const context = @import("context.zig");
 
 // Lua integration module
@@ -97,6 +98,9 @@ const ThreadLocalLua = struct {
 
         // Always register built-in json module (safe for use with or without sandbox)
         json.registerJsonModule(lua, &getThreadLocalAllocator);
+
+        // Always register built-in lpeg module (safe for use with or without sandbox)
+        lpeg.registerLpegModule(lua, &getThreadLocalAllocator);
 
         // Always register context module for Per-Request Context support
         context.registerContextModule(lua);
