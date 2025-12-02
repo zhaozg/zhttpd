@@ -212,7 +212,11 @@ const ThreadLocalLua = struct {
         // Remove dangerous package functions while preserving path/cpath
         // package.loadlib can load arbitrary C libraries which is dangerous
         // But we want to keep package.path and package.cpath for module search paths
-        _ = lua.getGlobal("package") catch {};
+        _ = lua.getGlobal("package") catch {
+            // If package doesn't exist (shouldn't happen), silently continue
+            // Better to be permissive in sandbox than fail initialization
+            return;
+        };
         if (lua.typeOf(-1) == .table) {
             const dangerous_package_funcs = [_][:0]const u8{
                 "loadlib",
