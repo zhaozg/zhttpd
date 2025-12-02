@@ -72,6 +72,10 @@ pub const WebSocketContext = struct {
     }
 };
 
+/// Response constants for websocket stub implementation
+const RESPONSE_CONNECTED = "{\"type\":\"connected\"}";
+const RESPONSE_OK = "{\"type\":\"ok\"}";
+
 /// WebSocket handler for httpz integration
 /// This is the type that httpz uses for each WebSocket connection
 pub const WebSocketHandler = struct {
@@ -95,7 +99,7 @@ pub const WebSocketHandler = struct {
         // Send welcome message
         var buf: [256]u8 = undefined;
         const welcome = std.fmt.bufPrint(&buf, "{{\"type\":\"connected\",\"connection_id\":{d},\"path\":\"{s}\"}}", .{ self.connection_id, self.path }) catch {
-            return self.conn.write("{\"type\":\"connected\"}");
+            return self.conn.write(RESPONSE_CONNECTED);
         };
         try self.conn.write(welcome);
 
@@ -129,19 +133,24 @@ pub const WebSocketHandler = struct {
     }
 
     /// Execute Lua websocket handler script
-    /// TODO: Refactor websocket to use dedicated Lua VM per connection
-    /// instead of executeScriptWithContext. See issue about removing custom_body.
-    /// For now, return a simple echo response without Lua integration.
+    /// TODO: Redesign to use dedicated Lua VM per connection following websocket.zig pattern.
+    /// This temporary stub implementation ignores `self` and `data` parameters.
+    /// The final implementation will:
+    /// - Create a per-connection Lua VM during init
+    /// - Use `self` to access connection state and the Lua VM
+    /// - Process `data` using Lua handlers for message routing
     fn executeLuaHandler(self: *WebSocketHandler, event_type: []const u8, data: []const u8) ![]const u8 {
+        // NOTE: `self` and `data` are intentionally unused in this temporary stub.
+        // The final implementation will use these parameters to interact with the Lua VM
+        // and process message data.
         _ = self;
         _ = data;
 
         // Temporary stub: Return simple JSON response based on event type
-        // In the future, this should use a dedicated Lua VM for websocket
         if (std.mem.eql(u8, event_type, "connect")) {
-            return "{\"type\":\"connected\"}";
+            return RESPONSE_CONNECTED;
         } else {
-            return "{\"type\":\"ok\"}";
+            return RESPONSE_OK;
         }
     }
 
