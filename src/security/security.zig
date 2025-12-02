@@ -514,7 +514,6 @@ test "route size limiter" {
     const limits = [_]RouteSizeLimit{
         .{ .path_pattern = "/api/upload", .max_body_size = 50 * 1024 * 1024 }, // 50MB
         .{ .path_pattern = "/api/*", .max_body_size = 1 * 1024 * 1024 }, // 1MB
-        .{ .path_pattern = "/graphql", .max_body_size = 100 * 1024 }, // 100KB
     };
 
     const limiter = RouteSizeLimiter.init(&limits, 10 * 1024 * 1024); // 10MB default
@@ -525,15 +524,12 @@ test "route size limiter" {
     // Wildcard match
     try testing.expect(limiter.getMaxBodySize("/api/users") == 1 * 1024 * 1024);
 
-    // Exact match
-    try testing.expect(limiter.getMaxBodySize("/graphql") == 100 * 1024);
-
     // Default (no match)
     try testing.expect(limiter.getMaxBodySize("/other/path") == 10 * 1024 * 1024);
 
     // Size check
-    try testing.expect(limiter.isWithinLimit("/graphql", 50 * 1024) == true);
-    try testing.expect(limiter.isWithinLimit("/graphql", 200 * 1024) == false);
+    try testing.expect(limiter.isWithinLimit("/api/users", 500 * 1024) == true);
+    try testing.expect(limiter.isWithinLimit("/api/users", 2 * 1024 * 1024) == false);
 }
 
 test "path matching" {

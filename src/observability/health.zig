@@ -31,7 +31,6 @@ pub const HealthCheck = struct {
     // Component statuses
     http_server: ComponentStatus = .healthy,
     lua_engine: ComponentStatus = .healthy,
-    graphql_engine: ComponentStatus = .healthy,
     file_cache: ComponentStatus = .healthy,
 
     /// Compute overall status based on component statuses
@@ -39,7 +38,6 @@ pub const HealthCheck = struct {
         // If any component is unhealthy, overall is unhealthy
         if (self.http_server == .unhealthy or
             self.lua_engine == .unhealthy or
-            self.graphql_engine == .unhealthy or
             self.file_cache == .unhealthy)
         {
             self.status = .unhealthy;
@@ -49,7 +47,6 @@ pub const HealthCheck = struct {
         // If any component is degraded, overall is degraded
         if (self.http_server == .degraded or
             self.lua_engine == .degraded or
-            self.graphql_engine == .degraded or
             self.file_cache == .degraded)
         {
             self.status = .degraded;
@@ -82,7 +79,6 @@ pub const HealthCheck = struct {
         try writer.print("\"components\":{{", .{});
         try writer.print("\"http_server\":\"{s}\",", .{self.http_server.toString()});
         try writer.print("\"lua_engine\":\"{s}\",", .{self.lua_engine.toString()});
-        try writer.print("\"graphql_engine\":\"{s}\",", .{self.graphql_engine.toString()});
         try writer.print("\"file_cache\":\"{s}\"", .{self.file_cache.toString()});
         try writer.print("}}}}", .{});
 
@@ -100,7 +96,7 @@ pub const HealthCheck = struct {
 };
 
 /// Create a health check with current server state
-pub fn check(start_time: i64, lua_enabled: bool, graphql_enabled: bool) HealthCheck {
+pub fn check(start_time: i64, lua_enabled: bool) HealthCheck {
     var health = HealthCheck{};
 
     // Calculate uptime
@@ -110,7 +106,6 @@ pub fn check(start_time: i64, lua_enabled: bool, graphql_enabled: bool) HealthCh
     // Note: In a real implementation, you would check actual component health
     health.http_server = .healthy;
     health.lua_engine = if (lua_enabled) .healthy else .healthy; // Even if disabled, not unhealthy
-    health.graphql_engine = if (graphql_enabled) .healthy else .healthy;
     health.file_cache = .healthy;
 
     health.computeOverallStatus();
