@@ -318,7 +318,7 @@ pub const LuaHandler = struct {
     ///
     /// Stack effect on success: pushes module table
     /// Stack effect on failure: stack unchanged
-    fn getOrLoadModule(self: *LuaHandler, lua: *ziglua.Lua, script_name: []const u8, script_content: []const u8) bool {
+    pub fn getOrLoadModule(self: *LuaHandler, lua: *ziglua.Lua, script_name: []const u8, script_content: []const u8) bool {
         const tl = tls_lua orelse return false;
 
         // Only cache in 'never' mode where file content is guaranteed not to change.
