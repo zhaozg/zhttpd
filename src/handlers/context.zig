@@ -190,6 +190,12 @@ pub const AppContext = struct {
                 .allowed_headers = config.cors_headers,
             });
             errdefer if (ctx.cors_middleware) |*cors| cors.deinit();
+            // Set metrics for cache tracking
+            if (ctx.cors_middleware) |*cors| {
+                if (ctx.metrics) |metrics| {
+                    cors.setMetrics(metrics);
+                }
+            }
             ctx.logger.info("CORS middleware initialized with origins: {s}", .{config.cors_origins});
         }
 
@@ -214,6 +220,10 @@ pub const AppContext = struct {
                 .whitelist = config.ip_whitelist,
                 .cache_size = config.ip_access_cache_size,
             });
+            // Set metrics for cache tracking
+            if (ctx.metrics) |metrics| {
+                ip_access_control.setMetrics(metrics);
+            }
             ctx.ip_access_control = ip_access_control;
             if (ip_access_control.getCacheStats()) |stats| {
                 ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries, cache: {d})", .{

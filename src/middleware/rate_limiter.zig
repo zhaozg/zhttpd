@@ -230,6 +230,8 @@ pub const IpAccessControl = struct {
     mutex: std.Thread.Mutex,
     /// LRU cache for IP access decisions (optimization for persistent connections)
     access_cache: ?LruCache([]const u8, IpAccessResult, void),
+    /// Optional metrics pointer for tracking cache performance
+    metrics: ?*@import("../observability/observability.zig").Metrics,
 
     /// IP entry (single IP or CIDR range)
     pub const IpEntry = struct {
@@ -260,6 +262,7 @@ pub const IpAccessControl = struct {
             .allocator = allocator,
             .mutex = std.Thread.Mutex{},
             .access_cache = null,
+            .metrics = null,
         };
 
         // Initialize LRU cache if cache size > 0
@@ -287,6 +290,11 @@ pub const IpAccessControl = struct {
         }
 
         return control;
+    }
+
+    /// Set metrics pointer for tracking cache performance
+    pub fn setMetrics(self: *IpAccessControl, metrics: *@import("../observability/observability.zig").Metrics) void {
+        self.metrics = metrics;
     }
 
     /// Clean up resources
@@ -344,7 +352,15 @@ pub const IpAccessControl = struct {
         if (self.access_cache) |*cache| {
             if (cache.getPtr(ip_str)) |result| {
                 defer result.entry.release();
+                // Track cache hit
+                if (self.metrics) |metrics| {
+                    metrics.ip_access_cache_hits.inc();
+                }
                 return result.value.*;
+            }
+            // Track cache miss
+            if (self.metrics) |metrics| {
+                metrics.ip_access_cache_misses.inc();
             }
         }
 

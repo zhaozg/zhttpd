@@ -38,6 +38,8 @@ pub const CorsMiddleware = struct {
     /// LRU cache for origin decisions (optimization for repeated origins)
     origin_cache: ?LruCache([]const u8, bool, void) = null,
     allocator: ?std.mem.Allocator = null,
+    /// Optional metrics pointer for tracking cache performance
+    metrics: ?*@import("../observability/observability.zig").Metrics = null,
 
     /// Initialize CORS middleware with configuration
     pub fn init(allocator: std.mem.Allocator, config: CorsConfig) !CorsMiddleware {
@@ -45,6 +47,7 @@ pub const CorsMiddleware = struct {
             .config = config,
             .is_wildcard_origin = std.mem.eql(u8, config.allowed_origins, "*"),
             .allocator = allocator,
+            .metrics = null,
         };
 
         // Pre-format max-age string
@@ -80,6 +83,11 @@ pub const CorsMiddleware = struct {
         }
     }
 
+    /// Set metrics pointer for tracking cache performance
+    pub fn setMetrics(self: *CorsMiddleware, metrics: *@import("../observability/observability.zig").Metrics) void {
+        self.metrics = metrics;
+    }
+
     /// Get pre-formatted max-age string
     pub fn getMaxAgeStr(self: *const CorsMiddleware) []const u8 {
         return self.max_age_str[0..self.max_age_len];
@@ -96,7 +104,15 @@ pub const CorsMiddleware = struct {
         if (self.origin_cache) |*cache| {
             if (cache.getPtr(origin)) |result| {
                 defer result.entry.release();
+                // Track cache hit
+                if (self.metrics) |metrics| {
+                    metrics.cors_cache_hits.inc();
+                }
                 return result.value.*;
+            }
+            // Track cache miss
+            if (self.metrics) |metrics| {
+                metrics.cors_cache_misses.inc();
             }
         }
 
