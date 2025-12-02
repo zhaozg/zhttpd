@@ -3,31 +3,29 @@ const httpz = @import("httpz");
 const websocket = httpz.websocket;
 const lua_mod = @import("../lua/lua.zig");
 const LuaHandler = lua_mod.LuaHandler;
+const ziglua = @import("ziglua");
+const json = @import("../lua/json.zig");
 
 /// WebSocket module for zhttpd
 /// Provides WebSocket support with Lua integration for message handling.
 ///
 /// Architecture:
-/// - Each WebSocket connection is handled by a WebSocketHandler instance
-/// - Messages are delegated to Lua scripts for processing via websocket.lua
+/// - Each WebSocket connection uses the thread-local Lua VM (shared with HTTP handlers)
+/// - Messages are handled by calling Lua functions for each event
 /// - Supports text and binary messages
 /// - Integrates with GraphQL subscriptions
 ///
 /// Lua Interface:
-/// The websocket.lua script receives messages in the format:
-/// {
-///   type = "message" | "connect" | "disconnect",
-///   connection_id = <number>,
-///   path = "/ws",
-///   data = <message data>
-/// }
+/// The websocket.lua script should export:
+/// - handle_connect(request): Called after connection established
+/// - handle_message(request): Called when message received
+/// - handle_disconnect(request): Called before connection closes
 ///
-/// The script should return a response table:
-/// {
-///   action = "send" | "broadcast" | "close" | "none",
-///   data = <response data>,
-///   target = <connection_id> (optional, for targeted send)
-/// }
+/// The request table contains:
+/// - type: "connect" | "message" | "disconnect"
+/// - connection_id: Connection ID
+/// - path: WebSocket path
+/// - data: Message data (for message type)
 /// WebSocket message types for Lua interface
 pub const MessageType = enum {
     text,
@@ -72,21 +70,30 @@ pub const WebSocketContext = struct {
     }
 };
 
+/// Response constants for websocket stub implementation
+const RESPONSE_CONNECTED = "{\"type\":\"connected\"}";
+const RESPONSE_OK = "{\"type\":\"ok\"}";
+
 /// WebSocket handler for httpz integration
 /// This is the type that httpz uses for each WebSocket connection
+/// Uses the thread-local Lua VM from LuaHandler (shared with HTTP handlers)
 pub const WebSocketHandler = struct {
     conn: *websocket.Conn,
     connection_id: u64,
     path: []const u8,
     lua_handler: ?*LuaHandler,
+    allocator: std.mem.Allocator,
 
     /// Initialize a new WebSocket handler
     pub fn init(conn: *websocket.Conn, ctx: *const WebSocketContext) !WebSocketHandler {
+        const allocator = std.heap.page_allocator;
+
         return .{
             .conn = conn,
             .connection_id = ctx.connection_id,
             .path = ctx.path,
             .lua_handler = ctx.lua_handler,
+            .allocator = allocator,
         };
     }
 
@@ -95,31 +102,35 @@ pub const WebSocketHandler = struct {
         // Send welcome message
         var buf: [256]u8 = undefined;
         const welcome = std.fmt.bufPrint(&buf, "{{\"type\":\"connected\",\"connection_id\":{d},\"path\":\"{s}\"}}", .{ self.connection_id, self.path }) catch {
-            return self.conn.write("{\"type\":\"connected\"}");
+            return self.conn.write(RESPONSE_CONNECTED);
         };
         try self.conn.write(welcome);
 
-        // Notify Lua of the connection
+        // Call Lua handler if available
         if (self.lua_handler) |_| {
-            _ = self.executeLuaHandler("connect", "") catch |err| {
+            const response = self.executeLuaHandler("connect", "") catch |err| {
                 std.debug.print("WebSocket Lua connect error: {}\n", .{err});
+                return;
             };
+            defer self.allocator.free(response);
+            // Response from connect is typically ignored, but we still need to free it
         }
     }
 
     /// Handle incoming client message
     pub fn clientMessage(self: *WebSocketHandler, data: []const u8) !void {
         if (self.lua_handler) |_| {
-            // Execute Lua websocket handler
+            // Execute Lua message handler using thread-local Lua VM
             const response = self.executeLuaHandler("message", data) catch |err| {
                 std.debug.print("WebSocket Lua message error: {}\n", .{err});
                 // On error, echo back with error info
                 var buf: [512]u8 = undefined;
-                const err_msg = std.fmt.bufPrint(&buf, "{{\"type\":\"error\",\"message\":\"Handler error\"}}", .{}) catch {
+                const err_msg = std.fmt.bufPrint(&buf, "{{\"type\":\"error\",\"message\":\"Handler error: {s}\"}}", .{@errorName(err)}) catch {
                     return self.conn.write("{\"type\":\"error\"}");
                 };
                 return self.conn.write(err_msg);
             };
+            defer self.allocator.free(response);
             // Send the Lua response back to client
             return self.conn.write(response);
         } else {
@@ -128,47 +139,104 @@ pub const WebSocketHandler = struct {
         }
     }
 
-    /// Execute Lua websocket handler script
+    /// Execute Lua websocket handler using the thread-local Lua VM
+    /// This reuses the same Lua VM that HTTP handlers use (one per worker thread)
     fn executeLuaHandler(self: *WebSocketHandler, event_type: []const u8, data: []const u8) ![]const u8 {
         const handler = self.lua_handler orelse return error.NoLuaHandler;
 
         // Build request JSON for Lua
-        // Use buffers for building the request and escaping data
-        var escape_buf: [4096]u8 = undefined;
         var request_buf: [8192]u8 = undefined;
+        var escape_buf: [4096]u8 = undefined;
+        var path_buf: [512]u8 = undefined;
 
-        // Escape the data using buffer-based function to handle special characters properly
         const escaped_data = escapeJsonStringBuf(data, &escape_buf) orelse "";
+        const escaped_path = escapeJsonStringBuf(self.path, &path_buf) orelse "";
 
         const request_json = std.fmt.bufPrint(&request_buf, "{{\"type\":\"{s}\",\"connection_id\":{d},\"path\":\"{s}\",\"data\":\"{s}\"}}", .{
             event_type,
             self.connection_id,
-            self.path,
+            escaped_path,
             escaped_data,
         }) catch {
             return error.BufferOverflow;
         };
 
-        // Create an arena for this execution
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
+        // Get the thread-local Lua VM
+        var lua = try handler.getThreadLocalLua();
+        lua.setTop(0); // Clear the stack
 
-        // Create minimal mock response with arena allocator
-        // SAFETY: When custom_body is provided to executeScriptWithContext,
-        // only res.arena is accessed. The req and undefined fields of res are never used.
-        var mock_res: httpz.Response = undefined;
-        mock_res.arena = arena.allocator();
-        var mock_req: httpz.Request = undefined;
+        // Load the websocket script and get the module (with caching)
+        const script_content = handler.loadScript("websocket") catch {
+            return error.ScriptLoadFailed;
+        };
+        defer handler.allocator.free(script_content);
 
-        // Execute the websocket Lua script with custom JSON body
-        return handler.executeScriptWithContext("websocket", "handle_request", &mock_req, &mock_res, request_json);
+        // Use getOrLoadModule for efficient caching
+        if (!handler.getOrLoadModule(lua, "websocket", script_content)) {
+            lua.setTop(0);
+            return error.ScriptLoadFailed;
+        }
+
+        // Module table is now on stack, get the handler function
+        const func_name = if (std.mem.eql(u8, event_type, "connect"))
+            "handle_connect"
+        else if (std.mem.eql(u8, event_type, "disconnect"))
+            "handle_disconnect"
+        else
+            "handle_message";
+
+        const func_z = self.allocator.dupeZ(u8, func_name) catch {
+            lua.pop(1);
+            return error.AllocFailed;
+        };
+        defer self.allocator.free(func_z);
+
+        _ = lua.getField(-1, func_z);
+        if (lua.typeOf(-1) != .function) {
+            lua.pop(2);
+            return error.FunctionNotFound;
+        }
+
+        // Remove module table, keep function
+        lua.remove(-2);
+
+        // Parse and push the request table as argument
+        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, request_json, .{}) catch {
+            lua.pop(1);
+            return error.JsonParseFailed;
+        };
+        defer parsed.deinit();
+
+        json.pushJsonValue(lua, parsed.value) catch {
+            lua.pop(1);
+            return error.JsonConversionFailed;
+        };
+
+        // Call the function with the request table
+        lua.protectedCall(.{ .args = 1, .results = 1 }) catch {
+            lua.pop(1);
+            return error.FunctionCallFailed;
+        };
+
+        // Convert result to JSON
+        const result = json.luaValueToJson(self.allocator, lua, -1) catch {
+            lua.pop(1);
+            return error.JsonConversionFailed;
+        };
+        lua.pop(1);
+
+        return result;
     }
 
     /// Close the connection
     pub fn close(self: *WebSocketHandler) void {
         // Notify Lua of disconnect
         if (self.lua_handler) |_| {
-            _ = self.executeLuaHandler("disconnect", "") catch {};
+            const response = self.executeLuaHandler("disconnect", "") catch {
+                return;
+            };
+            defer self.allocator.free(response);
+            // Response from disconnect is typically ignored, but we still need to free it
         }
         self.conn.close(.{}) catch {};
     }

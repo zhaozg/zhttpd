@@ -59,51 +59,11 @@ pub fn handlePost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !
             return;
         };
 
-        // Extract variables field (optional) and serialize to JSON string
-        const variables = if (parsed.value.object.get("variables")) |v| blk: {
-            // Serialize variables to JSON string using std.json.Stringify
-            const serialized = std.json.Stringify.valueAlloc(res.arena, v, .{}) catch {
-                break :blk "{}";
-            };
-            break :blk serialized;
-        } else "{}";
-
         // Phase 2: If Lua handler is available, delegate to Lua resolver
         if (ctx.lua_handler) |*lua_handler| {
-            // Parse the GraphQL query first
-            var parsed_op = handler.parseQuery(res.arena, query) catch |err| {
-                res.body = std.fmt.allocPrint(res.arena,
-                    \\{{"errors":[{{"message":"Parse error: {s}"}}]}}
-                , .{@errorName(err)}) catch
-                    \\{"errors":[{"message":"Parse error"}]}
-                ;
-                return;
-            };
-            defer parsed_op.deinit(res.arena);
-
-            // Convert operation to JSON for Lua
-            const op_json = handler.operationToJson(res.arena, &parsed_op) catch {
-                res.status = 500;
-                res.body =
-                    \\{"errors":[{"message":"Failed to serialize operation"}]}
-                ;
-                return;
-            };
-
-            // Build request data with operation and variables
-            // We only pass the parsed operation JSON, since the original query string from the request may contain unescaped quotes
-            const request_data = std.fmt.allocPrint(res.arena,
-                \\{{"operation":{s},"variables":{s}}}
-            , .{ op_json, variables }) catch {
-                res.status = 500;
-                res.body =
-                    \\{"errors":[{"message":"Failed to build request"}]}
-                ;
-                return;
-            };
-
-            // Execute Lua graphql resolver script with custom body
-            const result = lua_handler.executeScriptWithContext("graphql", "handle_request", req, res, request_data) catch |err| {
+            // Execute Lua graphql resolver script
+            // The Lua script will have access to req.body() which contains the GraphQL query JSON
+            const result = lua_handler.executeScriptWithContext("graphql", "handle_request", req, res) catch |err| {
                 // If graphql.lua doesn't exist, fall back to default handler
                 if (err == error.InvalidScriptName or err == error.FileNotFound) {
                     const default_result = handler.executeQuery(res.arena, query) catch {
