@@ -48,11 +48,6 @@ pub fn build(b: *std.Build) void {
             .lang = .lua54,
         });
 
-    const grapzig = b.dependency("grapzig", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
     const yaml = b.dependency("yaml", .{
         .target = target,
         .optimize = optimize,
@@ -196,7 +191,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("httpz", httpz.module("httpz"));
     // Note: ziglua's internal module is named "zlua"; we import it as "ziglua" in our code
     exe.root_module.addImport("ziglua", ziglua.module("zlua"));
-    exe.root_module.addImport("grapzig", grapzig.module("grapzig"));
     exe.root_module.addImport("yaml", yaml.module("yaml"));
     exe.root_module.addImport("zdbc", zdbc.module("zdbc"));
 
@@ -231,7 +225,6 @@ pub fn build(b: *std.Build) void {
     exe_tests.root_module.addOptions("build_options", build_options);
     exe_tests.root_module.addImport("httpz", httpz.module("httpz"));
     exe_tests.root_module.addImport("ziglua", ziglua.module("zlua"));
-    exe_tests.root_module.addImport("grapzig", grapzig.module("grapzig"));
     exe_tests.root_module.addImport("yaml", yaml.module("yaml"));
     exe_tests.root_module.addImport("zdbc", zdbc.module("zdbc"));
     exe_tests.linkLibrary(lua_cjson);

@@ -43,8 +43,6 @@ pub const Config = struct {
     max_connections: u32, // Maximum concurrent connections
     request_buffer_size: usize, // Buffer size for request/response
     enable_lua: bool,
-    enable_graphql: bool,
-    graphql_endpoint: []const u8,
     log_level: []const u8,
     log_file: ?[]const u8,
     access_log_file: ?[]const u8,
@@ -102,7 +100,6 @@ pub const Config = struct {
         self.allocator.free(self.host);
         self.allocator.free(self.static_dir);
         self.allocator.free(self.lua_scripts_dir);
-        self.allocator.free(self.graphql_endpoint);
         self.allocator.free(self.log_level);
         if (self.log_file) |lf| {
             self.allocator.free(lf);
@@ -174,9 +171,6 @@ pub fn getDefaultHandlers(allocator: std.mem.Allocator) ![]HandlerMapping {
         .{ .pattern = "/health", .handler = "Handler.HealthCheckHandler" },
         .{ .pattern = "/metrics", .handler = "Handler.MetricsHandler" },
         .{ .pattern = "/ws", .handler = "Handler.WebSocketHandler" },
-        .{ .pattern = "/graphql/playground", .handler = "Handler.GraphQLPlaygroundHandler" },
-        .{ .pattern = "/graphql/ws", .handler = "Handler.WebSocketHandler" },
-        .{ .pattern = "/graphql", .handler = "Handler.GraphQLHandler" },
         .{ .pattern = "/api/*", .handler = "Handler.LuaHandler" },
         .{ .pattern = "/events", .handler = "Handler.SSEHandler" },
         .{ .pattern = "/*", .handler = "Handler.StaticFileHandler" },
@@ -215,8 +209,6 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .max_connections = DEFAULT_MAX_CONNECTIONS,
         .request_buffer_size = DEFAULT_REQUEST_BUFFER_SIZE,
         .enable_lua = true,
-        .enable_graphql = true,
-        .graphql_endpoint = try allocator.dupe(u8, "/graphql"),
         .log_level = try allocator.dupe(u8, "info"),
         .log_file = null,
         .access_log_file = null,
@@ -283,8 +275,6 @@ const YamlConfig = struct {
     max_connections: ?u32 = null,
     request_buffer_size: ?usize = null,
     enable_lua: ?bool = null,
-    enable_graphql: ?bool = null,
-    graphql_endpoint: ?[]const u8 = null,
     log_level: ?[]const u8 = null,
     log_file: ?[]const u8 = null,
     access_log_file: ?[]const u8 = null,
@@ -366,8 +356,6 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .max_connections = parsed.max_connections orelse DEFAULT_MAX_CONNECTIONS,
         .request_buffer_size = parsed.request_buffer_size orelse DEFAULT_REQUEST_BUFFER_SIZE,
         .enable_lua = parsed.enable_lua orelse true,
-        .enable_graphql = parsed.enable_graphql orelse true,
-        .graphql_endpoint = try allocator.dupe(u8, parsed.graphql_endpoint orelse "/graphql"),
         .log_level = try allocator.dupe(u8, parsed.log_level orelse "info"),
         .log_file = if (parsed.log_file) |lf| try allocator.dupe(u8, lf) else null,
         .access_log_file = if (parsed.access_log_file) |alf| try allocator.dupe(u8, alf) else null,
@@ -613,8 +601,6 @@ test "yaml config parsing" {
         \\timeout_seconds: 60
         \\thread_pool_size: 8
         \\enable_lua: true
-        \\enable_graphql: false
-        \\graphql_endpoint: "/gql"
         \\log_level: "debug"
     ;
 
@@ -629,8 +615,6 @@ test "yaml config parsing" {
     try testing.expect(cfg.timeout_seconds == 60);
     try testing.expect(cfg.thread_pool_size == 8);
     try testing.expect(cfg.enable_lua == true);
-    try testing.expect(cfg.enable_graphql == false);
-    try testing.expectEqualStrings("/gql", cfg.graphql_endpoint);
     try testing.expectEqualStrings("debug", cfg.log_level);
     // Default handlers should be present when no handlers section is specified
     try testing.expect(cfg.handlers.len > 0);

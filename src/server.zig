@@ -49,7 +49,6 @@ pub const AppContext = @import("handlers/context.zig").AppContext;
 // Individual handler modules
 const static_handler = @import("handlers/static_handler.zig");
 const lua_handler = @import("handlers/lua_handler.zig");
-const graphql_handler = @import("handlers/graphql_handler.zig");
 const health_handler = @import("handlers/health_handler.zig");
 const metrics_handler = @import("handlers/metrics_handler.zig");
 const sse_handler = @import("handlers/sse_handler.zig");
@@ -139,21 +138,6 @@ pub const HttpzServer = struct {
             }
             router.get(pattern, websocketHandler, .{});
             self.context.logger.debug("Registered WebSocketHandler at {s}", .{pattern});
-        } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLHandler")) {
-            if (!self.context.config.enable_graphql) {
-                self.context.logger.warn("Skipping {s} at {s} - graphql feature is disabled", .{ handler_name, pattern });
-                return;
-            }
-            router.get(pattern, graphqlGet, .{});
-            router.post(pattern, graphqlPost, .{});
-            self.context.logger.debug("Registered GraphQLHandler at {s}", .{pattern});
-        } else if (std.mem.eql(u8, handler_name, "Handler.GraphQLPlaygroundHandler")) {
-            if (!self.context.config.enable_graphql) {
-                self.context.logger.warn("Skipping {s} at {s} - graphql feature is disabled", .{ handler_name, pattern });
-                return;
-            }
-            router.get(pattern, graphqlPlayground, .{});
-            self.context.logger.debug("Registered GraphQLPlaygroundHandler at {s}", .{pattern});
         } else if (std.mem.eql(u8, handler_name, "Handler.LuaHandler")) {
             if (!self.context.config.enable_lua) {
                 self.context.logger.warn("Skipping {s} at {s} - lua feature is disabled", .{ handler_name, pattern });
@@ -490,64 +474,6 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
 
     // Delegate to the modular static file handler
     try static_handler.handle(ctx, req, res);
-}
-
-fn graphqlGet(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    const start_time = std.time.microTimestamp();
-    defer {
-        const duration = std.time.microTimestamp() - start_time;
-        logAccess(ctx, req, res, duration);
-    }
-
-    // Add request ID header
-    addRequestIdHeader(ctx, req, res);
-
-    // Apply middleware
-    if (!applyMiddleware(ctx, req, res)) {
-        return;
-    }
-
-    // Delegate to the modular GraphQL handler
-    try graphql_handler.handleGet(ctx, req, res);
-}
-
-fn graphqlPost(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    const start_time = std.time.microTimestamp();
-    defer {
-        const duration = std.time.microTimestamp() - start_time;
-        logAccess(ctx, req, res, duration);
-    }
-
-    // Add request ID header
-    addRequestIdHeader(ctx, req, res);
-
-    // Apply middleware
-    if (!applyMiddleware(ctx, req, res)) {
-        return;
-    }
-
-    // Delegate to the modular GraphQL handler
-    try graphql_handler.handlePost(ctx, req, res);
-}
-
-/// GraphQL Playground UI handler
-fn graphqlPlayground(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    const start_time = std.time.microTimestamp();
-    defer {
-        const duration = std.time.microTimestamp() - start_time;
-        logAccess(ctx, req, res, duration);
-    }
-
-    // Add request ID header
-    addRequestIdHeader(ctx, req, res);
-
-    // Apply middleware
-    if (!applyMiddleware(ctx, req, res)) {
-        return;
-    }
-
-    // Delegate to the modular GraphQL Playground handler
-    try graphql_handler.handlePlayground(ctx, req, res);
 }
 
 fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
