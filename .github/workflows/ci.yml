@@ -17,6 +17,13 @@ jobs:
       contents: read
       actions: read
     
+    strategy:
+      matrix:
+        lua-lang: [luajit, lua54]
+      fail-fast: false
+    
+    name: build-and-test (${{ matrix.lua-lang }})
+    
     steps:
     - uses: actions/checkout@v4
     
@@ -31,19 +38,19 @@ jobs:
     - name: Check code formatting
       run: zig fmt --check src
     
-    - name: Build project
-      run: zig build
+    - name: Build project (${{ matrix.lua-lang }})
+      run: zig build -Dlua-lang=${{ matrix.lua-lang }}
     
-    - name: Run tests
-      run: zig build test
+    - name: Run tests (${{ matrix.lua-lang }})
+      run: zig build test -Dlua-lang=${{ matrix.lua-lang }}
     
-    - name: Build release
-      run: zig build -Doptimize=ReleaseFast
+    - name: Build release (${{ matrix.lua-lang }})
+      run: zig build -Doptimize=ReleaseFast -Dlua-lang=${{ matrix.lua-lang }}
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: zhttpd-linux-x86_64
+        name: zhttpd-linux-x86_64-${{ matrix.lua-lang }}
         path: zig-out/bin/zhttpd
 
   benchmark:
@@ -53,6 +60,13 @@ jobs:
     permissions:
       contents: read
       actions: read
+    
+    strategy:
+      matrix:
+        lua-lang: [luajit, lua54]
+      fail-fast: false
+    
+    name: benchmark (${{ matrix.lua-lang }})
     
     steps:
     - uses: actions/checkout@v4
@@ -67,8 +81,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y apache2-utils
     
-    - name: Build release binary
-      run: zig build -Doptimize=ReleaseFast
+    - name: Build release binary (${{ matrix.lua-lang }})
+      run: zig build -Doptimize=ReleaseFast -Dlua-lang=${{ matrix.lua-lang }}
     
     - name: Create test directories and files
       run: |
@@ -104,5 +118,5 @@ jobs:
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
       with:
-        name: benchmark-results
+        name: benchmark-results-${{ matrix.lua-lang }}
         path: benchmark_results.txt
