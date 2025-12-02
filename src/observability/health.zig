@@ -96,6 +96,9 @@ pub const HealthCheck = struct {
 };
 
 /// Create a health check with current server state
+/// Parameters:
+///   - start_time: Server start timestamp for uptime calculation
+///   - lua_enabled: Whether Lua scripting engine is enabled
 pub fn check(start_time: i64, lua_enabled: bool) HealthCheck {
     var health = HealthCheck{};
 
