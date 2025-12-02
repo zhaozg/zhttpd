@@ -1,4 +1,5 @@
 const std = @import("std");
+const LruCache = @import("../cache/lru_cache.zig").LruCache;
 
 /// Rate limiting implementation using token bucket algorithm
 /// Provides configurable request rate limiting per client IP or globally
@@ -185,6 +186,22 @@ pub const IpAccessResult = enum {
 
 /// IP-based access control with blacklist and whitelist support
 /// Supports exact IP matching and CIDR notation for subnets
+///
+/// Optimization: This implementation uses an LRU cache to avoid repeated
+/// IP access checks for the same IP addresses. This is particularly beneficial
+/// for persistent connections (HTTP keep-alive, WebSocket, SSE) where the same
+/// IP makes many requests over time.
+///
+/// The cache stores up to 10,000 IP access decisions by default, which provides
+/// significant performance improvement for long-lived connections and high-traffic
+/// scenarios while using minimal memory (~200KB).
+///
+/// Thread Safety and Lock Ordering:
+/// - The IpAccessControl mutex protects the blacklist/whitelist entries
+/// - The LRU cache has its own internal mutex for thread safety
+/// - Lock ordering: IpAccessControl mutex is always acquired before cache mutex
+/// - Cache operations are performed inside the main mutex to prevent race conditions
+///   where the blacklist/whitelist could change between cache check and list iteration
 pub const IpAccessControl = struct {
     /// Configuration for IP access control
     pub const Config = struct {
@@ -199,6 +216,9 @@ pub const IpAccessControl = struct {
         trust_proxy_headers: bool = false,
         /// Log blocked requests
         log_blocked: bool = true,
+        /// Maximum number of IP access decisions to cache (default: 10000)
+        /// Set to 0 to disable caching (not recommended for production)
+        cache_size: usize = 10000,
     };
 
     config: Config,
@@ -208,6 +228,10 @@ pub const IpAccessControl = struct {
     whitelist_entries: std.ArrayList(IpEntry),
     allocator: std.mem.Allocator,
     mutex: std.Thread.Mutex,
+    /// LRU cache for IP access decisions (optimization for persistent connections)
+    access_cache: ?LruCache([]const u8, IpAccessResult, void),
+    /// Optional metrics pointer for tracking cache performance
+    metrics: ?*@import("../observability/observability.zig").Metrics,
 
     /// IP entry (single IP or CIDR range)
     pub const IpEntry = struct {
@@ -237,7 +261,23 @@ pub const IpAccessControl = struct {
             .whitelist_entries = std.ArrayList(IpEntry){},
             .allocator = allocator,
             .mutex = std.Thread.Mutex{},
+            .access_cache = null,
+            .metrics = null,
         };
+
+        // Initialize LRU cache if cache size > 0
+        if (config.cache_size > 0) {
+            const cache_config = @import("../cache/lru_cache.zig").CacheConfig{
+                .max_size = config.cache_size,
+                .default_ttl_ms = 0, // No expiration - invalidate on config change
+            };
+            control.access_cache = LruCache([]const u8, IpAccessResult, void).init(
+                allocator,
+                cache_config,
+                {},
+                null,
+            );
+        }
 
         // Parse blacklist
         if (config.blacklist.len > 0) {
@@ -252,10 +292,20 @@ pub const IpAccessControl = struct {
         return control;
     }
 
+    /// Set metrics pointer for tracking cache performance
+    pub fn setMetrics(self: *IpAccessControl, metrics: *@import("../observability/observability.zig").Metrics) void {
+        self.metrics = metrics;
+    }
+
     /// Clean up resources
     pub fn deinit(self: *IpAccessControl) void {
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        // Clean up cache if it exists
+        if (self.access_cache) |*cache| {
+            cache.deinit();
+        }
 
         for (self.blacklist_entries.items) |entry| {
             self.allocator.free(entry.original);
@@ -284,20 +334,53 @@ pub const IpAccessControl = struct {
     }
 
     /// Check if an IP is allowed
+    /// Optimized with LRU cache to avoid repeated checks for the same IP,
+    /// especially beneficial for long-lived connections (keep-alive, WebSocket, SSE)
     pub fn checkAccess(self: *IpAccessControl, ip_str: []const u8) IpAccessResult {
         if (!self.config.enabled) {
             return .allowed;
         }
 
-        // Parse the IP address
-        const ip_bytes = parseIpAddress(ip_str) orelse return .allowed;
-
+        // Acquire lock once for entire operation to avoid race conditions
+        // between cache check and list iteration
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        // Try cache first if enabled (optimization for persistent connections)
+        // Note: Cache lookup is done inside mutex to prevent race conditions
+        // where blacklist/whitelist could change between cache check and list iteration
+        if (self.access_cache) |*cache| {
+            if (cache.getPtr(ip_str)) |result| {
+                defer result.entry.release();
+                // Track cache hit
+                if (self.metrics) |metrics| {
+                    metrics.ip_access_cache_hits.inc();
+                }
+                return result.value.*;
+            }
+            // Track cache miss
+            if (self.metrics) |metrics| {
+                metrics.ip_access_cache_misses.inc();
+            }
+        }
+
+        // Parse the IP address
+        const ip_bytes = parseIpAddress(ip_str) orelse return .allowed;
 
         // Check whitelist first (whitelisted IPs bypass all checks)
         for (self.whitelist_entries.items) |*entry| {
             if (entry.matches(ip_bytes)) {
+                // Cache the decision before returning
+                // Note: Cache operations are done inside the main mutex to maintain
+                // consistency. The LRU cache has its own internal mutex, but this
+                // is acceptable as the cache mutex is always acquired after the
+                // IP access control mutex (consistent lock ordering).
+                if (self.access_cache) |*cache| {
+                    // Silently ignore cache failures as they don't affect correctness
+                    // Cache failures indicate memory pressure or cache corruption
+                    // but the IP check result is still valid
+                    cache.put(ip_str, .whitelisted) catch {};
+                }
                 return .whitelisted;
             }
         }
@@ -305,14 +388,24 @@ pub const IpAccessControl = struct {
         // Check blacklist
         for (self.blacklist_entries.items) |*entry| {
             if (entry.matches(ip_bytes)) {
+                // Cache the decision before returning
+                if (self.access_cache) |*cache| {
+                    cache.put(ip_str, .blocked) catch {};
+                }
                 return .blocked;
             }
+        }
+
+        // Cache the allowed decision
+        if (self.access_cache) |*cache| {
+            cache.put(ip_str, .allowed) catch {};
         }
 
         return .allowed;
     }
 
     /// Add an IP to the blacklist at runtime
+    /// Clears the cache to ensure consistency
     pub fn addToBlacklist(self: *IpAccessControl, ip_str: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -321,26 +414,42 @@ pub const IpAccessControl = struct {
             var entry_copy = entry;
             entry_copy.original = try self.allocator.dupe(u8, ip_str);
             try self.blacklist_entries.append(self.allocator, entry_copy);
+
+            // Invalidate cache since blacklist changed
+            if (self.access_cache) |*cache| {
+                cache.clear();
+            }
         }
     }
 
     /// Remove an IP from the blacklist
+    /// Clears the cache to ensure consistency
     pub fn removeFromBlacklist(self: *IpAccessControl, ip_str: []const u8) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         var i: usize = 0;
+        var changed = false;
         while (i < self.blacklist_entries.items.len) {
             if (std.mem.eql(u8, self.blacklist_entries.items[i].original, ip_str)) {
                 self.allocator.free(self.blacklist_entries.items[i].original);
                 _ = self.blacklist_entries.orderedRemove(i);
+                changed = true;
             } else {
                 i += 1;
+            }
+        }
+
+        // Invalidate cache if blacklist changed
+        if (changed) {
+            if (self.access_cache) |*cache| {
+                cache.clear();
             }
         }
     }
 
     /// Add an IP to the whitelist at runtime
+    /// Clears the cache to ensure consistency
     pub fn addToWhitelist(self: *IpAccessControl, ip_str: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -349,6 +458,11 @@ pub const IpAccessControl = struct {
             var entry_copy = entry;
             entry_copy.original = try self.allocator.dupe(u8, ip_str);
             try self.whitelist_entries.append(self.allocator, entry_copy);
+
+            // Invalidate cache since whitelist changed
+            if (self.access_cache) |*cache| {
+                cache.clear();
+            }
         }
     }
 
@@ -364,6 +478,24 @@ pub const IpAccessControl = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.whitelist_entries.items.len;
+    }
+
+    /// Get cache statistics for monitoring (returns null if caching is disabled)
+    pub fn getCacheStats(self: *IpAccessControl) ?struct { size: usize, max_size: usize } {
+        if (self.access_cache) |*cache| {
+            return .{
+                .size = cache.getCount(),
+                .max_size = self.config.cache_size,
+            };
+        }
+        return null;
+    }
+
+    /// Clear the IP access cache (useful when configuration changes)
+    pub fn clearCache(self: *IpAccessControl) void {
+        if (self.access_cache) |*cache| {
+            cache.clear();
+        }
     }
 };
 
@@ -605,4 +737,65 @@ test "ip access control dynamic" {
     // Remove from blacklist
     control.removeFromBlacklist("192.168.1.50");
     try testing.expect(control.getBlacklistCount() == 0);
+}
+
+test "ip access control caching" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Initialize with cache enabled (default)
+    var control = try IpAccessControl.init(allocator, .{
+        .enabled = true,
+        .blacklist = "192.168.1.100",
+        .whitelist = "192.168.1.1",
+        .cache_size = 100, // Small cache for testing
+    });
+    defer control.deinit();
+
+    // First access - should check and cache
+    try testing.expect(control.checkAccess("192.168.1.1") == .whitelisted);
+    try testing.expect(control.checkAccess("192.168.1.100") == .blocked);
+    try testing.expect(control.checkAccess("192.168.1.50") == .allowed);
+
+    // Second access - should hit cache
+    try testing.expect(control.checkAccess("192.168.1.1") == .whitelisted);
+    try testing.expect(control.checkAccess("192.168.1.100") == .blocked);
+    try testing.expect(control.checkAccess("192.168.1.50") == .allowed);
+
+    // Verify cache stats
+    if (control.getCacheStats()) |stats| {
+        try testing.expect(stats.size == 3); // Three unique IPs cached
+        try testing.expect(stats.max_size == 100);
+    } else {
+        try testing.expect(false); // Cache should be enabled
+    }
+
+    // Add to blacklist should clear cache
+    try control.addToBlacklist("192.168.1.50");
+    if (control.getCacheStats()) |stats| {
+        try testing.expect(stats.size == 0); // Cache should be cleared
+    }
+
+    // After blacklist update, should check fresh
+    try testing.expect(control.checkAccess("192.168.1.50") == .blocked);
+}
+
+test "ip access control no caching" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Initialize with cache disabled
+    var control = try IpAccessControl.init(allocator, .{
+        .enabled = true,
+        .blacklist = "192.168.1.100",
+        .cache_size = 0, // Disable caching
+    });
+    defer control.deinit();
+
+    // Should work without cache
+    try testing.expect(control.checkAccess("192.168.1.100") == .blocked);
+    try testing.expect(control.checkAccess("192.168.1.1") == .allowed);
+
+    // Cache stats should return null
+    try testing.expect(control.getCacheStats() == null);
 }

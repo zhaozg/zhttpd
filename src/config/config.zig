@@ -63,6 +63,7 @@ pub const Config = struct {
     cors_origins: []const u8, // Allowed origins (* for any)
     cors_methods: []const u8, // Allowed methods
     cors_headers: []const u8, // Allowed headers
+    cors_origin_cache_size: usize, // LRU cache size for CORS origin decisions (0 to disable)
     // Authentication configuration (delegated to Lua)
     enable_auth: bool,
     auth_script: []const u8, // Lua script name for auth validation
@@ -80,6 +81,7 @@ pub const Config = struct {
     enable_ip_blacklist: bool, // Enable IP blacklist/whitelist
     ip_blacklist: []const u8, // Comma-separated list of blocked IPs/CIDRs
     ip_whitelist: []const u8, // Comma-separated list of whitelisted IPs/CIDRs
+    ip_access_cache_size: usize, // LRU cache size for IP access decisions (0 to disable)
     // Database plugin configuration
     enable_db: bool, // Enable database plugin
     db_uri: []const u8, // Default database connection URI (for backward compatibility)
@@ -231,6 +233,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .cors_origins = try allocator.dupe(u8, "*"),
         .cors_methods = try allocator.dupe(u8, "GET, POST, PUT, DELETE, OPTIONS"),
         .cors_headers = try allocator.dupe(u8, "Content-Type, Authorization"),
+        .cors_origin_cache_size = 1000, // Default cache size for CORS origin decisions
         .enable_auth = false,
         .auth_script = try allocator.dupe(u8, "auth"),
         .auth_protected_paths = try allocator.dupe(u8, "/api/*"),
@@ -247,6 +250,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_ip_blacklist = false,
         .ip_blacklist = try allocator.dupe(u8, ""),
         .ip_whitelist = try allocator.dupe(u8, ""),
+        .ip_access_cache_size = 10000, // Default cache size for IP access decisions
         // Database plugin (disabled by default)
         .enable_db = false,
         .db_uri = try allocator.dupe(u8, ""),
@@ -297,6 +301,7 @@ const YamlConfig = struct {
     cors_origins: ?[]const u8 = null,
     cors_methods: ?[]const u8 = null,
     cors_headers: ?[]const u8 = null,
+    cors_origin_cache_size: ?usize = null,
     enable_auth: ?bool = null,
     auth_script: ?[]const u8 = null,
     auth_protected_paths: ?[]const u8 = null,
@@ -313,6 +318,7 @@ const YamlConfig = struct {
     enable_ip_blacklist: ?bool = null,
     ip_blacklist: ?[]const u8 = null,
     ip_whitelist: ?[]const u8 = null,
+    ip_access_cache_size: ?usize = null,
     // Database plugin configuration
     enable_db: ?bool = null,
     db_uri: ?[]const u8 = null,
@@ -378,6 +384,7 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .cors_origins = try allocator.dupe(u8, parsed.cors_origins orelse "*"),
         .cors_methods = try allocator.dupe(u8, parsed.cors_methods orelse "GET, POST, PUT, DELETE, OPTIONS"),
         .cors_headers = try allocator.dupe(u8, parsed.cors_headers orelse "Content-Type, Authorization"),
+        .cors_origin_cache_size = parsed.cors_origin_cache_size orelse 1000,
         .enable_auth = parsed.enable_auth orelse false,
         .auth_script = try allocator.dupe(u8, parsed.auth_script orelse "auth"),
         .auth_protected_paths = try allocator.dupe(u8, parsed.auth_protected_paths orelse "/api/*"),
@@ -394,6 +401,7 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_ip_blacklist = parsed.enable_ip_blacklist orelse false,
         .ip_blacklist = try allocator.dupe(u8, parsed.ip_blacklist orelse ""),
         .ip_whitelist = try allocator.dupe(u8, parsed.ip_whitelist orelse ""),
+        .ip_access_cache_size = parsed.ip_access_cache_size orelse 10000,
         // Database plugin configuration
         .enable_db = parsed.enable_db orelse false,
         .db_uri = try allocator.dupe(u8, parsed.db_uri orelse ""),

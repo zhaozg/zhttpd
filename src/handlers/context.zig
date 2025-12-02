@@ -183,12 +183,20 @@ pub const AppContext = struct {
 
         // Initialize CORS middleware if enabled
         if (config.enable_cors) {
-            ctx.cors_middleware = CorsMiddleware.init(.{
+            ctx.cors_middleware = try CorsMiddleware.init(allocator, .{
                 .enabled = true,
                 .allowed_origins = config.cors_origins,
                 .allowed_methods = config.cors_methods,
                 .allowed_headers = config.cors_headers,
+                .origin_cache_size = config.cors_origin_cache_size,
             });
+            errdefer if (ctx.cors_middleware) |*cors| cors.deinit();
+            // Set metrics for cache tracking
+            if (ctx.cors_middleware) |*cors| {
+                if (ctx.metrics) |metrics| {
+                    cors.setMetrics(metrics);
+                }
+            }
             ctx.logger.info("CORS middleware initialized with origins: {s}", .{config.cors_origins});
         }
 
@@ -211,12 +219,25 @@ pub const AppContext = struct {
                 .enabled = true,
                 .blacklist = config.ip_blacklist,
                 .whitelist = config.ip_whitelist,
+                .cache_size = config.ip_access_cache_size,
             });
+            // Set metrics for cache tracking
+            if (ctx.metrics) |metrics| {
+                ip_access_control.setMetrics(metrics);
+            }
             ctx.ip_access_control = ip_access_control;
-            ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries)", .{
-                ip_access_control.getBlacklistCount(),
-                ip_access_control.getWhitelistCount(),
-            });
+            if (ip_access_control.getCacheStats()) |stats| {
+                ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries, cache: {d})", .{
+                    ip_access_control.getBlacklistCount(),
+                    ip_access_control.getWhitelistCount(),
+                    stats.max_size,
+                });
+            } else {
+                ctx.logger.info("IP access control initialized (blacklist: {d} entries, whitelist: {d} entries, cache: disabled)", .{
+                    ip_access_control.getBlacklistCount(),
+                    ip_access_control.getWhitelistCount(),
+                });
+            }
         }
 
         // Log WebSocket and SSE status
@@ -325,6 +346,9 @@ pub const AppContext = struct {
         if (self.rate_limiter) |rate_limiter| {
             rate_limiter.deinit();
             self.allocator.destroy(rate_limiter);
+        }
+        if (self.cors_middleware) |*cors| {
+            cors.deinit();
         }
         if (self.ip_access_control) |ip_control| {
             ip_control.deinit();

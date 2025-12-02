@@ -149,6 +149,12 @@ pub const Metrics = struct {
     // Rate limiting
     rate_limit_hits: Counter,
 
+    // Cache metrics (Phase 2 optimization tracking)
+    ip_access_cache_hits: Counter,
+    ip_access_cache_misses: Counter,
+    cors_cache_hits: Counter,
+    cors_cache_misses: Counter,
+
     // Server info
     start_time: i64,
 
@@ -175,6 +181,10 @@ pub const Metrics = struct {
             .websocket_messages_received = Counter.init(),
             .websocket_messages_sent = Counter.init(),
             .rate_limit_hits = Counter.init(),
+            .ip_access_cache_hits = Counter.init(),
+            .ip_access_cache_misses = Counter.init(),
+            .cors_cache_hits = Counter.init(),
+            .cors_cache_misses = Counter.init(),
             .start_time = std.time.timestamp(),
         };
     }
@@ -308,7 +318,24 @@ pub const Metrics = struct {
         // Rate limiting
         try writer.print("# HELP zhttpd_rate_limit_hits_total Total rate limit rejections\n", .{});
         try writer.print("# TYPE zhttpd_rate_limit_hits_total counter\n", .{});
-        try writer.print("zhttpd_rate_limit_hits_total {d}\n", .{self.rate_limit_hits.get()});
+        try writer.print("zhttpd_rate_limit_hits_total {d}\n\n", .{self.rate_limit_hits.get()});
+
+        // Cache metrics (Phase 2 optimization tracking)
+        try writer.print("# HELP zhttpd_ip_access_cache_hits_total IP access cache hits\n", .{});
+        try writer.print("# TYPE zhttpd_ip_access_cache_hits_total counter\n", .{});
+        try writer.print("zhttpd_ip_access_cache_hits_total {d}\n\n", .{self.ip_access_cache_hits.get()});
+
+        try writer.print("# HELP zhttpd_ip_access_cache_misses_total IP access cache misses\n", .{});
+        try writer.print("# TYPE zhttpd_ip_access_cache_misses_total counter\n", .{});
+        try writer.print("zhttpd_ip_access_cache_misses_total {d}\n\n", .{self.ip_access_cache_misses.get()});
+
+        try writer.print("# HELP zhttpd_cors_cache_hits_total CORS origin cache hits\n", .{});
+        try writer.print("# TYPE zhttpd_cors_cache_hits_total counter\n", .{});
+        try writer.print("zhttpd_cors_cache_hits_total {d}\n\n", .{self.cors_cache_hits.get()});
+
+        try writer.print("# HELP zhttpd_cors_cache_misses_total CORS origin cache misses\n", .{});
+        try writer.print("# TYPE zhttpd_cors_cache_misses_total counter\n", .{});
+        try writer.print("zhttpd_cors_cache_misses_total {d}\n", .{self.cors_cache_misses.get()});
 
         return try buf.toOwnedSlice(allocator);
     }
