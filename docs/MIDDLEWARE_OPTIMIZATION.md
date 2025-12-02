@@ -188,13 +188,14 @@ The middleware chain in `server.zig::applyMiddleware()` executes in the followin
 
 Based on impact and implementation complexity:
 
-| Priority | Optimization | Impact | Complexity | Recommended |
-|----------|-------------|--------|------------|-------------|
-| **High** | IP access result caching | High | Low | ✅ Yes |
-| **High** | Connection-level IP caching | High | Medium | 📝 Document |
-| **Medium** | CORS origin decision cache | Medium | Low | ✅ Yes |
-| **Medium** | Sharded locks for rate limiter | Medium | Medium | ✅ Yes |
-| **Low** | Custom IP address parser | Low | Medium | ❌ No |
+| Priority | Optimization | Impact | Complexity | Status |
+|----------|-------------|--------|------------|--------|
+| **High** | IP access result caching | High | Low | ✅ Done (Phase 1) |
+| **High** | Connection-level IP caching | High | Medium | 📝 Documented |
+| **Medium** | CORS origin decision cache | Medium | Low | ✅ Done (Phase 2) |
+| **Medium** | Cache hit rate metrics | Low | Low | ✅ Done (Phase 2) |
+| **Medium** | Sharded locks for rate limiter | Medium | Medium | ⏸️ Deferred |
+| **Low** | Custom IP address parser | Low | Medium | ❌ Not planned |
 | **Low** | Lock-free data structures | Medium | High | 📝 Research |
 
 ## Implementation Plan
@@ -205,10 +206,22 @@ Based on impact and implementation complexity:
 3. ✅ Document optimization rationale in code
 4. ✅ Add configuration options for cache sizes
 
-### Phase 2: Architectural Improvements (Short-term)
-1. Implement sharded locks for rate limiter
-2. Add metrics for cache hit rates and lock contention
-3. Benchmark improvements with h2load
+### Phase 2: Architectural Improvements (Short-term) - COMPLETED
+1. ✅ CORS origin decision cache (completed in commit 51e814e)
+2. ✅ Add metrics for cache hit rates and lock contention (completed in commit 080cdf5)
+3. ⏸️ Sharded locks for rate limiter (deferred - requires major refactoring)
+4. 📝 Benchmark improvements with h2load (next step)
+
+**Phase 2 Status**: Core optimizations completed. Sharded locks deferred due to complexity.
+Cache metrics show:
+- IP access control cache hit rate tracking
+- CORS origin cache hit rate tracking
+- Exposed via Prometheus /metrics endpoint
+
+**Achievements**:
+- Both IP and CORS caches now have performance tracking
+- Monitoring API available for production optimization
+- Cache effectiveness can be measured in real-world scenarios
 
 ### Phase 3: Long-term Research (Future)
 1. Investigate httpz connection-level user data support
