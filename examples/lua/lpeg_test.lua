@@ -44,25 +44,25 @@ function handle(request, response, context)
         message = "LPeg module is working!",
         tests = {
             basic_match = {
-                pattern = "P('hello')",
+                pattern = "P(\"hello\")",
                 input = "hello world",
                 result = result1,
                 expected = 6  -- position after match
             },
             digits = {
-                pattern = "R('09')^1",
+                pattern = "R(\"09\")^1",
                 input = "12345abc",
                 result = result2,
                 expected = 6  -- position after digits
             },
             vowels = {
-                pattern = "S('aeiouAEIOU')^1",
+                pattern = "S(\"aeiouAEIOU\")^1",
                 input = "aeiou",
                 result = result3,
                 expected = 6  -- position after match
             },
             capture = {
-                pattern = "C(R('az','AZ')^1)",
+                pattern = "C(R(\"az\",\"AZ\")^1)",
                 input = "hello123",
                 captured = captured_name,
                 expected = "hello"

@@ -38,7 +38,7 @@ pub fn registerLpegModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.A
 
     // Call luaopen_lpeg which:
     // 1. Creates the lpeg table with all pattern functions
-    // 2. Sets it as global "lpeg" (due to -DLPEG_MODNAME="lpeg")
+    // 2. Sets it as global "lpeg" (via luaL_register(L, "lpeg", pattreg) in the C code)
     // 3. Returns the table on the stack
     const result = luaopen_lpeg(L);
 
