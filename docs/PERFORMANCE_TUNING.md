@@ -232,7 +232,6 @@ max_connections: 1024       # More connections
 With default configuration on modern hardware:
 - **Static files**: 10,000-50,000 req/s
 - **Dynamic content (Lua)**: 5,000-10,000 req/s
-- **GraphQL queries**: 3,000-8,000 req/s
 
 ### Memory Usage
 Baseline (idle server): ~10-20MB

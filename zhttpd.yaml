@@ -55,17 +55,6 @@ max_cache_file_size: 1048576
 #   - Recommended for production deployments
 enable_etag: true
 
-# GraphQL Configuration
-# ---------------------
-# enable_graphql: Enable or disable GraphQL endpoint
-#   - true: GraphQL queries and mutations are processed
-#   - false: GraphQL endpoint returns 404
-enable_graphql: true
-
-# graphql_endpoint: URL path for the GraphQL endpoint
-#   - Typically "/graphql" (industry standard)
-#   - POST requests to this path execute GraphQL queries
-graphql_endpoint: "/graphql"
 
 # Security Configuration
 # ----------------------
@@ -151,7 +140,6 @@ log_level: "info"
 # -----------------
 # enable_websocket: Enable WebSocket protocol support
 #   - true: WebSocket connections are accepted at /ws endpoint
-#   - GraphQL subscriptions available at /graphql/ws when both WebSocket and GraphQL are enabled
 #   - Messages are handled by websocket.lua script in lua_scripts_dir
 #   - false: WebSocket support disabled (default)
 enable_websocket: true
@@ -250,8 +238,6 @@ log_format: "text"
 #   - Handler names must match the built-in handler names:
 #     - Handler.StaticFileHandler: Serves static files
 #     - Handler.LuaHandler: Executes Lua scripts
-#     - Handler.GraphQLHandler: Handles GraphQL requests
-#     - Handler.GraphQLPlaygroundHandler: GraphQL Playground UI
 #     - Handler.WebSocketHandler: Handles WebSocket connections
 #     - Handler.HealthCheckHandler: Returns health status
 #     - Handler.MetricsHandler: Returns Prometheus metrics
@@ -265,10 +251,6 @@ log_format: "text"
 #     handler: Handler.MetricsHandler
 #   - pattern: /ws
 #     handler: Handler.WebSocketHandler
-#   - pattern: /graphql/playground
-#     handler: Handler.GraphQLPlaygroundHandler
-#   - pattern: /graphql
-#     handler: Handler.GraphQLHandler
 #   - pattern: /api/*
 #     handler: Handler.LuaHandler
 #   - pattern: /*
@@ -281,7 +263,7 @@ log_format: "text"
 #   /*: Handler.StaticFileHandler
 #
 # Note: If handlers section is not specified, default handlers are used based on
-# feature flags (enable_lua, enable_graphql, enable_websocket, etc.)
+# feature flags (enable_lua, enable_websocket, etc.)
 
 # Example Production Configuration:
 # ----------------------------------
@@ -294,8 +276,6 @@ log_format: "text"
 # timeout_seconds: 60
 # thread_pool_size: 8  # For 4-core CPU with hyperthreading
 # enable_lua: true
-# enable_graphql: true
-# graphql_endpoint: "/graphql"
 # log_level: "info"
 # log_file: "/var/log/zhttpd/access.log"
 # enable_rate_limit: true

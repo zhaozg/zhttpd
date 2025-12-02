@@ -71,44 +71,6 @@ Routes requests to Lua scripts based on path.
 
 ---
 
-### GraphQL
-
-**Query Endpoint:** `GET|POST /graphql`
-
-Execute GraphQL queries and mutations.
-
-**GET Request:**
-```
-GET /graphql?query={users{id name}}&variables={}
-```
-
-**POST Request:**
-```json
-{
-  "query": "query { users { id name } }",
-  "variables": {},
-  "operationName": "GetUsers"
-}
-```
-
-**Response:**
-```json
-{
-  "data": { ... },
-  "errors": [ ... ]
-}
-```
-
-**Playground:** `GET /graphql/playground`
-
-Interactive GraphQL IDE for testing queries.
-
-**WebSocket Subscriptions:** `WS /graphql/ws`
-
-GraphQL subscriptions via graphql-ws protocol.
-
----
-
 ### WebSocket
 
 **Endpoint:** `WS /ws`
@@ -172,7 +134,6 @@ Returns server health status.
   "uptime": 3600,
   "components": {
     "lua": { "status": "healthy" },
-    "graphql": { "status": "healthy" },
     "database": { "status": "healthy" }
   }
 }
@@ -462,9 +423,6 @@ lua_sandbox_enabled: true     # Enable sandbox
 lua_max_instructions: 100000  # Instruction limit (0 = unlimited)
 reload: "auto"                # Cache mode: never, auto, force
 
-# GraphQL
-enable_graphql: true
-graphql_endpoint: "/graphql"
 
 # WebSocket & SSE
 enable_websocket: false
@@ -516,10 +474,6 @@ handlers:
     handler: Handler.MetricsHandler
   - pattern: /ws
     handler: Handler.WebSocketHandler
-  - pattern: /graphql/playground
-    handler: Handler.GraphQLPlaygroundHandler
-  - pattern: /graphql
-    handler: Handler.GraphQLHandler
   - pattern: /api/*
     handler: Handler.LuaHandler
   - pattern: /events
@@ -534,8 +488,6 @@ handlers:
 |---------|-------------|
 | `Handler.StaticFileHandler` | Serve static files |
 | `Handler.LuaHandler` | Execute Lua scripts |
-| `Handler.GraphQLHandler` | GraphQL queries/mutations |
-| `Handler.GraphQLPlaygroundHandler` | GraphQL IDE |
 | `Handler.WebSocketHandler` | WebSocket connections |
 | `Handler.SSEHandler` | Server-Sent Events |
 | `Handler.HealthCheckHandler` | Health status |
@@ -555,7 +507,6 @@ pub const AppContext = struct {
     config: Config,
     file_cache: *FileCache,
     lua_handler: ?LuaHandler,
-    graphql_handler: ?GraphQLHandler,
     logger: Logger,
     access_logger: ?Logger,
     rate_limiter: ?*RateLimiter,
@@ -673,20 +624,6 @@ pub const Logger = struct {
 {
   "status": "error",
   "message": "Script execution failed"
-}
-```
-
-### GraphQL Error Responses
-
-```json
-{
-  "data": null,
-  "errors": [
-    {
-      "message": "Field 'unknown' not found",
-      "locations": [{"line": 1, "column": 3}]
-    }
-  ]
 }
 ```
 

@@ -9,7 +9,6 @@ const config_mod = @import("../config/config.zig");
 const Config = config_mod.Config;
 const lua_mod = @import("../lua/lua.zig");
 const LuaHandler = lua_mod.LuaHandler;
-const GraphQLHandler = @import("../graphql/graphql.zig").GraphQLHandler;
 const logger_mod = @import("../logger/logger.zig");
 const Logger = logger_mod.Logger;
 const LogLevel = logger_mod.LogLevel;
@@ -47,7 +46,6 @@ pub const AppContext = struct {
     config: Config,
     file_cache: *FileCache, // Global file cache shared by all handlers
     lua_handler: ?LuaHandler = null,
-    graphql_handler: ?GraphQLHandler = null,
     logger: Logger,
     access_logger: ?Logger = null,
     // Phase 3: Middleware
@@ -143,18 +141,6 @@ pub const AppContext = struct {
                 if (config.lua_sandbox_enabled) "enabled" else "disabled",
                 config.lua_max_instructions,
             });
-        }
-
-        // Initialize GraphQL handler if enabled
-        if (config.enable_graphql) {
-            var graphql = try GraphQLHandler.init(allocator);
-            errdefer graphql.deinit();
-            // Try to load schema if it exists
-            graphql.loadSchema("examples/graphql/schema.graphql") catch |err| {
-                ctx.logger.warn("Could not load GraphQL schema: {}", .{err});
-            };
-            ctx.graphql_handler = graphql;
-            ctx.logger.info("GraphQL handler initialized", .{});
         }
 
         // Phase 3: Initialize middleware
@@ -339,9 +325,6 @@ pub const AppContext = struct {
     pub fn deinit(self: *AppContext) void {
         if (self.lua_handler) |*lua| {
             lua.deinit();
-        }
-        if (self.graphql_handler) |*graphql| {
-            graphql.deinit();
         }
         if (self.rate_limiter) |rate_limiter| {
             rate_limiter.deinit();

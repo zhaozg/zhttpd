@@ -14,7 +14,6 @@ pub fn handle(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     var health = observability.health.check(
         ctx.start_time,
         ctx.config.enable_lua,
-        ctx.config.enable_graphql,
     );
 
     const status = health.httpStatusCode();

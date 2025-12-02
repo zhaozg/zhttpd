@@ -136,11 +136,6 @@ pub const Metrics = struct {
     lua_executions: Counter,
     lua_errors: Counter,
 
-    // GraphQL metrics
-    graphql_queries: Counter,
-    graphql_mutations: Counter,
-    graphql_errors: Counter,
-
     // WebSocket metrics
     websocket_connections: Gauge,
     websocket_messages_received: Counter,
@@ -174,9 +169,6 @@ pub const Metrics = struct {
             .bytes_received = Counter.init(),
             .lua_executions = Counter.init(),
             .lua_errors = Counter.init(),
-            .graphql_queries = Counter.init(),
-            .graphql_mutations = Counter.init(),
-            .graphql_errors = Counter.init(),
             .websocket_connections = Gauge.init(),
             .websocket_messages_received = Counter.init(),
             .websocket_messages_sent = Counter.init(),
@@ -288,19 +280,6 @@ pub const Metrics = struct {
         try writer.print("# HELP zhttpd_lua_errors_total Total Lua script errors\n", .{});
         try writer.print("# TYPE zhttpd_lua_errors_total counter\n", .{});
         try writer.print("zhttpd_lua_errors_total {d}\n\n", .{self.lua_errors.get()});
-
-        // GraphQL metrics
-        try writer.print("# HELP zhttpd_graphql_queries_total Total GraphQL queries executed\n", .{});
-        try writer.print("# TYPE zhttpd_graphql_queries_total counter\n", .{});
-        try writer.print("zhttpd_graphql_queries_total {d}\n\n", .{self.graphql_queries.get()});
-
-        try writer.print("# HELP zhttpd_graphql_mutations_total Total GraphQL mutations executed\n", .{});
-        try writer.print("# TYPE zhttpd_graphql_mutations_total counter\n", .{});
-        try writer.print("zhttpd_graphql_mutations_total {d}\n\n", .{self.graphql_mutations.get()});
-
-        try writer.print("# HELP zhttpd_graphql_errors_total Total GraphQL errors\n", .{});
-        try writer.print("# TYPE zhttpd_graphql_errors_total counter\n", .{});
-        try writer.print("zhttpd_graphql_errors_total {d}\n\n", .{self.graphql_errors.get()});
 
         // WebSocket metrics
         try writer.print("# HELP zhttpd_websocket_connections_active Current WebSocket connections\n", .{});

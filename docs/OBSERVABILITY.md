@@ -50,9 +50,6 @@ When `enable_metrics: true`, a Prometheus-compatible metrics endpoint is availab
 | `zhttpd_bytes_received_total` | Counter | Total bytes received from clients |
 | `zhttpd_lua_executions_total` | Counter | Total Lua script executions |
 | `zhttpd_lua_errors_total` | Counter | Total Lua script errors |
-| `zhttpd_graphql_queries_total` | Counter | Total GraphQL queries |
-| `zhttpd_graphql_mutations_total` | Counter | Total GraphQL mutations |
-| `zhttpd_graphql_errors_total` | Counter | Total GraphQL errors |
 | `zhttpd_websocket_connections_active` | Gauge | Current WebSocket connections |
 | `zhttpd_websocket_messages_received_total` | Counter | Total WebSocket messages received |
 | `zhttpd_websocket_messages_sent_total` | Counter | Total WebSocket messages sent |
@@ -104,7 +101,6 @@ When `enable_health_check: true`, a health check endpoint is available at `/heal
   "components": {
     "http_server": "healthy",
     "lua_engine": "healthy",
-    "graphql_engine": "healthy",
     "file_cache": "healthy"
   }
 }

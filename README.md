@@ -14,9 +14,7 @@
 - 📁 **静态文件服务** - 支持 HTML、CSS、JavaScript、图片等各种静态资源
 - ⚡ **ETag 缓存** - 支持 ETag 和条件请求，大幅减少带宽使用
 - 🔧 **动态内容处理** - 通过 Lua 脚本实现灵活的动态内容和 API 处理
-- 🔍 **GraphQL API** - 内置 GraphQL 支持，提供强大的 API 查询能力
 - 🔗 **WebSocket 支持** - 实时双向通信，支持 Lua 消息处理
-- 📊 **GraphQL 订阅** - 基于 WebSocket 的 GraphQL 订阅支持
 - 🌊 **Chunked 响应** - Lua 支持 HTTP 分块传输编码，用于流式响应
 - 🔒 **安全加固** - 默认启用 HTTP 安全头部（CSP、HSTS、X-Frame-Options 等）
 - ⚙️ **灵活配置** - 支持 JSON 和 YAML 配置文件
@@ -34,7 +32,6 @@
 
 - [http.zig](https://github.com/karlseguin/http.zig) - HTTP 协议实现
 - [ziglua](https://github.com/natecraddock/ziglua) - Lua 集成
-- [grapzig](https://github.com/yousif-wali/grapzig) - GraphQL 实现
 - [zdbc](https://github.com/zhaozg/zdbc) - 数据库抽象层（SQLite、PostgreSQL、MySQL）
 
 ### 📦 安装
@@ -73,9 +70,7 @@ cp config.example.json config.json
   "max_body_size": 10485760,
   "timeout_seconds": 30,
   "thread_pool_size": 4,
-  "enable_lua": true,
-  "enable_graphql": true,
-  "graphql_endpoint": "/graphql"
+  "enable_lua": true
 }
 ```
 
@@ -91,8 +86,6 @@ max_body_size: 10485760
 timeout_seconds: 30
 thread_pool_size: 4
 enable_lua: true
-enable_graphql: true
-graphql_endpoint: "/graphql"
 ```
 
 #### 2. 启动服务器
@@ -287,152 +280,6 @@ end
 - `examples/lua/auth_db.lua` - 数据库认证示例
 - `examples/lua/db_test.lua` - 数据库测试工具
 
-#### GraphQL API
-
-GraphQL 端点默认为 `/graphql`。
-
-**GraphQL Playground：**
-
-访问 `http://localhost:8080/graphql/playground` 打开交互式 GraphQL Playground UI，可以方便地测试查询和变更。
-
-**查询示例：**
-
-```graphql
-query {
-  users {
-    id
-    name
-    email
-  }
-}
-```
-
-**使用 curl：**
-
-```bash
-curl -X POST http://localhost:8080/graphql \
-  -H "Content-Type: application/json" \
-  -d '{"query": "{ users { id name email } }"}'
-```
-
-**Mutation 示例：**
-
-```graphql
-mutation {
-  createUser(input: {
-    name: "张三"
-    email: "zhangsan@example.com"
-  }) {
-    id
-    name
-    email
-  }
-}
-```
-
-**内省查询（Introspection）：**
-
-GraphQL 支持内省查询，可以查询 schema 信息：
-
-```graphql
-query {
-  __schema {
-    queryType { name }
-    mutationType { name }
-    types { name kind }
-  }
-}
-
-query {
-  __type(name: "User") {
-    name
-    fields { name }
-  }
-}
-```
-
-**查询复杂度限制：**
-
-GraphQL 实现了查询复杂度分析，防止过于复杂的查询：
-- 最大复杂度：100
-- 最大嵌套深度：10
-
-超过限制的查询会返回错误：
-
-```json
-{
-  "errors": [{
-    "message": "Query too complex",
-    "extensions": {
-      "code": "QUERY_COMPLEXITY_EXCEEDED",
-      "complexity": 150,
-      "maxComplexity": 100
-    }
-  }]
-}
-```
-
-**数据库集成：**
-
-GraphQL 解析器支持数据库集成。当配置了 `enable_db: true` 时，数据会持久化到数据库：
-
-```lua
--- 在 graphql.lua 中访问数据库
-local db = context.db  -- 获取数据库连接
-if db then
-    local users = db:query("SELECT * FROM users WHERE active = 1")
-    return users
-end
-```
-
-**Lua 自定义解析器：**
-
-GraphQL 查询执行可以委托给 Lua 脚本进行自定义数据解析。在 `lua_scripts_dir` 目录中创建 `graphql.lua` 文件：
-
-```lua
--- examples/lua/graphql.lua
--- 内存数据存储（用于演示）
-local memory_users = {
-    ["1"] = { id = "1", name = "Alice", email = "alice@example.com" }
-}
-
-local query_resolvers = {
-    users = function(args, context)
-        -- 优先使用数据库，回退到内存数据
-        local db = context.db
-        if db then
-            return db:query("SELECT * FROM users")
-        end
-        local result = {}
-        for _, user in pairs(memory_users) do
-            table.insert(result, user)
-        end
-        return result
-    end,
-    user = function(args, context)
-        local db = context.db
-        if db then
-            local result = db:query("SELECT * FROM users WHERE id = ?", args.id)
-            return result and result[1]
-        end
-        return memory_users[args.id]
-    end
-}
-
-function handle(request, response, context)
-    local operation = request.body.operation
-    local field_name = operation.selections[1].name
-    local resolver = query_resolvers[field_name]
-    if resolver then
-        local result = resolver(operation.selections[1].arguments or {}, context)
-        return { data = { [field_name] = result } }
-    end
-    return { data = {} }
-end
-
-return { handle = handle }
-```
-
 #### WebSocket 支持
 
 zhttpd 提供内置的 WebSocket 支持，可以通过 `/ws` 端点建立 WebSocket 连接。消息处理委托给 Lua 脚本。
@@ -478,37 +325,6 @@ function handle_request(request)
 end
 
 return { handle = handle_request }
-```
-
-#### GraphQL 订阅
-
-通过 `/graphql/ws` 端点支持 GraphQL 订阅，遵循 graphql-ws 协议。
-
-**订阅示例：**
-
-```javascript
-const ws = new WebSocket('ws://localhost:8080/graphql/ws');
-
-ws.onopen = () => {
-    // 初始化连接
-    ws.send(JSON.stringify({ type: 'connection_init' }));
-};
-
-ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    if (msg.type === 'connection_ack') {
-        // 订阅用户创建事件
-        ws.send(JSON.stringify({
-            id: '1',
-            type: 'subscribe',
-            payload: {
-                query: 'subscription { userCreated { id name email } }'
-            }
-        }));
-    } else if (msg.type === 'next') {
-        console.log('Subscription data:', msg.payload);
-    }
-};
 ```
 
 ### 🔒 安全特性
@@ -700,14 +516,12 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 - ✅ SSE 实时推送
 - ✅ JWT/OAuth 认证接口
 - ✅ WebSocket 支持 (Lua 消息处理)
-- ✅ GraphQL 订阅
 - ✅ LuaJIT 默认引擎（更高性能）
 - ✅ 内置 json 模块
 - ✅ 零拷贝缓存优化
 - ✅ Lua 模块注册表缓存
 
 未来的增强包括：
-- 完整的 GraphQL 实现
 - 性能优化
 
 详细信息请参阅 [ROADMAP.md](ROADMAP.md)。
@@ -732,9 +546,7 @@ A high-performance, scalable, HTTP-compliant general-purpose web server built wi
 - 📁 **Static File Serving** - Support for HTML, CSS, JavaScript, images, and more
 - ⚡ **ETag Caching** - Supports ETags and conditional requests for reduced bandwidth usage
 - 🔧 **Dynamic Content** - Flexible dynamic content and API handling through Lua scripts
-- 🔍 **GraphQL API** - Built-in GraphQL support for powerful API querying
 - 🔗 **WebSocket Support** - Real-time bidirectional communication with Lua message handling
-- 📊 **GraphQL Subscriptions** - WebSocket-based GraphQL subscription support
 - 🌊 **Chunked Responses** - Lua support for HTTP chunked transfer encoding for streaming responses
 - 🔒 **Security Hardened** - HTTP security headers enabled by default (CSP, HSTS, X-Frame-Options, etc.)
 - ⚙️ **Flexible Configuration** - Support for both JSON and YAML configuration files
@@ -753,7 +565,6 @@ Built on excellent Zig ecosystem projects:
 
 - [http.zig](https://github.com/karlseguin/http.zig) - HTTP protocol implementation
 - [ziglua](https://github.com/natecraddock/ziglua) - Lua integration
-- [grapzig](https://github.com/yousif-wali/grapzig) - GraphQL implementation
 - [zdbc](https://github.com/zhaozg/zdbc) - Database abstraction layer (SQLite, PostgreSQL, MySQL)
 
 ### 📦 Installation
@@ -923,14 +734,12 @@ Current version (v0.6.0) has completed all core features and advanced middleware
 - ✅ SSE real-time streaming
 - ✅ JWT/OAuth authentication interface
 - ✅ WebSocket support with Lua message handling
-- ✅ GraphQL subscriptions
 - ✅ LuaJIT as default engine (better performance)
 - ✅ Built-in json module
 - ✅ Zerocopy cache optimization
 - ✅ Lua module registry caching
 
 Future enhancements include:
-- Full GraphQL implementation
 - Performance optimizations
 
 For details, see [ROADMAP.md](ROADMAP.md).
