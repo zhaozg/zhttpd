@@ -48,6 +48,10 @@ pub const SandboxConfig = struct {
     /// Enable sandboxing (disables dangerous functions)
     /// Default: true (safe default to prevent malicious scripts)
     enable_sandbox: bool = true,
+    /// LUA_PATH value (empty string = use Lua defaults)
+    lua_path: []const u8 = "",
+    /// LUA_CPATH value (empty string = use Lua defaults)
+    lua_cpath: []const u8 = "",
 };
 
 /// Default sandbox configuration with safe defaults
@@ -95,6 +99,26 @@ const ThreadLocalLua = struct {
     fn init(allocator: std.mem.Allocator, sandbox_config: SandboxConfig) !ThreadLocalLua {
         var lua = try ziglua.Lua.init(allocator);
         lua.openLibs();
+
+        // Set LUA_PATH if configured (before sandbox is applied)
+        if (sandbox_config.lua_path.len > 0) {
+            _ = lua.getGlobal("package") catch {};
+            if (lua.typeOf(-1) == .table) {
+                _ = lua.pushString(sandbox_config.lua_path);
+                lua.setField(-2, "path");
+            }
+            lua.pop(1);
+        }
+
+        // Set LUA_CPATH if configured (before sandbox is applied)
+        if (sandbox_config.lua_cpath.len > 0) {
+            _ = lua.getGlobal("package") catch {};
+            if (lua.typeOf(-1) == .table) {
+                _ = lua.pushString(sandbox_config.lua_cpath);
+                lua.setField(-2, "cpath");
+            }
+            lua.pop(1);
+        }
 
         // Always register built-in json module (safe for use with or without sandbox)
         json.registerJsonModule(lua, &getThreadLocalAllocator);

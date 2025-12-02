@@ -70,6 +70,8 @@ pub const Config = struct {
     // Lua sandbox configuration (safe defaults)
     lua_sandbox_enabled: bool, // Enable Lua sandbox (default: true)
     lua_max_instructions: u32, // Max Lua instructions per execution (0 = unlimited, default: 100000)
+    lua_path: []const u8, // LUA_PATH environment variable value (empty string = use Lua defaults)
+    lua_cpath: []const u8, // LUA_CPATH environment variable value (empty string = use Lua defaults)
     // Phase 5: Observability configuration
     enable_metrics: bool, // Enable Prometheus metrics at /metrics
     enable_health_check: bool, // Enable health check at /health
@@ -113,6 +115,8 @@ pub const Config = struct {
         self.allocator.free(self.auth_script);
         self.allocator.free(self.auth_protected_paths);
         self.allocator.free(self.auth_public_paths);
+        self.allocator.free(self.lua_path);
+        self.allocator.free(self.lua_cpath);
         self.allocator.free(self.log_format);
         self.allocator.free(self.ip_blacklist);
         self.allocator.free(self.ip_whitelist);
@@ -233,6 +237,8 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         // Lua sandbox configuration (safe defaults)
         .lua_sandbox_enabled = true,
         .lua_max_instructions = 100_000,
+        .lua_path = try allocator.dupe(u8, ""),
+        .lua_cpath = try allocator.dupe(u8, ""),
         // Phase 5: Observability configuration (enabled by default)
         .enable_metrics = true,
         .enable_health_check = true,
@@ -299,6 +305,8 @@ const YamlConfig = struct {
     // Lua sandbox configuration
     lua_sandbox_enabled: ?bool = null,
     lua_max_instructions: ?u32 = null,
+    lua_path: ?[]const u8 = null,
+    lua_cpath: ?[]const u8 = null,
     // Phase 5: Observability configuration
     enable_metrics: ?bool = null,
     enable_health_check: ?bool = null,
@@ -380,6 +388,8 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         // Lua sandbox configuration
         .lua_sandbox_enabled = parsed.lua_sandbox_enabled orelse true,
         .lua_max_instructions = parsed.lua_max_instructions orelse 100_000,
+        .lua_path = try allocator.dupe(u8, parsed.lua_path orelse ""),
+        .lua_cpath = try allocator.dupe(u8, parsed.lua_cpath orelse ""),
         // Phase 5: Observability configuration
         .enable_metrics = parsed.enable_metrics orelse true,
         .enable_health_check = parsed.enable_health_check orelse true,
@@ -712,4 +722,36 @@ test "default handlers" {
     }
     try testing.expect(has_static);
     try testing.expect(has_health);
+}
+
+test "yaml config with lua_path and lua_cpath" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const yaml_content =
+        \\host: "0.0.0.0"
+        \\port: 8080
+        \\static_dir: "./static"
+        \\lua_scripts_dir: "./lua"
+        \\lua_path: "./?.lua;./lib/?.lua"
+        \\lua_cpath: "./?.so;./lib/?.so"
+    ;
+
+    const cfg = try parseYaml(allocator, yaml_content);
+    defer cfg.deinit();
+
+    try testing.expectEqualStrings("./?.lua;./lib/?.lua", cfg.lua_path);
+    try testing.expectEqualStrings("./?.so;./lib/?.so", cfg.lua_cpath);
+}
+
+test "config defaults for lua_path and lua_cpath" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const cfg = try getDefaultConfig(allocator);
+    defer cfg.deinit();
+
+    // Default values should be empty strings
+    try testing.expectEqualStrings("", cfg.lua_path);
+    try testing.expectEqualStrings("", cfg.lua_cpath);
 }
