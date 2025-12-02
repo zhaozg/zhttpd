@@ -261,7 +261,7 @@ pub const LuaHandler = struct {
     }
 
     /// Get or create the thread-local Lua state for the current worker thread
-    fn getThreadLocalLua(self: *LuaHandler) !*ziglua.Lua {
+    pub fn getThreadLocalLua(self: *LuaHandler) !*ziglua.Lua {
         if (tls_lua) |*tl| {
             return tl.lua;
         }
