@@ -101,26 +101,34 @@ const ThreadLocalLua = struct {
         lua.openLibs();
 
         // Set LUA_PATH if configured (before sandbox is applied)
+        // After openLibs(), package global should always exist
         if (sandbox_config.lua_path.len > 0) {
-            _ = lua.getGlobal("package") catch {};
+            _ = lua.getGlobal("package") catch {
+                // This should never happen after openLibs(), but handle it gracefully
+                // getGlobal failure leaves nothing on stack, so no cleanup needed
+                return error.LuaError;
+            };
             if (lua.typeOf(-1) == .table) {
                 _ = lua.pushString(sandbox_config.lua_path);
                 lua.setField(-2, "path");
                 lua.pop(1); // Pop package table
             } else {
-                lua.pop(1); // Pop non-table value
+                lua.pop(1); // Pop unexpected value (should not happen)
             }
         }
 
         // Set LUA_CPATH if configured (before sandbox is applied)
         if (sandbox_config.lua_cpath.len > 0) {
-            _ = lua.getGlobal("package") catch {};
+            _ = lua.getGlobal("package") catch {
+                // This should never happen after openLibs(), but handle it gracefully
+                return error.LuaError;
+            };
             if (lua.typeOf(-1) == .table) {
                 _ = lua.pushString(sandbox_config.lua_cpath);
                 lua.setField(-2, "cpath");
                 lua.pop(1); // Pop package table
             } else {
-                lua.pop(1); // Pop non-table value
+                lua.pop(1); // Pop unexpected value (should not happen)
             }
         }
 
@@ -201,9 +209,21 @@ const ThreadLocalLua = struct {
         lua.pushNil();
         lua.setGlobal("debug");
 
-        // Remove package library (can load arbitrary C libraries via package.loadlib)
-        lua.pushNil();
-        lua.setGlobal("package");
+        // Remove dangerous package functions while preserving path/cpath
+        // package.loadlib can load arbitrary C libraries which is dangerous
+        // But we want to keep package.path and package.cpath for module search paths
+        _ = lua.getGlobal("package") catch {};
+        if (lua.typeOf(-1) == .table) {
+            const dangerous_package_funcs = [_][:0]const u8{
+                "loadlib",
+                "searchpath", // Could be used to discover filesystem structure
+            };
+            for (dangerous_package_funcs) |name| {
+                lua.pushNil();
+                lua.setField(-2, name);
+            }
+        }
+        lua.pop(1);
     }
 };
 
@@ -662,4 +682,41 @@ test "lua_path and lua_cpath empty strings use defaults" {
     // Default path should contain at least something
     try testing.expect(path_value.len > 0);
     tl.lua.pop(2);
+}
+
+test "lua_path and lua_cpath work with sandbox enabled" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test that custom paths work even when sandbox is enabled
+    const config = SandboxConfig{
+        .max_instructions = 100_000,
+        .enable_sandbox = true, // Sandbox enabled
+        .lua_path = "./?.lua;./custom/?.lua",
+        .lua_cpath = "./?.so;./custom/?.so",
+    };
+
+    var tl = try ThreadLocalLua.init(allocator, config);
+    defer tl.deinit();
+
+    // Verify package table still exists with sandbox
+    _ = tl.lua.getGlobal("package") catch unreachable;
+    try testing.expect(tl.lua.typeOf(-1) == .table);
+
+    // Verify package.path was set correctly despite sandbox
+    _ = tl.lua.getField(-1, "path");
+    const path_value = tl.lua.toString(-1) catch unreachable;
+    try testing.expectEqualStrings("./?.lua;./custom/?.lua", path_value);
+    tl.lua.pop(1);
+
+    // Verify package.cpath was set correctly despite sandbox
+    _ = tl.lua.getField(-1, "cpath");
+    const cpath_value = tl.lua.toString(-1) catch unreachable;
+    try testing.expectEqualStrings("./?.so;./custom/?.so", cpath_value);
+    tl.lua.pop(1);
+
+    // Verify dangerous package functions were removed
+    _ = tl.lua.getField(-1, "loadlib");
+    try testing.expect(tl.lua.typeOf(-1) == .nil);
+    tl.lua.pop(2); // Pop nil and package table
 }
