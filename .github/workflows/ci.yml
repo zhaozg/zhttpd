@@ -101,7 +101,7 @@ jobs:
     
     - name: Create test directories and files
       run: |
-        mkdir -p examples/static examples/lua examples/graphql
+        mkdir -p examples/static examples/lua
         echo "<html><body>Hello World</body></html>" > examples/static/index.html
         cp config.example.yaml zhttpd.yaml
     
