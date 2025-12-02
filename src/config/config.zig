@@ -63,6 +63,7 @@ pub const Config = struct {
     cors_origins: []const u8, // Allowed origins (* for any)
     cors_methods: []const u8, // Allowed methods
     cors_headers: []const u8, // Allowed headers
+    cors_origin_cache_size: usize, // LRU cache size for CORS origin decisions (0 to disable)
     // Authentication configuration (delegated to Lua)
     enable_auth: bool,
     auth_script: []const u8, // Lua script name for auth validation
@@ -232,6 +233,7 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .cors_origins = try allocator.dupe(u8, "*"),
         .cors_methods = try allocator.dupe(u8, "GET, POST, PUT, DELETE, OPTIONS"),
         .cors_headers = try allocator.dupe(u8, "Content-Type, Authorization"),
+        .cors_origin_cache_size = 1000, // Default cache size for CORS origin decisions
         .enable_auth = false,
         .auth_script = try allocator.dupe(u8, "auth"),
         .auth_protected_paths = try allocator.dupe(u8, "/api/*"),
@@ -299,6 +301,7 @@ const YamlConfig = struct {
     cors_origins: ?[]const u8 = null,
     cors_methods: ?[]const u8 = null,
     cors_headers: ?[]const u8 = null,
+    cors_origin_cache_size: ?usize = null,
     enable_auth: ?bool = null,
     auth_script: ?[]const u8 = null,
     auth_protected_paths: ?[]const u8 = null,
@@ -381,6 +384,7 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .cors_origins = try allocator.dupe(u8, parsed.cors_origins orelse "*"),
         .cors_methods = try allocator.dupe(u8, parsed.cors_methods orelse "GET, POST, PUT, DELETE, OPTIONS"),
         .cors_headers = try allocator.dupe(u8, parsed.cors_headers orelse "Content-Type, Authorization"),
+        .cors_origin_cache_size = parsed.cors_origin_cache_size orelse 1000,
         .enable_auth = parsed.enable_auth orelse false,
         .auth_script = try allocator.dupe(u8, parsed.auth_script orelse "auth"),
         .auth_protected_paths = try allocator.dupe(u8, parsed.auth_protected_paths orelse "/api/*"),

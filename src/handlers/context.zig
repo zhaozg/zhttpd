@@ -188,6 +188,7 @@ pub const AppContext = struct {
                 .allowed_origins = config.cors_origins,
                 .allowed_methods = config.cors_methods,
                 .allowed_headers = config.cors_headers,
+                .origin_cache_size = config.cors_origin_cache_size,
             });
             errdefer if (ctx.cors_middleware) |*cors| cors.deinit();
             // Set metrics for cache tracking

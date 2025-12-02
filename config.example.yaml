@@ -61,6 +61,12 @@ cors_origins: "*"
 cors_methods: "GET, POST, PUT, DELETE, OPTIONS"
 cors_headers: "Content-Type, Authorization"
 
+# CORS Origin Cache Size
+# LRU cache for CORS origin decisions (improves performance with many origins)
+# Recommended: 1000 for production, 0 to disable caching
+# Only effective when cors_origins is not "*" (wildcard disables caching automatically)
+cors_origin_cache_size: 1000
+
 # Authentication (delegated to Lua scripts)
 enable_auth: false
 auth_script: "auth"
