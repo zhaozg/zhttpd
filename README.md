@@ -17,6 +17,7 @@
 - 🔍 **GraphQL API** - 内置 GraphQL 支持，提供强大的 API 查询能力
 - 🔗 **WebSocket 支持** - 实时双向通信，支持 Lua 消息处理
 - 📊 **GraphQL 订阅** - 基于 WebSocket 的 GraphQL 订阅支持
+- 🌊 **Chunked 响应** - Lua 支持 HTTP 分块传输编码，用于流式响应
 - 🔒 **安全加固** - 默认启用 HTTP 安全头部（CSP、HSTS、X-Frame-Options 等）
 - ⚙️ **灵活配置** - 支持 JSON 和 YAML 配置文件
 - 🧵 **多线程支持** - 使用线程池处理并发请求
@@ -702,6 +703,7 @@ A high-performance, scalable, HTTP-compliant general-purpose web server built wi
 - 🔍 **GraphQL API** - Built-in GraphQL support for powerful API querying
 - 🔗 **WebSocket Support** - Real-time bidirectional communication with Lua message handling
 - 📊 **GraphQL Subscriptions** - WebSocket-based GraphQL subscription support
+- 🌊 **Chunked Responses** - Lua support for HTTP chunked transfer encoding for streaming responses
 - 🔒 **Security Hardened** - HTTP security headers enabled by default (CSP, HSTS, X-Frame-Options, etc.)
 - ⚙️ **Flexible Configuration** - Support for both JSON and YAML configuration files
 - 🧵 **Multi-threading** - Thread pool for handling concurrent requests
