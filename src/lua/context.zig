@@ -163,6 +163,9 @@ fn registerResponseMetatable(lua: *ziglua.Lua) void {
     lua.pushFunction(ziglua.wrap(resBody));
     lua.setField(-2, "body");
 
+    lua.pushFunction(ziglua.wrap(resChunk));
+    lua.setField(-2, "chunk");
+
     lua.pop(1); // Pop metatable
 }
 
@@ -908,6 +911,38 @@ fn resBody(lua: *ziglua.Lua) i32 {
     return 0;
 }
 
+/// Send a chunk of data for chunked/streaming responses
+/// Usage: response:chunk("data chunk")
+/// This enables HTTP chunked transfer encoding for streaming large responses
+/// or real-time data. Once chunk() is called, the response enters chunked mode
+/// and subsequent calls will send additional chunks.
+fn resChunk(lua: *ziglua.Lua) i32 {
+    const res = current_response orelse {
+        _ = lua.pushString("no response context");
+        lua.raiseError();
+    };
+
+    if (lua.getTop() < 2) {
+        _ = lua.pushString("chunk requires data argument");
+        lua.raiseError();
+    }
+
+    const chunk_data = lua.toString(2) catch {
+        _ = lua.pushString("chunk data must be a string");
+        lua.raiseError();
+    };
+
+    // Call the httpz Response chunk method
+    res.chunk(chunk_data) catch |err| {
+        const arena = current_arena orelse std.heap.page_allocator;
+        const err_msg = std.fmt.allocPrint(arena, "chunk failed: {}", .{err}) catch "chunk failed";
+        _ = lua.pushString(err_msg);
+        lua.raiseError();
+    };
+
+    return 0;
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -934,4 +969,25 @@ test "context module compiles" {
     // Basic compilation test
     const testing = std.testing;
     try testing.expect(true);
+}
+
+test "response chunk method registered" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Create a Lua state and register the response metatable
+    var lua = try ziglua.Lua.init(allocator);
+    defer lua.deinit();
+
+    registerResponseMetatable(&lua);
+
+    // Verify the metatable exists
+    _ = lua.getMetatableRegistry(RESPONSE_MT);
+    try testing.expect(lua.typeOf(-1) == .table);
+
+    // Verify chunk method exists in metatable
+    _ = lua.getField(-1, "chunk");
+    try testing.expect(lua.typeOf(-1) == .function);
+
+    lua.pop(2); // Pop function and metatable
 }
