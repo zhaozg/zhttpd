@@ -970,3 +970,24 @@ test "context module compiles" {
     const testing = std.testing;
     try testing.expect(true);
 }
+
+test "response chunk method registered" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Create a Lua state and register the response metatable
+    var lua = try ziglua.Lua.init(allocator);
+    defer lua.deinit();
+
+    registerResponseMetatable(&lua);
+
+    // Verify the metatable exists
+    _ = lua.getMetatableRegistry(RESPONSE_MT);
+    try testing.expect(lua.typeOf(-1) == .table);
+
+    // Verify chunk method exists in metatable
+    _ = lua.getField(-1, "chunk");
+    try testing.expect(lua.typeOf(-1) == .function);
+
+    lua.pop(2); // Pop function and metatable
+}
