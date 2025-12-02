@@ -80,7 +80,7 @@ pub const Config = struct {
     enable_ip_blacklist: bool, // Enable IP blacklist/whitelist
     ip_blacklist: []const u8, // Comma-separated list of blocked IPs/CIDRs
     ip_whitelist: []const u8, // Comma-separated list of whitelisted IPs/CIDRs
-    ip_access_cache_size: u32, // LRU cache size for IP access decisions (0 to disable)
+    ip_access_cache_size: usize, // LRU cache size for IP access decisions (0 to disable)
     // Database plugin configuration
     enable_db: bool, // Enable database plugin
     db_uri: []const u8, // Default database connection URI (for backward compatibility)
@@ -315,7 +315,7 @@ const YamlConfig = struct {
     enable_ip_blacklist: ?bool = null,
     ip_blacklist: ?[]const u8 = null,
     ip_whitelist: ?[]const u8 = null,
-    ip_access_cache_size: ?u32 = null,
+    ip_access_cache_size: ?usize = null,
     // Database plugin configuration
     enable_db: ?bool = null,
     db_uri: ?[]const u8 = null,
