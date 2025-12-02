@@ -627,19 +627,6 @@ pub const Logger = struct {
 }
 ```
 
-
-```json
-{
-  "data": null,
-  "errors": [
-    {
-      "message": "Field 'unknown' not found",
-      "locations": [{"line": 1, "column": 3}]
-    }
-  ]
-}
-```
-
 ---
 
 ## See Also

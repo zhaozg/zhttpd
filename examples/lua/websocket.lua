@@ -62,11 +62,12 @@ end
 -- LIMITATIONS:
 -- This is a simplified pattern-based parser suitable for WebSocket messages.
 -- It only handles:
--- - Simple string values for "type" field
--- - Top-level "message" field
+-- - Simple string values for "type" and "id" fields
+-- - Top-level "payload" object (as raw string)
 -- It does NOT handle:
 -- - Nested objects within string values
 -- - Escaped quotes within strings
+-- - Arrays, numbers, or boolean values
 -- - Complex nested structures
 -- For production use with complex JSON, use the built-in json module or integrate lua-cjson.
 local function parse_json(str)
@@ -78,11 +79,13 @@ local function parse_json(str)
     
     -- Handle simple object with type field
     local type_match = str:match('"type"%s*:%s*"([^"]*)"')
-    local message_match = str:match('"message"%s*:%s*"([^"]*)"')
+    local id_match = str:match('"id"%s*:%s*"([^"]*)"')
+    local payload_match = str:match('"payload"%s*:%s*(%b{})')
     
     local result = {}
     if type_match then result.type = type_match end
-    if message_match then result.message = message_match end
+    if id_match then result.id = id_match end
+    if payload_match then result.payload = payload_match end
     
     return result
 end

@@ -263,6 +263,7 @@ log_format: "text"
 #   /*: Handler.StaticFileHandler
 #
 # Note: If handlers section is not specified, default handlers are used based on
+# feature flags (enable_lua, enable_websocket, etc.)
 
 # Example Production Configuration:
 # ----------------------------------
