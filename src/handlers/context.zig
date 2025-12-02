@@ -132,6 +132,8 @@ pub const AppContext = struct {
             const sandbox_config = lua_mod.SandboxConfig{
                 .max_instructions = config.lua_max_instructions,
                 .enable_sandbox = config.lua_sandbox_enabled,
+                .lua_path = config.lua_path,
+                .lua_cpath = config.lua_cpath,
             };
             ctx.lua_handler = try LuaHandler.initWithConfig(allocator, config.lua_scripts_dir, file_cache, sandbox_config);
             errdefer if (ctx.lua_handler) |*lua| lua.deinit();

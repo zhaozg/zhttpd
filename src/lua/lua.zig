@@ -48,6 +48,10 @@ pub const SandboxConfig = struct {
     /// Enable sandboxing (disables dangerous functions)
     /// Default: true (safe default to prevent malicious scripts)
     enable_sandbox: bool = true,
+    /// LUA_PATH value (empty string = use Lua defaults)
+    lua_path: []const u8 = "",
+    /// LUA_CPATH value (empty string = use Lua defaults)
+    lua_cpath: []const u8 = "",
 };
 
 /// Default sandbox configuration with safe defaults
@@ -95,6 +99,38 @@ const ThreadLocalLua = struct {
     fn init(allocator: std.mem.Allocator, sandbox_config: SandboxConfig) !ThreadLocalLua {
         var lua = try ziglua.Lua.init(allocator);
         lua.openLibs();
+
+        // Set LUA_PATH if configured (before sandbox is applied)
+        // After openLibs(), package global should always exist
+        if (sandbox_config.lua_path.len > 0) {
+            _ = lua.getGlobal("package") catch {
+                // This should never happen after openLibs(), but handle it gracefully
+                // getGlobal failure leaves nothing on stack, so no cleanup needed
+                return error.LuaError;
+            };
+            if (lua.typeOf(-1) == .table) {
+                _ = lua.pushString(sandbox_config.lua_path);
+                lua.setField(-2, "path");
+                lua.pop(1); // Pop package table
+            } else {
+                lua.pop(1); // Pop unexpected value (should not happen)
+            }
+        }
+
+        // Set LUA_CPATH if configured (before sandbox is applied)
+        if (sandbox_config.lua_cpath.len > 0) {
+            _ = lua.getGlobal("package") catch {
+                // This should never happen after openLibs(), but handle it gracefully
+                return error.LuaError;
+            };
+            if (lua.typeOf(-1) == .table) {
+                _ = lua.pushString(sandbox_config.lua_cpath);
+                lua.setField(-2, "cpath");
+                lua.pop(1); // Pop package table
+            } else {
+                lua.pop(1); // Pop unexpected value (should not happen)
+            }
+        }
 
         // Always register built-in json module (safe for use with or without sandbox)
         json.registerJsonModule(lua, &getThreadLocalAllocator);
@@ -173,9 +209,25 @@ const ThreadLocalLua = struct {
         lua.pushNil();
         lua.setGlobal("debug");
 
-        // Remove package library (can load arbitrary C libraries via package.loadlib)
-        lua.pushNil();
-        lua.setGlobal("package");
+        // Remove dangerous package functions while preserving path/cpath
+        // package.loadlib can load arbitrary C libraries which is dangerous
+        // But we want to keep package.path and package.cpath for module search paths
+        _ = lua.getGlobal("package") catch {
+            // If package doesn't exist (shouldn't happen), silently continue
+            // Better to be permissive in sandbox than fail initialization
+            return;
+        };
+        if (lua.typeOf(-1) == .table) {
+            const dangerous_package_funcs = [_][:0]const u8{
+                "loadlib",
+                "searchpath", // Could be used to discover filesystem structure
+            };
+            for (dangerous_package_funcs) |name| {
+                lua.pushNil();
+                lua.setField(-2, name);
+            }
+        }
+        lua.pop(1);
     }
 };
 
@@ -581,4 +633,94 @@ test "getLuaEngineName returns correct engine name" {
     try std.testing.expect(engine_name.len > 0);
     // Either "LuaJIT" or "Lua 5.4"
     try std.testing.expect(std.mem.eql(u8, engine_name, "LuaJIT") or std.mem.eql(u8, engine_name, "Lua 5.4"));
+}
+
+test "lua_path and lua_cpath configuration" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test with custom lua_path and lua_cpath
+    const config = SandboxConfig{
+        .max_instructions = 100_000,
+        .enable_sandbox = false, // Disable sandbox to test package.path access
+        .lua_path = "./?.lua;./lib/?.lua",
+        .lua_cpath = "./?.so;./lib/?.so",
+    };
+
+    var tl = try ThreadLocalLua.init(allocator, config);
+    defer tl.deinit();
+
+    // Verify package.path was set correctly
+    _ = tl.lua.getGlobal("package") catch unreachable; // Stack: package
+    _ = tl.lua.getField(-1, "path"); // Stack: package, path
+    const path_value = tl.lua.toString(-1) catch unreachable;
+    try testing.expectEqualStrings("./?.lua;./lib/?.lua", path_value);
+    tl.lua.pop(1); // Stack: package
+
+    // Verify package.cpath was set correctly
+    _ = tl.lua.getField(-1, "cpath"); // Stack: package, cpath
+    const cpath_value = tl.lua.toString(-1) catch unreachable;
+    try testing.expectEqualStrings("./?.so;./lib/?.so", cpath_value);
+    tl.lua.pop(2); // Stack: empty (pop cpath and package)
+}
+
+test "lua_path and lua_cpath empty strings use defaults" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test with empty strings (should use Lua defaults)
+    const config = SandboxConfig{
+        .max_instructions = 100_000,
+        .enable_sandbox = false,
+        .lua_path = "",
+        .lua_cpath = "",
+    };
+
+    var tl = try ThreadLocalLua.init(allocator, config);
+    defer tl.deinit();
+
+    // Verify package.path exists (should be Lua's default)
+    _ = tl.lua.getGlobal("package") catch unreachable;
+    _ = tl.lua.getField(-1, "path");
+    const path_value = tl.lua.toString(-1) catch unreachable;
+    // Default path should contain at least something
+    try testing.expect(path_value.len > 0);
+    tl.lua.pop(2);
+}
+
+test "lua_path and lua_cpath work with sandbox enabled" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test that custom paths work even when sandbox is enabled
+    const config = SandboxConfig{
+        .max_instructions = 100_000,
+        .enable_sandbox = true, // Sandbox enabled
+        .lua_path = "./?.lua;./custom/?.lua",
+        .lua_cpath = "./?.so;./custom/?.so",
+    };
+
+    var tl = try ThreadLocalLua.init(allocator, config);
+    defer tl.deinit();
+
+    // Verify package table still exists with sandbox
+    _ = tl.lua.getGlobal("package") catch unreachable;
+    try testing.expect(tl.lua.typeOf(-1) == .table);
+
+    // Verify package.path was set correctly despite sandbox
+    _ = tl.lua.getField(-1, "path");
+    const path_value = tl.lua.toString(-1) catch unreachable;
+    try testing.expectEqualStrings("./?.lua;./custom/?.lua", path_value);
+    tl.lua.pop(1);
+
+    // Verify package.cpath was set correctly despite sandbox
+    _ = tl.lua.getField(-1, "cpath");
+    const cpath_value = tl.lua.toString(-1) catch unreachable;
+    try testing.expectEqualStrings("./?.so;./custom/?.so", cpath_value);
+    tl.lua.pop(1);
+
+    // Verify dangerous package functions were removed
+    _ = tl.lua.getField(-1, "loadlib");
+    try testing.expect(tl.lua.typeOf(-1) == .nil);
+    tl.lua.pop(2); // Pop nil and package table
 }

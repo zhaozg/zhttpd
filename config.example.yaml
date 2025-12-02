@@ -30,6 +30,14 @@ log_level: "info"
 log_file: "zhttpd.log"
 access_log_file: "access.log"
 
+# Lua Path Configuration
+# LUA_PATH and LUA_CPATH for Lua module loading
+# If not specified or empty, Lua uses its default search paths
+# Example for LUA_PATH: "./?.lua;./lib/?.lua;/usr/local/share/lua/5.4/?.lua"
+# Example for LUA_CPATH: "./?.so;./lib/?.so;/usr/local/lib/lua/5.4/?.so"
+lua_path: ""
+lua_cpath: ""
+
 # Script reload mode: never, auto, or force
 reload: "auto"
 
