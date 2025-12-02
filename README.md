@@ -14,9 +14,7 @@
 - 📁 **静态文件服务** - 支持 HTML、CSS、JavaScript、图片等各种静态资源
 - ⚡ **ETag 缓存** - 支持 ETag 和条件请求，大幅减少带宽使用
 - 🔧 **动态内容处理** - 通过 Lua 脚本实现灵活的动态内容和 API 处理
-- 🔍 **GraphQL API** - 内置 GraphQL 支持，提供强大的 API 查询能力
 - 🔗 **WebSocket 支持** - 实时双向通信，支持 Lua 消息处理
-- 📊 **GraphQL 订阅** - 基于 WebSocket 的 GraphQL 订阅支持
 - 🌊 **Chunked 响应** - Lua 支持 HTTP 分块传输编码，用于流式响应
 - 🔒 **安全加固** - 默认启用 HTTP 安全头部（CSP、HSTS、X-Frame-Options 等）
 - ⚙️ **灵活配置** - 支持 JSON 和 YAML 配置文件
@@ -34,7 +32,6 @@
 
 - [http.zig](https://github.com/karlseguin/http.zig) - HTTP 协议实现
 - [ziglua](https://github.com/natecraddock/ziglua) - Lua 集成
-- [grapzig](https://github.com/yousif-wali/grapzig) - GraphQL 实现
 - [zdbc](https://github.com/zhaozg/zdbc) - 数据库抽象层（SQLite、PostgreSQL、MySQL）
 
 ### 📦 安装
@@ -73,9 +70,7 @@ cp config.example.json config.json
   "max_body_size": 10485760,
   "timeout_seconds": 30,
   "thread_pool_size": 4,
-  "enable_lua": true,
-  "enable_graphql": true,
-  "graphql_endpoint": "/graphql"
+  "enable_lua": true
 }
 ```
 

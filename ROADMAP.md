@@ -16,7 +16,6 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 | **Core HTTP Server** | ✅ Complete | 100% |
 | **Static File Serving** | ✅ Complete | 100% |
 | **Lua Dynamic Content** | ✅ Complete | 100% |
-| **GraphQL Support** | ✅ Complete | 95% |
 | **Security Features** | ✅ Complete | 95% |
 | **Observability** | ✅ Complete | 90% |
 | **Database Integration** | ✅ Complete | 85% |
@@ -67,20 +66,10 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 - Structured JSON logging
 - Access logging with duration tracking
 
-✅ **GraphQL (Complete)**
-- Query parsing via grapzig library
-- Lua-based resolver system with database integration
-- GraphQL Playground UI
-- WebSocket subscriptions
-- Schema introspection (__schema, __type, __typename)
-- Query complexity analysis and depth limiting
-- Database integration via context:db() API
-
 ✅ **Database (Complete)**
 - zdbc integration for SQLite, PostgreSQL, MySQL
 - Multi-datasource configuration
 - Lua database API (query, exec, begin, commit, rollback)
-- GraphQL resolver database support
 
 ✅ **Session Management (New)**
 - cache.zig integration for thread-safe LRU caching

@@ -30,7 +30,6 @@ zhttpd is a high-performance, modular HTTP web server written in Zig. It follows
 |-----------|---------|---------|
 | HTTP Server | [http.zig](https://github.com/karlseguin/http.zig) | High-performance HTTP/1.1 implementation |
 | Scripting | [ziglua](https://github.com/natecraddock/ziglua) | Lua 5.4 integration for dynamic content |
-| GraphQL | [grapzig](https://github.com/yousif-wali/grapzig) | GraphQL query parsing |
 
 ## Architecture Diagram
 
@@ -67,7 +66,6 @@ zhttpd is a high-performance, modular HTTP web server written in Zig. It follows
 │   /health    ──────▶  Health Check Handler                                   │
 │   /metrics   ──────▶  Metrics Handler (Prometheus)                           │
 │   /ws        ──────▶  WebSocket Handler                                      │
-│   /graphql   ──────▶  GraphQL Handler                                        │
 │   /api/*     ──────▶  Lua API Handler                                        │
 │   /*         ──────▶  Static File Handler                                    │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -75,8 +73,8 @@ zhttpd is a high-performance, modular HTTP web server written in Zig. It follows
                 ┌─────────────────────┼─────────────────────┐
                 ▼                     ▼                     ▼
 ┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
-│    Static Files       │ │    Lua Engine         │ │    GraphQL Engine     │
-│    (FileCache)        │ │    (Thread-local VM)  │ │    (grapzig parser)   │
+│    Static Files       │ │    Lua Engine         │ │    WebSocket          │
+│    (FileCache)        │ │    (Thread-local VM)  │ │    Handler            │
 └───────────────────────┘ └───────────────────────┘ └───────────────────────┘
 ```
 
@@ -97,8 +95,6 @@ src/
 │   └── auth.zig           # Authentication middleware
 ├── lua/
 │   └── lua.zig            # Lua integration & sandboxing
-├── graphql/
-│   └── graphql.zig        # GraphQL handler
 ├── cache/
 │   └── file_cache.zig     # File caching with reload modes
 ├── security/

@@ -44,7 +44,6 @@ zhttpd follows an event-driven, modular architecture that processes HTTP request
 - Initialize memory allocators and resource pools
 - Set up worker thread pool
 - Initialize logging and metrics systems
-- Load handlers (Lua, GraphQL)
 
 **zhttpd Implementation:**
 
@@ -184,7 +183,6 @@ See [Request Processing Phases](#request-processing-phases) for detailed flow.
 ┌─────────────────────────────────────────────────────────────────────┐
 │ Phase 6: Route Matching                                              │
 │ - Match URL path to registered handlers                              │
-│ - Priority: /health > /metrics > /ws > /graphql > /api/* > /*       │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -193,7 +191,6 @@ See [Request Processing Phases](#request-processing-phases) for detailed flow.
 │ - Execute matched handler                                            │
 │ - Static files: file cache with ETag support                         │
 │ - Lua API: sandbox execution with resource limits                    │
-│ - GraphQL: query parsing and Lua resolver delegation                 │
 │ - WebSocket: upgrade and message handling                            │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
@@ -266,9 +263,6 @@ handlers:
   /health: Handler.HealthCheckHandler
   /metrics: Handler.MetricsHandler
   /ws: Handler.WebSocketHandler
-  /graphql/playground: Handler.GraphQLPlaygroundHandler
-  /graphql/ws: Handler.WebSocketHandler
-  /graphql: Handler.GraphQLHandler
   /api/*: Handler.LuaHandler
   /events: Handler.SSEHandler
   /*: Handler.StaticFileHandler
@@ -336,8 +330,6 @@ fn handler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
 | healthHandler | /health | Health check | Component status, uptime |
 | metricsHandler | /metrics | Prometheus metrics | Request counts, latencies |
 | websocketHandler | /ws | WebSocket upgrade | Lua message handling |
-| graphqlGet/Post | /graphql | GraphQL API | Query parsing, Lua resolvers |
-| graphqlPlayground | /graphql/playground | GraphQL IDE | Interactive testing |
 | luaApi | /api/* | REST API | Lua script execution |
 | serveStatic | /* | Static files | ETag, caching |
 | sseHandler | /events | Server-Sent Events | Real-time streaming |
@@ -386,7 +378,6 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 // Route-specific limits (via RouteSizeLimiter)
 const limits = [_]RouteSizeLimit{
     .{ .path_pattern = "/api/upload", .max_body_size = 50 * 1024 * 1024 },
-    .{ .path_pattern = "/graphql", .max_body_size = 100 * 1024 },
 };
 ```
 
@@ -590,7 +581,6 @@ lua.setGlobal("myFunction");
 | | Authentication (Lua) | `middleware/auth.zig` |
 | **Handlers** | Static files | ETag, caching |
 | | Lua API | Script execution with context |
-| | GraphQL | Query parsing, Lua resolvers |
 | | WebSocket | Lua message handling |
 | | SSE | Event streaming |
 | | Health check | Component status |

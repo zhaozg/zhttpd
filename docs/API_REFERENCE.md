@@ -71,44 +71,6 @@ Routes requests to Lua scripts based on path.
 
 ---
 
-### GraphQL
-
-**Query Endpoint:** `GET|POST /graphql`
-
-Execute GraphQL queries and mutations.
-
-**GET Request:**
-```
-GET /graphql?query={users{id name}}&variables={}
-```
-
-**POST Request:**
-```json
-{
-  "query": "query { users { id name } }",
-  "variables": {},
-  "operationName": "GetUsers"
-}
-```
-
-**Response:**
-```json
-{
-  "data": { ... },
-  "errors": [ ... ]
-}
-```
-
-**Playground:** `GET /graphql/playground`
-
-Interactive GraphQL IDE for testing queries.
-
-**WebSocket Subscriptions:** `WS /graphql/ws`
-
-GraphQL subscriptions via graphql-ws protocol.
-
----
-
 ### WebSocket
 
 **Endpoint:** `WS /ws`

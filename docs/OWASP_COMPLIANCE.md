@@ -49,7 +49,6 @@ Always deploy behind a TLS-terminating reverse proxy. See [TLS_SETUP.md](TLS_SET
 - **Lua sandboxing** - Dangerous functions removed from Lua environment
 - **JSON escaping** - All user inputs escaped in JSON responses
 - **Log sanitization** - Control characters removed from log entries
-- **GraphQL input validation** - Query parsing with grapzig library
 - **Path validation** - Prevents path traversal attacks
 
 **Code Examples:**
@@ -105,7 +104,6 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 **zhttpd Dependencies:**
 - httpz (http.zig) - Active development
 - ziglua - Active development  
-- grapzig - GraphQL implementation
 
 **Recommendations:**
 1. Regularly update dependencies in `build.zig.zon`

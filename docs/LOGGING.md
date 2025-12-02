@@ -52,7 +52,6 @@ log_file: "zhttpd.log"  # Path to application log file
 Example log output:
 ```
 [2025-11-26 07:53:49.729882] [INFO] Lua handler initialized with scripts from: ./examples/lua
-[2025-11-26 07:53:49.730236] [INFO] GraphQL handler initialized
 [2025-11-26 07:53:49.730401] [INFO] Starting zhttpd v0.1.0 on 0.0.0.0:8080
 ```
 

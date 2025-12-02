@@ -305,7 +305,6 @@ Keep zhttpd and its dependencies updated:
 
 ### 5. Minimal Attack Surface
 
-- Disable unused features (GraphQL, WebSocket if not needed)
 - Restrict Lua scripts to necessary operations
 - Use specific CORS origins instead of `*`
 

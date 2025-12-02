@@ -12,7 +12,6 @@
 | Core HTTP Server | ✅ Complete | 100% |
 | Static File Serving | ✅ Complete | 100% |
 | Lua Dynamic Content | ✅ Complete | 100% |
-| GraphQL Support | ✅ Complete | 95% |
 | Security Features | ✅ Complete | 95% |
 | Observability | ✅ Complete | 90% |
 | Database Integration | ✅ Complete | 85% |
@@ -33,11 +32,6 @@ All primary objectives have been achieved:
 | Lua Sandbox | ✅ Complete | Instruction limits, dangerous functions removed |
 | LuaJIT Default | ✅ Complete | Default engine (use -Dlua-lang=lua54 for standard Lua) |
 | Module Registry Cache | ✅ Complete | Zerocopy loading with registry caching |
-| GraphQL API | ✅ Complete | Query/mutation/subscription support via grapzig |
-| GraphQL Playground | ✅ Complete | Interactive IDE at /graphql/playground |
-| GraphQL Introspection | ✅ Complete | __schema, __type, __typename support |
-| GraphQL Complexity | ✅ Complete | Query complexity and depth limiting |
-| GraphQL Database | ✅ Complete | Database integration via context:db() |
 | WebSocket | ✅ Complete | Full duplex with Lua handlers |
 | SSE | ✅ Complete | Server-Sent Events streaming |
 | Security Headers | ✅ Complete | CSP, HSTS, X-Frame-Options, etc. |
