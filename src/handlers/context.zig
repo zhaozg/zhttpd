@@ -183,12 +183,13 @@ pub const AppContext = struct {
 
         // Initialize CORS middleware if enabled
         if (config.enable_cors) {
-            ctx.cors_middleware = CorsMiddleware.init(.{
+            ctx.cors_middleware = try CorsMiddleware.init(allocator, .{
                 .enabled = true,
                 .allowed_origins = config.cors_origins,
                 .allowed_methods = config.cors_methods,
                 .allowed_headers = config.cors_headers,
             });
+            errdefer if (ctx.cors_middleware) |*cors| cors.deinit();
             ctx.logger.info("CORS middleware initialized with origins: {s}", .{config.cors_origins});
         }
 
@@ -334,6 +335,9 @@ pub const AppContext = struct {
         if (self.rate_limiter) |rate_limiter| {
             rate_limiter.deinit();
             self.allocator.destroy(rate_limiter);
+        }
+        if (self.cors_middleware) |*cors| {
+            cors.deinit();
         }
         if (self.ip_access_control) |ip_control| {
             ip_control.deinit();
