@@ -10,8 +10,26 @@ permissions:
   contents: read
 
 jobs:
+  format-check:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: 0.15.2
+    
+    - name: Check code formatting
+      run: zig fmt --check src
+
   build-and-test:
     runs-on: ubuntu-latest
+    needs: format-check
     
     permissions:
       contents: read
@@ -34,9 +52,6 @@ jobs:
     
     - name: Verify Zig installation
       run: zig version
-    
-    - name: Check code formatting
-      run: zig fmt --check src
     
     - name: Build project (${{ matrix.lua-lang }})
       run: zig build -Dlua-lang=${{ matrix.lua-lang }}
