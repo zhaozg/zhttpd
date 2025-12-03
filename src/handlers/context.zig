@@ -86,13 +86,13 @@ pub const AppContext = struct {
         const log_format: LogFormat = if (std.mem.eql(u8, config.log_format, "json")) .json else .text;
 
         // Initialize main logger
-        var logger = try Logger.initWithFormat(allocator, log_level, config.log_file, log_format);
+        var logger = try logger_mod.initWithFormat(allocator, log_level, config.log_file, log_format);
         errdefer logger.deinit();
 
         // Initialize access logger if configured
         var access_logger: ?Logger = null;
         if (config.access_log_file) |_| {
-            access_logger = try Logger.init(allocator, .info, config.access_log_file);
+            access_logger = try logger_mod.init(allocator, .info, config.access_log_file);
         }
         errdefer if (access_logger) |*al| al.deinit();
 

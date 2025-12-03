@@ -43,7 +43,7 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
 
         // Execute with context-based API: handle(request, response, context)
         const result = handler.executeScriptWithContext(script_name, "handle", req, res) catch |err| {
-            ctx.logger.err("Lua execution error: {}", .{err});
+            ctx.logger.@"error"("Lua execution error: {}", .{err});
             res.status = 500;
             res.body =
                 \\{"status":"error","message":"Script execution failed"}
