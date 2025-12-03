@@ -234,18 +234,27 @@ log_format: "text"
 # ----------------------
 # enable_db: Enable database plugin support
 #   - true: Database operations available through context:db() in Lua
-#   - false: Database features disabled (default)
+#   - false: Database features disabled
+#
+# NOTE: Enabled by default with in-memory SQLite for development/testing.
+# For production, either:
+#   - Set enable_db: false if database features are not needed
+#   - Configure a persistent database with appropriate security
+#
 # Default data source configuration (backward compatibility):
-#   db_uri: "sqlite://:memory:"  # In-memory SQLite database for development
-#   db_pool_size: 5
-# Or use named data sources for multiple databases (commented example):
+#   db_uri: Database connection URI
+#   db_pool_size: Connection pool size
+#
+# Or use named data sources for multiple databases:
 # data_sources:
 #   - name: default
-#     uri: "sqlite:///./data/app.db"
+#     uri: "sqlite:///./data/app.db"  # Persistent SQLite
 #     pool_size: 5
 #   - name: users_db
 #     uri: "postgresql://user:pass@localhost:5432/users"
 #     pool_size: 10
+#
+# Current: In-memory SQLite for development (data lost on restart)
 enable_db: true
 db_uri: "sqlite://:memory:"
 db_pool_size: 5
