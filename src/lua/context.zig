@@ -4,6 +4,16 @@
 //! implementing a Per-Request Context pattern that allows Lua scripts to
 //! directly interact with HTTP request/response objects.
 //!
+//! ## Performance Optimizations
+//!
+//! - **Metatable Registration**: All metatables (Request, Response, Context, DB Connection)
+//!   are registered once during Lua state initialization, not per-request or per-call.
+//!   This eliminates the overhead of checking and re-registering methods on every request.
+//!
+//! - **Lazy Database Loading**: The database plugin is only accessed when `context:db()`
+//!   is actually called by a Lua script. Scripts that don't use the database have zero
+//!   database-related overhead.
+//!
 //! ## Design
 //!
 //! The handler function receives three separate parameters:
@@ -30,6 +40,12 @@
 //!     -- Use per-request data storage
 //!     context.user_id = "12345"
 //!     context.processed = true
+//!
+//!     -- Optionally access database (lazy loading)
+//!     local db = context:db()  -- or context:db("users_db") for named source
+//!     if db then
+//!         local result = db:query("SELECT * FROM users WHERE id = ?", 1)
+//!     end
 //!
 //!     -- Return response body
 //!     return { status = "success", user = context.user_id }
@@ -87,6 +103,9 @@ pub fn registerContextModule(lua: *ziglua.Lua) void {
 
     // Register Context metatable
     registerContextMetatable(lua);
+
+    // Register Database Connection metatable (one-time registration)
+    registerDbConnMetatable(lua);
 
     // Register Session metatable
     session_mod.registerSessionMetatable(lua);
@@ -185,6 +204,44 @@ fn registerContextMetatable(lua: *ziglua.Lua) void {
     lua.pop(1); // Pop metatable
 }
 
+/// Register the Database Connection metatable with all its methods
+/// This is called once during Lua state initialization to avoid per-request overhead
+fn registerDbConnMetatable(lua: *ziglua.Lua) void {
+    // Create new metatable for Database Connection
+    lua.newMetatable(DB_CONN_MT) catch {
+        // Metatable already exists, get it
+        _ = lua.getMetatableRegistry(DB_CONN_MT);
+    };
+
+    // Set __index to the metatable itself for method lookup
+    lua.pushValue(-1);
+    lua.setField(-2, "__index");
+
+    // Register database methods
+    lua.pushFunction(ziglua.wrap(dbConnQuery));
+    lua.setField(-2, "query");
+
+    lua.pushFunction(ziglua.wrap(dbConnExec));
+    lua.setField(-2, "exec");
+
+    lua.pushFunction(ziglua.wrap(dbConnPrepare));
+    lua.setField(-2, "prepare");
+
+    lua.pushFunction(ziglua.wrap(dbConnBegin));
+    lua.setField(-2, "begin");
+
+    lua.pushFunction(ziglua.wrap(dbConnCommit));
+    lua.setField(-2, "commit");
+
+    lua.pushFunction(ziglua.wrap(dbConnRollback));
+    lua.setField(-2, "rollback");
+
+    lua.pushFunction(ziglua.wrap(dbConnStatus));
+    lua.setField(-2, "status");
+
+    lua.pop(1); // Pop metatable
+}
+
 /// Custom __index metamethod for context
 /// Provides access to db(name) and session() methods while allowing user-defined fields
 fn contextIndex(lua: *ziglua.Lua) i32 {
@@ -220,6 +277,7 @@ const DB_CONN_MT = "zhttpd.db_conn";
 
 /// context:db(name) - Get a database connection by name
 /// If name is nil or not provided, returns the "default" data source
+/// Optimized: metatable is registered once at initialization, not per-call
 fn contextDb(lua: *ziglua.Lua) i32 {
     // Get the data source name (default to "default")
     const name = if (lua.getTop() >= 2)
@@ -250,46 +308,10 @@ fn contextDb(lua: *ziglua.Lua) i32 {
     lua.pushLightUserdata(@ptrCast(plugin));
     lua.setField(-2, "_plugin");
 
-    // Set the metatable for database connection methods
-    lua.newMetatable(DB_CONN_MT) catch {
-        // Metatable already exists, get it
-        _ = lua.getMetatableRegistry(DB_CONN_MT);
-    };
-
-    // Register methods on the metatable if not already done
-    _ = lua.getField(-1, "__index");
-    if (lua.typeOf(-1) == .nil) {
-        lua.pop(1);
-        // Set __index to the metatable itself
-        lua.pushValue(-1);
-        lua.setField(-2, "__index");
-
-        // Register database methods
-        lua.pushFunction(ziglua.wrap(dbConnQuery));
-        lua.setField(-2, "query");
-
-        lua.pushFunction(ziglua.wrap(dbConnExec));
-        lua.setField(-2, "exec");
-
-        lua.pushFunction(ziglua.wrap(dbConnPrepare));
-        lua.setField(-2, "prepare");
-
-        lua.pushFunction(ziglua.wrap(dbConnBegin));
-        lua.setField(-2, "begin");
-
-        lua.pushFunction(ziglua.wrap(dbConnCommit));
-        lua.setField(-2, "commit");
-
-        lua.pushFunction(ziglua.wrap(dbConnRollback));
-        lua.setField(-2, "rollback");
-
-        lua.pushFunction(ziglua.wrap(dbConnStatus));
-        lua.setField(-2, "status");
-    } else {
-        lua.pop(1);
-    }
-
+    // Set the pre-registered metatable (no need to check/register methods)
+    _ = lua.getMetatableRegistry(DB_CONN_MT);
     lua.setMetatable(-2);
+
     return 1;
 }
 
