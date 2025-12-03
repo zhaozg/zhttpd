@@ -19,7 +19,7 @@ When you call `db.prepare(sql)`, the plugin:
 1. Checks if the statement is already cached
 2. If cached (cache hit), returns the existing prepared statement
 3. If not cached (cache miss), prepares the statement and adds it to the cache
-4. Automatically evicts old statements when cache is full (FIFO-like eviction)
+4. Automatically evicts old statements when cache is full (eviction order is arbitrary)
 
 Benefits of caching:
 - Reduced SQL parsing overhead

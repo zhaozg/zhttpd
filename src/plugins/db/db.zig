@@ -1387,6 +1387,225 @@ pub fn luaStatusWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin) i32 {
     return 1;
 }
 
+/// Prepare a statement with a specific plugin
+/// sql_arg_idx specifies which Lua argument contains the SQL string
+pub fn luaPrepareWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32) i32 {
+    // Get SQL string
+    const sql = lua.toString(sql_arg_idx) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL string");
+        return 2;
+    };
+
+    // Prepare the statement (with caching)
+    _ = plugin.prepare(sql) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Create a statement object table
+    lua.newTable();
+
+    // Store the SQL for reference
+    // Note: The actual statement is managed by the cache (not stored in Lua)
+    // Each call to plugin.prepare(sql) returns the same cached statement
+    _ = lua.pushString(sql);
+    lua.setField(-2, "_sql");
+
+    // Store the plugin pointer as light userdata (for statement methods)
+    lua.pushLightUserdata(@ptrCast(plugin));
+    lua.setField(-2, "_plugin");
+
+    // Add query method
+    lua.pushFunction(ziglua.wrap(luaStatementQueryWithPlugin));
+    lua.setField(-2, "query");
+
+    // Add exec method
+    lua.pushFunction(ziglua.wrap(luaStatementExecWithPlugin));
+    lua.setField(-2, "exec");
+
+    // Note: The statement itself is not stored in Lua
+    // It's managed by the plugin's statement cache and accessed via SQL key
+    // This keeps the cache in control of statement lifecycle
+
+    return 1;
+}
+
+/// Lua: statement:query(...) - Execute query on prepared statement (context version)
+fn luaStatementQueryWithPlugin(lua: *ziglua.Lua) i32 {
+    // Get the statement table (self)
+    if (lua.typeOf(1) != .table) {
+        lua.pushNil();
+        _ = lua.pushString("Invalid statement object");
+        return 2;
+    }
+
+    // Get the plugin from the statement table
+    _ = lua.getField(1, "_plugin");
+    const raw_ptr = lua.toPointer(-1) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid plugin in statement");
+        return 2;
+    };
+    lua.pop(1);
+    const mut_ptr: *anyopaque = @constCast(raw_ptr);
+    const plugin: *DbPlugin = @ptrCast(@alignCast(mut_ptr));
+
+    // Get the SQL from the statement table
+    _ = lua.getField(1, "_sql");
+    const sql = lua.toString(-1) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL in statement");
+        return 2;
+    };
+    lua.pop(1);
+
+    // Collect parameters starting from arg 2
+    const top = lua.getTop();
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
+    var param_count: usize = 0;
+
+    var i: i32 = 2;
+    while (i <= top and param_count < params_buf.len) : (i += 1) {
+        params_buf[param_count] = luaToDbValue(lua, i);
+        param_count += 1;
+    }
+
+    if (top > @as(i32, @intCast(MAX_PARAMS)) + 1) {
+        std.log.warn("statement:query: Too many parameters ({d}), truncated to {d}", .{ top - 1, MAX_PARAMS });
+    }
+
+    // Get the cached statement
+    var stmt = plugin.prepare(sql) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Bind parameters
+    stmt.bindAll(params_buf[0..param_count]) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Execute query
+    var result = stmt.query() catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+    defer result.deinit();
+
+    // Convert results to Lua table
+    lua.newTable();
+    var row_idx: i32 = 1;
+
+    while (true) {
+        const maybe_row = result.next() catch break;
+        if (maybe_row) |row| {
+            lua.newTable();
+
+            const col_count = result.columnCount();
+            var col_idx: usize = 0;
+            while (col_idx < col_count) : (col_idx += 1) {
+                const value = row.get(col_idx) catch continue;
+                pushDbValueToLua(lua, value);
+
+                if (result.columnName(col_idx)) |name| {
+                    var name_buf: [MAX_COLUMN_NAME_LEN]u8 = undefined;
+                    const len = @min(name.len, name_buf.len - 1);
+                    if (name.len >= MAX_COLUMN_NAME_LEN) {
+                        std.log.warn("statement:query: Column name truncated from {d} to {d} chars", .{ name.len, MAX_COLUMN_NAME_LEN - 1 });
+                    }
+                    @memcpy(name_buf[0..len], name[0..len]);
+                    name_buf[len] = 0;
+                    lua.setField(-2, name_buf[0..len :0]);
+                } else {
+                    lua.rawSetIndex(-2, @intCast(col_idx + 1));
+                }
+            }
+
+            lua.rawSetIndex(-2, row_idx);
+            row_idx += 1;
+        } else {
+            break;
+        }
+    }
+
+    return 1;
+}
+
+/// Lua: statement:exec(...) - Execute statement (context version)
+fn luaStatementExecWithPlugin(lua: *ziglua.Lua) i32 {
+    // Get the statement table (self)
+    if (lua.typeOf(1) != .table) {
+        lua.pushNil();
+        _ = lua.pushString("Invalid statement object");
+        return 2;
+    }
+
+    // Get the plugin from the statement table
+    _ = lua.getField(1, "_plugin");
+    const raw_ptr = lua.toPointer(-1) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid plugin in statement");
+        return 2;
+    };
+    lua.pop(1);
+    const mut_ptr: *anyopaque = @constCast(raw_ptr);
+    const plugin: *DbPlugin = @ptrCast(@alignCast(mut_ptr));
+
+    // Get the SQL from the statement table
+    _ = lua.getField(1, "_sql");
+    const sql = lua.toString(-1) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL in statement");
+        return 2;
+    };
+    lua.pop(1);
+
+    // Collect parameters starting from arg 2
+    const top = lua.getTop();
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
+    var param_count: usize = 0;
+
+    var i: i32 = 2;
+    while (i <= top and param_count < params_buf.len) : (i += 1) {
+        params_buf[param_count] = luaToDbValue(lua, i);
+        param_count += 1;
+    }
+
+    if (top > @as(i32, @intCast(MAX_PARAMS)) + 1) {
+        std.log.warn("statement:exec: Too many parameters ({d}), truncated to {d}", .{ top - 1, MAX_PARAMS });
+    }
+
+    // Get the cached statement
+    var stmt = plugin.prepare(sql) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Bind parameters
+    stmt.bindAll(params_buf[0..param_count]) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Execute statement
+    const affected = stmt.exec() catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    lua.pushInteger(@intCast(affected));
+    return 1;
+}
+
 // ============================================================================
 // Zig-side Authentication Utilities
 // ============================================================================
