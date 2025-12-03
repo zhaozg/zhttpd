@@ -236,7 +236,7 @@ log_format: "text"
 #   - true: Database operations available through context:db() in Lua
 #   - false: Database features disabled (default)
 # Default data source configuration (backward compatibility):
-#   db_uri: "sqlite:///:memory:"  # In-memory SQLite database for development
+#   db_uri: "sqlite://:memory:"  # In-memory SQLite database for development
 #   db_pool_size: 5
 # Or use named data sources for multiple databases (commented example):
 # data_sources:
@@ -247,7 +247,7 @@ log_format: "text"
 #     uri: "postgresql://user:pass@localhost:5432/users"
 #     pool_size: 10
 enable_db: true
-db_uri: "sqlite:///:memory:"
+db_uri: "sqlite://:memory:"
 db_pool_size: 5
 
 # Handler Configuration
