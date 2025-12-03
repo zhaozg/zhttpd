@@ -270,12 +270,22 @@ pub const AppContext = struct {
             ctx.db_manager = manager;
             // Set global database manager for context module access
             db_manager_mod.setGlobalManager(manager);
-            ctx.logger.info("Database manager initialized with {d} data source(s)", .{manager.count()});
 
-            // Log each data source
-            for (config.data_sources) |ds| {
-                ctx.logger.info("  - Data source '{s}': {s}", .{ ds.name, ds.uri });
+            if (manager.count() == 0) {
+                ctx.logger.warn("Database manager initialized but no data sources were successfully configured (check logs above for errors)", .{});
+            } else {
+                ctx.logger.info("Database manager initialized with {d} data source(s)", .{manager.count()});
+
+                // Log each data source
+                for (config.data_sources) |ds| {
+                    // Only log if the data source was actually initialized
+                    if (manager.has(ds.name)) {
+                        ctx.logger.info("  - Data source '{s}': {s}", .{ ds.name, ds.uri });
+                    }
+                }
             }
+        } else if (config.enable_db and config.data_sources.len == 0) {
+            ctx.logger.warn("Database plugin enabled but no data sources were successfully configured (set db_uri or configure data_sources in config)", .{});
         }
 
         // Initialize session manager if enabled
