@@ -271,6 +271,9 @@ fn contextDb(lua: *ziglua.Lua) i32 {
         lua.pushFunction(ziglua.wrap(dbConnExec));
         lua.setField(-2, "exec");
 
+        lua.pushFunction(ziglua.wrap(dbConnPrepare));
+        lua.setField(-2, "prepare");
+
         lua.pushFunction(ziglua.wrap(dbConnBegin));
         lua.setField(-2, "begin");
 
@@ -406,6 +409,16 @@ fn dbConnExec(lua: *ziglua.Lua) i32 {
         return 2;
     };
     return db_plugin.luaExecWithPlugin(lua, plugin, 2);
+}
+
+/// db:prepare(sql) - Prepare a statement with caching
+fn dbConnPrepare(lua: *ziglua.Lua) i32 {
+    const plugin = getDbPluginFromConn(lua) orelse {
+        lua.pushNil();
+        _ = lua.pushString("Invalid database connection");
+        return 2;
+    };
+    return db_plugin.luaPrepareWithPlugin(lua, plugin, 2);
 }
 
 /// db:begin() - Begin transaction
