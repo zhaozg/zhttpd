@@ -270,12 +270,12 @@ pub const AppContext = struct {
             ctx.db_manager = manager;
             // Set global database manager for context module access
             db_manager_mod.setGlobalManager(manager);
-            
+
             if (manager.count() == 0) {
                 ctx.logger.warn("Database manager initialized but no data sources were successfully configured (check logs above for errors)", .{});
             } else {
                 ctx.logger.info("Database manager initialized with {d} data source(s)", .{manager.count()});
-                
+
                 // Log each data source
                 for (config.data_sources) |ds| {
                     // Only log if the data source was actually initialized
