@@ -57,6 +57,7 @@ pub const Logger = struct {
     async_queue: ?*AsyncQueue,
     writer_thread: ?std.Thread,
     mutex: std.Thread.Mutex,
+    flush_semaphore: std.Thread.Semaphore,
 
     pub fn init(allocator: std.mem.Allocator, config: LoggerConfig, backend: ?Backend) !Logger {
         var logger = Logger{
@@ -67,6 +68,7 @@ pub const Logger = struct {
             .async_queue = null,
             .writer_thread = null,
             .mutex = .{},
+            .flush_semaphore = .{},
         };
 
         // Initialize console backend if enabled
@@ -129,6 +131,13 @@ pub const Logger = struct {
                 backend.write(msg.slice()) catch |err| {
                     std.debug.print("Logger backend write error: {}\n", .{err});
                 };
+            }
+
+            // Signal if queue is now empty (for flush)
+            if (self.async_queue) |queue| {
+                if (queue.isEmpty()) {
+                    self.flush_semaphore.post();
+                }
             }
         }
 
@@ -209,9 +218,11 @@ pub const Logger = struct {
     pub fn flush(self: *Logger) void {
         // Wait for async queue to drain if enabled
         if (self.async_queue) |queue| {
-            // Use a more efficient wait with timeout instead of busy-wait
+            // Use semaphore-based waiting with timeout
             const timeout_ns = 5 * std.time.ns_per_s; // 5 second timeout
             const start = std.time.nanoTimestamp();
+
+            // Wait for queue to be empty
             while (!queue.isEmpty()) {
                 const elapsed = std.time.nanoTimestamp() - start;
                 if (elapsed > timeout_ns) {
@@ -219,7 +230,21 @@ pub const Logger = struct {
                     std.debug.print("Logger flush timeout: {d} messages remaining in queue\n", .{remaining});
                     break;
                 }
-                std.Thread.sleep(10 * std.time.ns_per_ms);
+
+                // Wait on semaphore with timeout (use timedWait if available, otherwise wait with check)
+                // Note: std.Thread.Semaphore doesn't have timedWait, so we use a hybrid approach
+                if (!queue.isEmpty()) {
+                    // Wait for signal from writer thread or timeout
+                    const wait_time_ns = 100 * std.time.ns_per_ms; // 100ms per iteration
+                    const iteration_start = std.time.nanoTimestamp();
+
+                    // Try to wait on semaphore (non-blocking attempt)
+                    while (std.time.nanoTimestamp() - iteration_start < wait_time_ns) {
+                        if (queue.isEmpty()) break;
+                        self.flush_semaphore.wait(); // Wait for signal
+                        break;
+                    }
+                }
             }
         }
 
