@@ -94,6 +94,14 @@ enable_request_id: true
 # Structured Logging (text or json)
 log_format: "text"
 
+# Async logging for better performance (default: false)
+# When enabled, log messages are written asynchronously in a background thread
+log_async: false
+
+# Console logging output (default: true)
+# When enabled, logs are also written to stderr in addition to log files
+log_console: true
+
 # Phase 7: Security Enhancements
 # ------------------------------
 
