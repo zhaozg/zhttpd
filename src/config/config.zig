@@ -46,6 +46,9 @@ pub const Config = struct {
     log_level: []const u8,
     log_file: ?[]const u8,
     access_log_file: ?[]const u8,
+    log_format: []const u8, // Log format: "text" or "json"
+    log_async: bool, // Enable async logging for better performance
+    log_console: bool, // Enable console output alongside file logging
     reload: ReloadMode,
     max_cache_file_size: usize, // Maximum file size to cache in bytes
     enable_etag: bool, // Enable ETag support for static files
@@ -76,7 +79,6 @@ pub const Config = struct {
     enable_metrics: bool, // Enable Prometheus metrics at /metrics
     enable_health_check: bool, // Enable health check at /health
     enable_request_id: bool, // Enable X-Request-ID propagation
-    log_format: []const u8, // Log format: "text" or "json"
     // Phase 7: Security enhancements
     enable_ip_blacklist: bool, // Enable IP blacklist/whitelist
     ip_blacklist: []const u8, // Comma-separated list of blocked IPs/CIDRs
@@ -216,6 +218,9 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .log_level = try allocator.dupe(u8, "info"),
         .log_file = null,
         .access_log_file = null,
+        .log_format = try allocator.dupe(u8, "text"),
+        .log_async = false, // Default to sync logging
+        .log_console = true, // Default to console output
         .reload = .auto, // Default to auto reload mode
         .max_cache_file_size = DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = true, // Default enabled
@@ -243,7 +248,6 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .enable_metrics = true,
         .enable_health_check = true,
         .enable_request_id = true,
-        .log_format = try allocator.dupe(u8, "text"),
         // Phase 7: Security enhancements (disabled by default)
         .enable_ip_blacklist = false,
         .ip_blacklist = try allocator.dupe(u8, ""),
@@ -284,6 +288,9 @@ const YamlConfig = struct {
     log_level: ?[]const u8 = null,
     log_file: ?[]const u8 = null,
     access_log_file: ?[]const u8 = null,
+    log_format: ?[]const u8 = null,
+    log_async: ?bool = null,
+    log_console: ?bool = null,
     reload: ?[]const u8 = null,
     max_cache_file_size: ?usize = null,
     enable_etag: ?bool = null,
@@ -311,7 +318,6 @@ const YamlConfig = struct {
     enable_metrics: ?bool = null,
     enable_health_check: ?bool = null,
     enable_request_id: ?bool = null,
-    log_format: ?[]const u8 = null,
     // Phase 7: Security enhancements
     enable_ip_blacklist: ?bool = null,
     ip_blacklist: ?[]const u8 = null,
@@ -367,6 +373,9 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .log_level = try allocator.dupe(u8, parsed.log_level orelse "info"),
         .log_file = if (parsed.log_file) |lf| try allocator.dupe(u8, lf) else null,
         .access_log_file = if (parsed.access_log_file) |alf| try allocator.dupe(u8, alf) else null,
+        .log_format = try allocator.dupe(u8, parsed.log_format orelse "text"),
+        .log_async = parsed.log_async orelse false,
+        .log_console = parsed.log_console orelse true,
         .reload = if (parsed.reload) |r| ReloadMode.fromString(r) else .auto,
         .max_cache_file_size = parsed.max_cache_file_size orelse DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = parsed.enable_etag orelse true,
@@ -394,7 +403,6 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_metrics = parsed.enable_metrics orelse true,
         .enable_health_check = parsed.enable_health_check orelse true,
         .enable_request_id = parsed.enable_request_id orelse true,
-        .log_format = try allocator.dupe(u8, parsed.log_format orelse "text"),
         // Phase 7: Security enhancements
         .enable_ip_blacklist = parsed.enable_ip_blacklist orelse false,
         .ip_blacklist = try allocator.dupe(u8, parsed.ip_blacklist orelse ""),

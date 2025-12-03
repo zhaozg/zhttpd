@@ -12,7 +12,7 @@ pub fn handle(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
 
     // Start event stream (synchronous mode for simpler handling)
     const stream = res.startEventStreamSync() catch |err| {
-        ctx.logger.err("Failed to start SSE stream: {}", .{err});
+        ctx.logger.@"error"("Failed to start SSE stream: {}", .{err});
         res.status = 500;
         res.body = "Failed to start event stream";
         return;
