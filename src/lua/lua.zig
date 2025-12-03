@@ -133,10 +133,10 @@ const ThreadLocalLua = struct {
         }
 
         // Always register built-in json module (safe for use with or without sandbox)
-        json.registerJsonModule(lua, &getThreadLocalAllocator);
+        try json.registerJsonModule(lua, &getThreadLocalAllocator);
 
         // Always register built-in lpeg module (safe for use with or without sandbox)
-        lpeg.registerLpegModule(lua, &getThreadLocalAllocator);
+        try lpeg.registerLpegModule(lua, &getThreadLocalAllocator);
 
         // Always register context module for Per-Request Context support
         context.registerContextModule(lua);
@@ -421,6 +421,7 @@ pub const LuaHandler = struct {
         else
             lua.loadBuffer(script_content, chunk_name, .text);
         load_result catch {
+            std.debug.print("Error loading Lua script '{s}': {s}\n", .{ script_name, lua.toString(-1) catch "unknown error" });
             lua.pop(1); // Pop error message left by loadBuffer
             if (use_cache) lua.pop(1); // Pop cache table
             return false;
@@ -428,6 +429,7 @@ pub const LuaHandler = struct {
 
         // Execute the loaded chunk to get the module table
         lua.protectedCall(.{ .args = 0, .results = 1 }) catch {
+            std.debug.print("Error loading Lua script '{s}': {s}\n", .{ script_name, lua.toString(-1) catch "unknown error" });
             lua.pop(1); // Pop error message left by protectedCall
             if (use_cache) lua.pop(1); // Pop cache table
             return false;

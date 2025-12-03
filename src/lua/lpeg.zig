@@ -24,26 +24,18 @@ const ziglua = @import("ziglua");
 
 // Import the C luaopen_lpeg function from lpeg library
 // This is linked from vendor/lpeg compiled with zig build
-extern fn luaopen_lpeg(L: *ziglua.LuaState) c_int;
+extern fn luaopen_lpeg(L: ?*ziglua.LuaState) c_int;
 
 /// Register the lpeg module
 /// This provides powerful pattern matching capabilities based on PEGs
 /// The allocator parameter is kept for API compatibility.
-pub fn registerLpegModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) void {
+pub fn registerLpegModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) !void {
     // Store the allocator getter for API consistency
     _ = getAllocator;
 
-    // Cast ziglua's opaque Lua type to C lua_State for calling C function
-    const L: *ziglua.LuaState = @ptrCast(lua);
-
-    // Call luaopen_lpeg which:
-    // 1. Creates the lpeg table with all pattern functions
-    // 2. Sets it as global "lpeg" (via luaL_register(L, "lpeg", pattreg) in the C code)
-    // 3. Returns the table on the stack
-    const result = luaopen_lpeg(L);
-
-    // Pop the returned table from the stack (it's already set as global)
-    if (result > 0) {
-        lua.pop(@intCast(result));
-    }
+    _ = try lua.getGlobal("package");
+    _ = lua.getField(-1, "preload");
+    lua.pushFunction(luaopen_lpeg);
+    _ = lua.setField(-2, "lpeg");
+    lua.pop(2); // pop package and preload
 }

@@ -15,7 +15,7 @@ const ziglua = @import("ziglua");
 
 // Import the C luaopen_cjson function from lua-cjson library
 // This is linked from vendor/lua-cjson compiled with zig build
-extern fn luaopen_cjson(L: *ziglua.LuaState) c_int;
+extern fn luaopen_cjson(L: ?*ziglua.LuaState) c_int;
 
 /// Maximum safe integer value for JSON compatibility (JavaScript Number.MAX_SAFE_INTEGER)
 /// Values beyond this range may lose precision when parsed by JavaScript
@@ -56,23 +56,14 @@ pub fn appendJsonEscapedString(buf: *std.ArrayListUnmanaged(u8), allocator: std.
 /// Register the json module using lua-cjson
 /// This provides high-performance JSON encoding/decoding (~60x faster than Zig std.json)
 /// The allocator parameter is kept for API compatibility but is not used by lua-cjson.
-pub fn registerJsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) void {
-    // Store the allocator getter in thread-local storage for legacy code
-    allocator_getter = getAllocator;
+pub fn registerJsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) !void {
+    _ = getAllocator;
 
-    // Cast ziglua's opaque Lua type to C lua_State for calling C function
-    const L: *ziglua.LuaState = @ptrCast(lua);
-
-    // Call luaopen_cjson which:
-    // 1. Creates the json table with encode/decode functions
-    // 2. Sets it as global "json" (due to -DENABLE_CJSON_GLOBAL -DCJSON_MODNAME="json")
-    // 3. Returns the table on the stack
-    const result = luaopen_cjson(L);
-
-    // Pop the returned table from the stack (it's already set as global)
-    if (result > 0) {
-        lua.pop(@intCast(result));
-    }
+    _ = try lua.getGlobal("package");
+    _ = lua.getField(-1, "preload");
+    lua.pushFunction(luaopen_cjson);
+    _ = lua.setField(-2, "json");
+    lua.pop(2); // pop package and preload
 }
 
 /// Thread-local storage for allocator getter function (for legacy code compatibility)
