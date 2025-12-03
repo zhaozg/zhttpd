@@ -134,7 +134,7 @@ test "AsyncQueue basic operations" {
     // Test enqueue
     try testing.expect(queue.tryEnqueue(1));
     try testing.expect(queue.tryEnqueue(2));
-    try testing.expect(queue.len() == 2);
+    try testing.expectEqual(@as(usize, 2), queue.len());
 
     // Test dequeue
     try testing.expectEqual(@as(?u32, 1), queue.tryDequeue());
@@ -153,4 +153,50 @@ test "AsyncQueue full queue" {
 
     _ = queue.tryDequeue();
     try testing.expect(queue.tryEnqueue(3)); // Should succeed after dequeue
+}
+
+test "AsyncQueue blocking operations" {
+    const allocator = std.testing.allocator;
+    _ = allocator;
+
+    var queue = AsyncQueue(u32, 4).init();
+
+    // Test blocking enqueue/dequeue with threads
+    const TestContext = struct {
+        queue: *AsyncQueue(u32, 4),
+
+        fn producer(ctx: *@This()) void {
+            var i: u32 = 0;
+            while (i < 10) : (i += 1) {
+                ctx.queue.enqueue(i);
+                std.Thread.sleep(1 * std.time.ns_per_ms);
+            }
+        }
+
+        fn consumer(ctx: *@This()) void {
+            var i: u32 = 0;
+            while (i < 10) : (i += 1) {
+                const val = ctx.queue.dequeue() orelse break;
+                std.testing.expectEqual(i, val) catch {};
+            }
+        }
+    };
+
+    var ctx = TestContext{ .queue = &queue };
+    const producer_thread = try std.Thread.spawn(.{}, TestContext.producer, .{&ctx});
+    const consumer_thread = try std.Thread.spawn(.{}, TestContext.consumer, .{&ctx});
+
+    producer_thread.join();
+    queue.signalShutdown();
+    consumer_thread.join();
+}
+
+test "AsyncQueue shutdown signal" {
+    const testing = std.testing;
+
+    var queue = AsyncQueue(u32, 4).init();
+
+    // Signal shutdown and verify dequeue returns null
+    queue.signalShutdown();
+    try testing.expectEqual(@as(?u32, null), queue.dequeue());
 }

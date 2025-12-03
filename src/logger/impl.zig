@@ -74,6 +74,10 @@ pub const Logger = struct {
             const console = try ConsoleBackend.init(allocator);
             logger.console_backend_ptr = console;
         }
+        errdefer if (logger.console_backend_ptr) |console| {
+            const console_allocator = console.allocator;
+            console_allocator.destroy(console);
+        };
 
         // Initialize async queue and writer thread if enabled
         if (config.enable_async and backend != null) {
@@ -203,7 +207,15 @@ pub const Logger = struct {
     pub fn flush(self: *Logger) void {
         // Wait for async queue to drain if enabled
         if (self.async_queue) |queue| {
+            // Use a more efficient wait with timeout instead of busy-wait
+            const timeout_ns = 100 * std.time.ns_per_ms; // 100ms timeout
+            const start = std.time.nanoTimestamp();
             while (!queue.isEmpty()) {
+                const elapsed = std.time.nanoTimestamp() - start;
+                if (elapsed > timeout_ns) {
+                    std.debug.print("Logger flush timeout: queue not empty\n", .{});
+                    break;
+                }
                 std.Thread.sleep(1 * std.time.ns_per_ms);
             }
         }
@@ -328,20 +340,30 @@ pub fn logFn(
 
     if (logger) |log| {
         // Format message with scope
-        var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
-        const message = if (scope == .default)
-            std.fmt.bufPrint(&msg_buf, format, args) catch return
-        else
-            std.fmt.bufPrint(&msg_buf, "({s}) " ++ format, .{scope_name} ++ args) catch return;
-
-        log.log(our_level, "{s}", .{message});
+        if (scope == .default) {
+            var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+            const message = std.fmt.bufPrint(&msg_buf, format, args) catch return;
+            log.log(our_level, "{s}", .{message});
+        } else {
+            // Format with scope prefix
+            var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+            const scope_prefix = std.fmt.bufPrint(&msg_buf, "({s}) ", .{scope_name}) catch return;
+            const remaining = msg_buf[scope_prefix.len..];
+            const message_part = std.fmt.bufPrint(remaining, format, args) catch return;
+            const full_message = msg_buf[0 .. scope_prefix.len + message_part.len];
+            log.log(our_level, "{s}", .{full_message});
+        }
     } else {
         // Fallback: print directly to stderr
         var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
         const message = if (scope == .default)
             std.fmt.bufPrint(&msg_buf, format, args) catch return
-        else
-            std.fmt.bufPrint(&msg_buf, "({s}) " ++ format, .{scope_name} ++ args) catch return;
+        else blk: {
+            const scope_prefix = std.fmt.bufPrint(&msg_buf, "({s}) ", .{scope_name}) catch return;
+            const remaining = msg_buf[scope_prefix.len..];
+            const message_part = std.fmt.bufPrint(remaining, format, args) catch return;
+            break :blk msg_buf[0 .. scope_prefix.len + message_part.len];
+        };
 
         var log_buf: [LOG_BUFFER_SIZE]u8 = undefined;
         const log_line = formatter_mod.formatMessage(&log_buf, our_level, .text, message, null) catch return;
@@ -424,4 +446,100 @@ test "Logger async mode" {
 
     // Wait for messages to be written
     logger.flush();
+}
+
+test "Logger access log format" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp_dir.dir.realpath(".", &path_buf);
+    const log_path = try std.fmt.allocPrint(allocator, "{s}/access_test.log", .{dir_path});
+    defer allocator.free(log_path);
+
+    const file_backend = try FileBackend.init(allocator, log_path);
+    const config = LoggerConfig{
+        .level = .info,
+        .enable_console = false,
+        .enable_async = false,
+    };
+
+    var logger = try Logger.init(allocator, config, file_backend.backend());
+    defer logger.deinit();
+
+    logger.access(
+        "127.0.0.1:12345",
+        "GET",
+        "/test/path",
+        "HTTP/1.1",
+        200,
+        1024,
+        "TestAgent/1.0",
+        1500,
+    );
+    logger.flush();
+
+    // Verify access log format
+    const file = try std.fs.cwd().openFile(log_path, .{});
+    defer file.close();
+
+    var buf: [2048]u8 = undefined;
+    const n = try file.readAll(&buf);
+    const content = buf[0..n];
+
+    try testing.expect(std.mem.indexOf(u8, content, "127.0.0.1:12345") != null);
+    try testing.expect(std.mem.indexOf(u8, content, "GET /test/path HTTP/1.1") != null);
+    try testing.expect(std.mem.indexOf(u8, content, "200 1024") != null);
+    try testing.expect(std.mem.indexOf(u8, content, "TestAgent/1.0") != null);
+}
+
+test "std.log integration with global logger" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = try tmp_dir.dir.realpath(".", &path_buf);
+    const log_path = try std.fmt.allocPrint(allocator, "{s}/stdlog_test.log", .{dir_path});
+    defer allocator.free(log_path);
+
+    const file_backend = try FileBackend.init(allocator, log_path);
+    const config = LoggerConfig{
+        .level = .info,
+        .enable_console = false,
+        .enable_async = false,
+    };
+
+    var logger = try Logger.init(allocator, config, file_backend.backend());
+    defer logger.deinit();
+
+    // Set global logger
+    setGlobalLogger(&logger);
+    defer clearGlobalLogger();
+
+    // Test logFn with scope
+    logFn(.info, .test_scope, "Test message with scope", .{});
+    logger.flush();
+
+    // Verify log contains scope
+    const file = try std.fs.cwd().openFile(log_path, .{});
+    defer file.close();
+
+    var buf: [1024]u8 = undefined;
+    const n = try file.readAll(&buf);
+    const content = buf[0..n];
+
+    try testing.expect(std.mem.indexOf(u8, content, "(test_scope)") != null);
+    try testing.expect(std.mem.indexOf(u8, content, "Test message with scope") != null);
+}
+
+test "std.log integration without global logger" {
+    // Test that logFn works even without global logger (fallback to stderr)
+    // Just verify it doesn't crash
+    logFn(.info, .default, "Fallback message", .{});
 }

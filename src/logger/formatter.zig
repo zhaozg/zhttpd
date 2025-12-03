@@ -161,3 +161,68 @@ fn escapeJsonString(input: []const u8, buf: []u8) []const u8 {
     }
     return buf[0..pos];
 }
+
+test "formatTimestamp" {
+    const testing = std.testing;
+
+    const timestamp = formatTimestamp();
+    // Basic validation: should be 26 characters (YYYY-MM-DD HH:MM:SS.microseconds)
+    try testing.expectEqual(@as(usize, 26), timestamp.len);
+
+    // Check format structure
+    try testing.expect(timestamp[4] == '-');
+    try testing.expect(timestamp[7] == '-');
+    try testing.expect(timestamp[10] == ' ');
+    try testing.expect(timestamp[13] == ':');
+    try testing.expect(timestamp[16] == ':');
+    try testing.expect(timestamp[19] == '.');
+}
+
+test "formatMessage text format" {
+    const testing = std.testing;
+
+    var buf: [1024]u8 = undefined;
+    const result = try formatMessage(&buf, .info, .text, "test message", null);
+
+    try testing.expect(std.mem.indexOf(u8, result, "[INFO]") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "test message") != null);
+}
+
+test "formatMessage json format" {
+    const testing = std.testing;
+
+    var buf: [1024]u8 = undefined;
+    const result = try formatMessage(&buf, .info, .json, "test message", null);
+
+    try testing.expect(std.mem.indexOf(u8, result, "\"level\":\"info\"") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "\"message\":\"test message\"") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "\"timestamp\":") != null);
+}
+
+test "formatMessage json with request_id" {
+    const testing = std.testing;
+
+    var buf: [1024]u8 = undefined;
+    const result = try formatMessage(&buf, .warn, .json, "test message", "req-123");
+
+    try testing.expect(std.mem.indexOf(u8, result, "\"request_id\":\"req-123\"") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "\"level\":\"warn\"") != null);
+}
+
+test "escapeJsonString" {
+    const testing = std.testing;
+
+    var buf: [256]u8 = undefined;
+
+    // Test special characters
+    const result1 = escapeJsonString("hello \"world\"", &buf);
+    try testing.expectEqualStrings("hello \\\"world\\\"", result1);
+
+    // Test newline and tab
+    const result2 = escapeJsonString("line1\nline2\ttab", &buf);
+    try testing.expectEqualStrings("line1\\nline2\\ttab", result2);
+
+    // Test backslash
+    const result3 = escapeJsonString("path\\to\\file", &buf);
+    try testing.expectEqualStrings("path\\\\to\\\\file", result3);
+}
