@@ -552,11 +552,13 @@ pub const DbPlugin = struct {
     /// Prepare a statement for execution with caching
     /// Uses the statement cache to avoid re-preparing frequently used statements
     /// Returns a pointer to the cached statement, ready for parameter binding
+    /// Note: The statement is owned by the cache and should not be deinitialized by the caller
     pub fn prepare(self: *Self, sql: []const u8) !*zdbc.Statement {
         if (self.stmt_cache) |*sc| {
             return sc.getOrPrepare(sql);
         }
-        // No cache available
+        // No cache available - statement caching is required for prepare()
+        // If you need to execute without cache, use query() or exec() directly
         return zdbc.Error.NotImplemented;
     }
 
@@ -888,6 +890,8 @@ fn luaPrepare(lua: *ziglua.Lua) i32 {
     lua.newTable();
 
     // Store the SQL for reference
+    // Note: The actual statement is managed by the cache (not stored in Lua)
+    // Each call to plugin.prepare(sql) returns the same cached statement
     _ = lua.pushString(sql);
     lua.setField(-2, "_sql");
 
@@ -899,8 +903,9 @@ fn luaPrepare(lua: *ziglua.Lua) i32 {
     lua.pushFunction(ziglua.wrap(luaStatementExec));
     lua.setField(-2, "exec");
 
-    // Note: We don't store the statement pointer in Lua as it's managed by the cache
-    // The statement is accessed via plugin.prepare(sql) in the query/exec methods
+    // Note: The statement itself is not stored in Lua
+    // It's managed by the plugin's statement cache and accessed via SQL key
+    // This keeps the cache in control of statement lifecycle
 
     return 1;
 }
@@ -945,6 +950,8 @@ fn luaStatementQuery(lua: *ziglua.Lua) i32 {
     }
 
     // Get the cached statement
+    // This call to prepare() retrieves the already-cached statement (cache hit expected)
+    // The cache manages statement lifecycle, so we don't store pointers in Lua
     var stmt = plugin.prepare(sql) catch |err| {
         lua.pushNil();
         _ = lua.pushString(@errorName(err));
@@ -1045,6 +1052,8 @@ fn luaStatementExec(lua: *ziglua.Lua) i32 {
     }
 
     // Get the cached statement
+    // This call to prepare() retrieves the already-cached statement (cache hit expected)
+    // The cache manages statement lifecycle, so we don't store pointers in Lua
     var stmt = plugin.prepare(sql) catch |err| {
         lua.pushNil();
         _ = lua.pushString(@errorName(err));
