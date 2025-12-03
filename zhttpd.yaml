@@ -230,6 +230,26 @@ enable_request_id: true
 #   - "json": Structured JSON format for log aggregation
 log_format: "text"
 
+# Database Configuration
+# ----------------------
+# enable_db: Enable database plugin support
+#   - true: Database operations available through context:db() in Lua
+#   - false: Database features disabled (default)
+# Default data source configuration (backward compatibility):
+#   db_uri: "sqlite:///:memory:"  # In-memory SQLite database for development
+#   db_pool_size: 5
+# Or use named data sources for multiple databases (commented example):
+# data_sources:
+#   - name: default
+#     uri: "sqlite:///./data/app.db"
+#     pool_size: 5
+#   - name: users_db
+#     uri: "postgresql://user:pass@localhost:5432/users"
+#     pool_size: 10
+enable_db: true
+db_uri: "sqlite:///:memory:"
+db_pool_size: 5
+
 # Handler Configuration
 # ---------------------
 # handlers: Define URL pattern to handler mappings
