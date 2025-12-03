@@ -285,7 +285,7 @@ pub const AppContext = struct {
                 }
             }
         } else if (config.enable_db and config.data_sources.len == 0) {
-            ctx.logger.warn("Database plugin enabled but no data sources configured (set db_uri or data_sources in config)", .{});
+            ctx.logger.warn("Database plugin enabled but no data sources were successfully configured (set db_uri or configure data_sources in config)", .{});
         }
 
         // Initialize session manager if enabled

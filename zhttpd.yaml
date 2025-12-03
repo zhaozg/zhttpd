@@ -251,7 +251,7 @@ log_format: "text"
 #     uri: "sqlite:///./data/app.db"  # Persistent SQLite
 #     pool_size: 5
 #   - name: users_db
-#     uri: "postgresql://user:pass@localhost:5432/users"
+#     uri: "postgresql://username:password@hostname:5432/database"
 #     pool_size: 10
 #
 # Current: In-memory SQLite for development (data lost on restart)
