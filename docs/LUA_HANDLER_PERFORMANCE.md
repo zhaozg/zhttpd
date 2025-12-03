@@ -4,7 +4,7 @@ This document describes the performance optimization made to resolve a significa
 
 ## Problem
 
-After integrating the database plugin, Lua handlers experienced a performance degradation of **1000x or more**. The issue was reported in the repository as "lua handler 性能分析" (Lua handler performance analysis).
+After integrating the database plugin, Lua handlers experienced a performance degradation of **1000x or more**. This issue affected handlers that called `context:db()` to access the database.
 
 ### Symptoms
 
@@ -200,6 +200,10 @@ The optimization is **100% backward compatible**:
 
 ## References
 
-- Issue: "lua handler 性能分析" (Lua handler performance analysis)
-- Commit: "Optimize context:db() to eliminate per-request metatable registration overhead"
-- Pull Request: [Link to PR]
+- Optimization Commit: "Optimize context:db() to eliminate per-request metatable registration overhead"
+- Related Files:
+  - `src/lua/context.zig` - Core optimization implementation
+  - `src/plugins/db/db.zig` - Database plugin
+  - `src/plugins/db/manager.zig` - Database manager
+  - `examples/lua/perf_test_*.lua` - Performance test scripts
+  - `scripts/lua_handler_benchmark.sh` - Benchmark automation
