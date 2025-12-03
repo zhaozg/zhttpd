@@ -152,11 +152,13 @@ pub const FileBackend = struct {
 /// Console backend writes logs to stderr
 pub const ConsoleBackend = struct {
     mutex: std.Thread.Mutex,
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !*ConsoleBackend {
         const self = try allocator.create(ConsoleBackend);
         self.* = .{
             .mutex = .{},
+            .allocator = allocator,
         };
         return self;
     }
@@ -188,8 +190,7 @@ pub const ConsoleBackend = struct {
 
     fn deinitBackend(ptr: *anyopaque) void {
         const self: *ConsoleBackend = @ptrCast(@alignCast(ptr));
-        // Store allocator before destroying self
-        const allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(@constCast(&self.mutex)))).*;
+        const allocator = self.allocator;
         allocator.destroy(self);
     }
 };

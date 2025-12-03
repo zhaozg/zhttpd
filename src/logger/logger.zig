@@ -31,9 +31,8 @@ pub const LegacyLogger = struct {
     allocator: std.mem.Allocator,
     level: LogLevel,
     format: LogFormat,
-    // Store backend references to prevent premature deallocation
-    file_backend: ?*FileBackend,
-    console_backend_ref: ?*ConsoleBackend,
+    // Note: file_backend is managed by inner logger's backend.deinit()
+    // We don't store the pointer here to avoid double-free
 
     /// Initialize logger with file path (legacy API)
     pub fn init(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8) !LegacyLogger {
@@ -42,12 +41,11 @@ pub const LegacyLogger = struct {
 
     /// Initialize logger with format specification (legacy API)
     pub fn initWithFormat(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8, format: LogFormat) !LegacyLogger {
-        var file_backend: ?*FileBackend = null;
         var backend: ?Backend = null;
 
         if (log_file_path) |path| {
-            file_backend = try FileBackend.init(allocator, path);
-            backend = file_backend.?.backend();
+            const file_backend = try FileBackend.init(allocator, path);
+            backend = file_backend.backend();
         }
 
         const config = LoggerConfig{
@@ -64,15 +62,11 @@ pub const LegacyLogger = struct {
             .allocator = allocator,
             .level = level,
             .format = format,
-            .file_backend = file_backend,
-            .console_backend_ref = null,
         };
     }
 
     pub fn deinit(self: *LegacyLogger) void {
         self.inner.deinit();
-        // File backend is cleaned up by inner logger
-        self.file_backend = null;
     }
 
     pub fn log(self: *LegacyLogger, level: LogLevel, comptime fmt: []const u8, args: anytype) void {

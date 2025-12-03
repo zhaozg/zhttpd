@@ -48,7 +48,7 @@ pub const Logger = struct {
     allocator: std.mem.Allocator,
     config: LoggerConfig,
     backend: ?Backend,
-    console_backend: ?Backend,
+    console_backend_ptr: ?*ConsoleBackend,
     async_queue: ?*AsyncQueue,
     writer_thread: ?std.Thread,
     mutex: std.Thread.Mutex,
@@ -58,7 +58,7 @@ pub const Logger = struct {
             .allocator = allocator,
             .config = config,
             .backend = backend,
-            .console_backend = null,
+            .console_backend_ptr = null,
             .async_queue = null,
             .writer_thread = null,
             .mutex = .{},
@@ -67,7 +67,7 @@ pub const Logger = struct {
         // Initialize console backend if enabled
         if (config.enable_console) {
             const console = try ConsoleBackend.init(allocator);
-            logger.console_backend = console.backend();
+            logger.console_backend_ptr = console;
         }
 
         // Initialize async queue and writer thread if enabled
@@ -102,8 +102,9 @@ pub const Logger = struct {
         if (self.backend) |backend| {
             backend.deinit();
         }
-        if (self.console_backend) |console| {
-            console.deinit();
+        if (self.console_backend_ptr) |console| {
+            const allocator = console.allocator;
+            allocator.destroy(console);
         }
     }
 
@@ -155,7 +156,7 @@ pub const Logger = struct {
         };
 
         // Write to console if enabled (always synchronous for immediate feedback)
-        if (self.console_backend) |console| {
+        if (self.console_backend_ptr) |console| {
             // Use text format for console even if file uses JSON
             var console_buf: [LOG_BUFFER_SIZE]u8 = undefined;
             const console_line = if (self.config.format == .json)
@@ -163,7 +164,8 @@ pub const Logger = struct {
             else
                 log_line;
 
-            console.write(console_line) catch |err| {
+            const console_backend = console.backend();
+            console_backend.write(console_line) catch |err| {
                 std.debug.print("Console write error: {}\n", .{err});
             };
         }
@@ -174,8 +176,8 @@ pub const Logger = struct {
                 // Async mode: enqueue for background writing
                 const msg = LogMessage.init(log_line);
                 if (!queue.tryEnqueue(msg)) {
-                    // Queue is full, fall back to synchronous write
-                    self.writeSync(log_line);
+                    // Queue is full, log warning and drop message
+                    std.debug.print("Logger queue full, dropping message\n", .{});
                 }
             } else {
                 // Sync mode: write directly
@@ -209,8 +211,9 @@ pub const Logger = struct {
         }
 
         // Flush console
-        if (self.console_backend) |console| {
-            console.flush() catch |flush_err| {
+        if (self.console_backend_ptr) |console| {
+            const console_backend = console.backend();
+            console_backend.flush() catch |flush_err| {
                 std.debug.print("Console flush error: {}\n", .{flush_err});
             };
         }
