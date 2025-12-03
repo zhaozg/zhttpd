@@ -275,6 +275,14 @@ function handle(request, response, context)
 end
 ```
 
+**性能优化：**
+
+数据库访问经过高度优化：
+- `context:db()` 使用预注册的元表，避免了每次调用的开销
+- 不使用数据库的 Lua 脚本零开销
+- 准备语句自动缓存以提高性能
+- 详见 [Lua Handler 性能优化文档](docs/LUA_HANDLER_PERFORMANCE.md)
+
 详细示例请参阅：
 - `examples/lua/users_db.lua` - 数据库用户管理 API
 - `examples/lua/auth_db.lua` - 数据库认证示例
