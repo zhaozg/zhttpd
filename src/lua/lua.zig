@@ -365,7 +365,7 @@ pub const LuaHandler = struct {
 
     /// Get cached module table or load and cache it.
     /// Returns true if module table is on top of stack, false on error.
-    /// Uses zerocopy: script_content is passed directly to loadBuffer without copying.
+    /// Uses zerocopy: script_content is loaded internally and passed directly to loadBuffer without copying.
     ///
     /// Caching behavior by reload mode:
     /// - 'force': Always skip cache, reload script every time
@@ -374,7 +374,7 @@ pub const LuaHandler = struct {
     ///
     /// Stack effect on success: pushes module table
     /// Stack effect on failure: stack unchanged
-    pub fn getOrLoadModule(self: *LuaHandler, lua: *ziglua.Lua, script_name: []const u8, script_content: []const u8) bool {
+    pub fn getOrLoadModule(self: *LuaHandler, lua: *ziglua.Lua, script_name: []const u8) bool {
         const tl = tls_lua orelse return false;
 
         // Only cache in 'never' mode where file content is guaranteed not to change.
@@ -403,6 +403,13 @@ pub const LuaHandler = struct {
             // Cache miss - need to load and compile the script
             lua.pop(1); // Pop nil
         }
+
+        // Load script content from file cache (zerocopy path)
+        const script_content = self.loadScript(script_name) catch {
+            if (use_cache) lua.pop(1); // Pop cache table
+            return false;
+        };
+        defer self.allocator.free(script_content);
 
         // Build chunk name for error messages (stack-allocated, null-terminated)
         var name_buf: [256]u8 = undefined;
@@ -534,21 +541,17 @@ pub const LuaHandler = struct {
         // Ensure context is cleared on exit
         defer context.clearContext();
 
-        // Load script content from file cache (zerocopy path)
-        const script_content = try self.loadScript(script_name);
-        defer self.allocator.free(script_content);
-
-        // Get cached module or load and cache it (zerocopy: no dupeZ needed)
-        if (!self.getOrLoadModule(lua, script_name, script_content)) {
+        // Get cached module or load and cache it (zerocopy: loads script internally)
+        if (!self.getOrLoadModule(lua, script_name)) {
             lua.setTop(0);
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);
             return ERR_SCRIPT_LOAD_FAILED;
         }
 
         // Module table is now on stack, get the specified function
-        // getField requires null-terminated string
-        const func_z = try arena.dupeZ(u8, func);
-        _ = lua.getField(-1, func_z);
+        // Use rawGetTable for better performance (no metamethod checks, no dupeZ needed)
+        _ = lua.pushString(func);
+        _ = lua.rawGetTable(-2); // Get module[func]
         if (lua.typeOf(-1) != .function) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);

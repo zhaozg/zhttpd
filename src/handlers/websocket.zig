@@ -164,14 +164,8 @@ pub const WebSocketHandler = struct {
         var lua = try handler.getThreadLocalLua();
         lua.setTop(0); // Clear the stack
 
-        // Load the websocket script and get the module (with caching)
-        const script_content = handler.loadScript("websocket") catch {
-            return error.ScriptLoadFailed;
-        };
-        defer handler.allocator.free(script_content);
-
-        // Use getOrLoadModule for efficient caching
-        if (!handler.getOrLoadModule(lua, "websocket", script_content)) {
+        // Use getOrLoadModule for efficient caching (loads script internally)
+        if (!handler.getOrLoadModule(lua, "websocket")) {
             lua.setTop(0);
             return error.ScriptLoadFailed;
         }
@@ -184,13 +178,9 @@ pub const WebSocketHandler = struct {
         else
             "handle_message";
 
-        const func_z = self.allocator.dupeZ(u8, func_name) catch {
-            lua.pop(1);
-            return error.AllocFailed;
-        };
-        defer self.allocator.free(func_z);
-
-        _ = lua.getField(-1, func_z);
+        // Use rawGetTable for better performance (no metamethod checks, no dupeZ needed)
+        _ = lua.pushString(func_name);
+        _ = lua.rawGetTable(-2); // Get module[func_name]
         if (lua.typeOf(-1) != .function) {
             lua.pop(2);
             return error.FunctionNotFound;
