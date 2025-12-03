@@ -6,10 +6,11 @@
 //! ## Features
 //!
 //! - Connection pooling for efficient database access
-//! - Prepared statement caching per connection for improved performance
+//! - Prepared statement caching for improved performance
 //! - Unified API across multiple database backends
 //! - Lua bindings for scripting database operations
 //! - Zig-side utilities for authentication and user validation
+//! - Full zdbc Connection interface support
 //!
 //! ## Configuration
 //!
@@ -26,17 +27,28 @@
 //! ```lua
 //! local db = require("db")
 //!
-//! -- Execute query
+//! -- Direct query (no statement caching)
 //! local result = db.query("SELECT * FROM users WHERE id = ?", 1)
 //!
-//! -- Execute statement
+//! -- Direct exec (no statement caching)
 //! local affected = db.exec("INSERT INTO users (name) VALUES (?)", "John")
+//!
+//! -- Prepared statement with caching (recommended for repeated queries)
+//! local stmt = db.prepare("SELECT * FROM users WHERE id = ?")
+//! local result1 = stmt:query(1)
+//! local result2 = stmt:query(2)  -- Uses cached prepared statement
+//!
+//! -- Prepared statement for exec
+//! local insert_stmt = db.prepare("INSERT INTO users (name) VALUES (?)")
+//! local affected1 = insert_stmt:exec("Alice")
+//! local affected2 = insert_stmt:exec("Bob")  -- Reuses cached statement
 //!
 //! -- Transaction support
 //! db.begin()
 //! db.exec("UPDATE accounts SET balance = balance - 100 WHERE id = ?", 1)
 //! db.exec("UPDATE accounts SET balance = balance + 100 WHERE id = ?", 2)
 //! db.commit()
+//! -- Use db.rollback() to rollback on error
 //!
 //! -- Get status including statement cache statistics
 //! local status = db.status()
@@ -480,6 +492,9 @@ pub const DbPlugin = struct {
         lua.pushFunction(ziglua.wrap(luaExec));
         lua.setField(-2, "exec");
 
+        lua.pushFunction(ziglua.wrap(luaPrepare));
+        lua.setField(-2, "prepare");
+
         lua.pushFunction(ziglua.wrap(luaBegin));
         lua.setField(-2, "begin");
 
@@ -514,62 +529,91 @@ pub const DbPlugin = struct {
         return null;
     }
 
-    /// Execute a query and return results using cached prepared statements
+    /// Execute a query and return results
+    /// Directly calls the connection's query method without statement caching
+    /// For cached queries, use prepare() first, then call query() on the statement
     pub fn query(self: *Self, sql: []const u8, params: []const zdbc.Value) !zdbc.Result {
         if (self.connection) |*conn| {
-            // Try to use cached statement if available
-            if (self.stmt_cache) |*sc| {
-                var stmt = sc.getOrPrepare(sql) catch |err| {
-                    // Fallback to direct query if statement preparation fails
-                    std.log.debug("Statement cache: fallback to direct query for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
-                    return conn.query(sql, params);
-                };
-
-                // Bind parameters
-                stmt.bindAll(params) catch |err| {
-                    // Fallback to direct query on bind error
-                    std.log.debug("Statement cache: bind failed, fallback for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
-                    return conn.query(sql, params);
-                };
-
-                // Execute query
-                return stmt.query();
-            }
-
-            // No cache, use direct connection query
             return conn.query(sql, params);
         }
-
         return zdbc.Error.ConnectionFailed;
     }
 
-    /// Execute a statement (INSERT, UPDATE, DELETE) using cached prepared statements
+    /// Execute a statement (INSERT, UPDATE, DELETE)
+    /// Directly calls the connection's exec method without statement caching
+    /// For cached statements, use prepare() first, then call exec() on the statement
     pub fn exec(self: *Self, sql: []const u8, params: []const zdbc.Value) !usize {
         if (self.connection) |*conn| {
-            // Try to use cached statement if available
-            if (self.stmt_cache) |*sc| {
-                var stmt = sc.getOrPrepare(sql) catch |err| {
-                    // Fallback to direct exec if statement preparation fails
-                    std.log.debug("Statement cache: fallback to direct exec for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
-                    return conn.exec(sql, params);
-                };
-
-                // Bind parameters
-                stmt.bindAll(params) catch |err| {
-                    // Fallback to direct exec on bind error
-                    std.log.debug("Statement cache: bind failed, fallback for: {s}, error: {}", .{ sql[0..@min(sql.len, 64)], err });
-                    return conn.exec(sql, params);
-                };
-
-                // Execute statement
-                return stmt.exec();
-            }
-
-            // No cache, use direct connection exec
             return conn.exec(sql, params);
         }
-
         return zdbc.Error.ConnectionFailed;
+    }
+
+    /// Prepare a statement for execution with caching
+    /// Uses the statement cache to avoid re-preparing frequently used statements
+    /// Returns a pointer to the cached statement, ready for parameter binding
+    pub fn prepare(self: *Self, sql: []const u8) !*zdbc.Statement {
+        if (self.stmt_cache) |*sc| {
+            return sc.getOrPrepare(sql);
+        }
+        // No cache available
+        return zdbc.Error.NotImplemented;
+    }
+
+    /// Begin a transaction
+    pub fn begin(self: *Self) !void {
+        if (self.connection) |*conn| {
+            return conn.begin();
+        }
+        return zdbc.Error.ConnectionFailed;
+    }
+
+    /// Commit the current transaction
+    pub fn commit(self: *Self) !void {
+        if (self.connection) |*conn| {
+            return conn.commit();
+        }
+        return zdbc.Error.ConnectionFailed;
+    }
+
+    /// Rollback the current transaction
+    pub fn rollback(self: *Self) !void {
+        if (self.connection) |*conn| {
+            return conn.rollback();
+        }
+        return zdbc.Error.ConnectionFailed;
+    }
+
+    /// Get the last insert row ID
+    pub fn lastInsertId(self: *Self) ?i64 {
+        if (self.connection) |*conn| {
+            return conn.lastInsertId();
+        }
+        return null;
+    }
+
+    /// Get the number of rows affected by the last operation
+    pub fn affectedRows(self: *Self) usize {
+        if (self.connection) |*conn| {
+            return conn.affectedRows();
+        }
+        return 0;
+    }
+
+    /// Ping the database to check connection health
+    pub fn ping(self: *Self) !void {
+        if (self.connection) |*conn| {
+            return conn.ping();
+        }
+        return zdbc.Error.ConnectionFailed;
+    }
+
+    /// Get the last error message
+    pub fn lastError(self: *Self) ?[]const u8 {
+        if (self.connection) |*conn| {
+            return conn.lastError();
+        }
+        return null;
     }
 
     /// Get statement cache statistics
@@ -617,6 +661,9 @@ pub fn registerDbModule(lua: *ziglua.Lua) void {
 
     lua.pushFunction(ziglua.wrap(luaExec));
     lua.setField(-2, "exec");
+
+    lua.pushFunction(ziglua.wrap(luaPrepare));
+    lua.setField(-2, "prepare");
 
     lua.pushFunction(ziglua.wrap(luaBegin));
     lua.setField(-2, "begin");
@@ -814,6 +861,214 @@ fn luaExec(lua: *ziglua.Lua) i32 {
     return 1;
 }
 
+/// Lua: db.prepare(sql) - Prepare a statement with caching
+/// Returns a table with methods: query(params...), exec(params...)
+fn luaPrepare(lua: *ziglua.Lua) i32 {
+    const plugin = getPluginFromLua(lua) orelse {
+        lua.pushNil();
+        _ = lua.pushString("Database not initialized");
+        return 2;
+    };
+
+    // Get SQL string
+    const sql = lua.toString(1) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL string");
+        return 2;
+    };
+
+    // Prepare the statement (with caching)
+    _ = plugin.prepare(sql) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Create a statement object table
+    lua.newTable();
+
+    // Store the SQL for reference
+    _ = lua.pushString(sql);
+    lua.setField(-2, "_sql");
+
+    // Add query method
+    lua.pushFunction(ziglua.wrap(luaStatementQuery));
+    lua.setField(-2, "query");
+
+    // Add exec method
+    lua.pushFunction(ziglua.wrap(luaStatementExec));
+    lua.setField(-2, "exec");
+
+    // Note: We don't store the statement pointer in Lua as it's managed by the cache
+    // The statement is accessed via plugin.prepare(sql) in the query/exec methods
+
+    return 1;
+}
+
+/// Lua: statement:query(...) - Execute query on prepared statement
+fn luaStatementQuery(lua: *ziglua.Lua) i32 {
+    const plugin = getPluginFromLua(lua) orelse {
+        lua.pushNil();
+        _ = lua.pushString("Database not initialized");
+        return 2;
+    };
+
+    // Get the statement table (self)
+    if (lua.typeOf(1) != .table) {
+        lua.pushNil();
+        _ = lua.pushString("Invalid statement object");
+        return 2;
+    }
+
+    // Get the SQL from the statement table
+    _ = lua.getField(1, "_sql");
+    const sql = lua.toString(-1) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL in statement");
+        return 2;
+    };
+    lua.pop(1); // pop SQL string
+
+    // Collect parameters starting from arg 2
+    const top = lua.getTop();
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
+    var param_count: usize = 0;
+
+    var i: i32 = 2;
+    while (i <= top and param_count < params_buf.len) : (i += 1) {
+        params_buf[param_count] = luaToDbValue(lua, i);
+        param_count += 1;
+    }
+
+    if (top > @as(i32, @intCast(MAX_PARAMS)) + 1) {
+        std.log.warn("statement:query: Too many parameters ({d}), truncated to {d}", .{ top - 1, MAX_PARAMS });
+    }
+
+    // Get the cached statement
+    var stmt = plugin.prepare(sql) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Bind parameters
+    stmt.bindAll(params_buf[0..param_count]) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Execute query
+    var result = stmt.query() catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+    defer result.deinit();
+
+    // Convert results to Lua table (same as luaQuery)
+    lua.newTable();
+    var row_idx: i32 = 1;
+
+    while (true) {
+        const maybe_row = result.next() catch break;
+        if (maybe_row) |row| {
+            lua.newTable();
+
+            const col_count = result.columnCount();
+            var col_idx: usize = 0;
+            while (col_idx < col_count) : (col_idx += 1) {
+                const value = row.get(col_idx) catch continue;
+                pushDbValueToLua(lua, value);
+
+                if (result.columnName(col_idx)) |name| {
+                    var name_buf: [MAX_COLUMN_NAME_LEN]u8 = undefined;
+                    const len = @min(name.len, name_buf.len - 1);
+                    if (name.len >= MAX_COLUMN_NAME_LEN) {
+                        std.log.warn("statement:query: Column name truncated from {d} to {d} chars", .{ name.len, MAX_COLUMN_NAME_LEN - 1 });
+                    }
+                    @memcpy(name_buf[0..len], name[0..len]);
+                    name_buf[len] = 0;
+                    lua.setField(-2, name_buf[0..len :0]);
+                } else {
+                    lua.rawSetIndex(-2, @intCast(col_idx + 1));
+                }
+            }
+
+            lua.rawSetIndex(-2, row_idx);
+            row_idx += 1;
+        } else {
+            break;
+        }
+    }
+
+    return 1;
+}
+
+/// Lua: statement:exec(...) - Execute statement
+fn luaStatementExec(lua: *ziglua.Lua) i32 {
+    const plugin = getPluginFromLua(lua) orelse {
+        lua.pushNil();
+        _ = lua.pushString("Database not initialized");
+        return 2;
+    };
+
+    // Get the statement table (self)
+    if (lua.typeOf(1) != .table) {
+        lua.pushNil();
+        _ = lua.pushString("Invalid statement object");
+        return 2;
+    }
+
+    // Get the SQL from the statement table
+    _ = lua.getField(1, "_sql");
+    const sql = lua.toString(-1) catch {
+        lua.pushNil();
+        _ = lua.pushString("Invalid SQL in statement");
+        return 2;
+    };
+    lua.pop(1); // pop SQL string
+
+    // Collect parameters starting from arg 2
+    const top = lua.getTop();
+    var params_buf: [MAX_PARAMS]zdbc.Value = undefined;
+    var param_count: usize = 0;
+
+    var i: i32 = 2;
+    while (i <= top and param_count < params_buf.len) : (i += 1) {
+        params_buf[param_count] = luaToDbValue(lua, i);
+        param_count += 1;
+    }
+
+    if (top > @as(i32, @intCast(MAX_PARAMS)) + 1) {
+        std.log.warn("statement:exec: Too many parameters ({d}), truncated to {d}", .{ top - 1, MAX_PARAMS });
+    }
+
+    // Get the cached statement
+    var stmt = plugin.prepare(sql) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Bind parameters
+    stmt.bindAll(params_buf[0..param_count]) catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    // Execute statement
+    const affected = stmt.exec() catch |err| {
+        lua.pushNil();
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+
+    lua.pushInteger(@intCast(affected));
+    return 1;
+}
+
 /// Lua: db.begin() - Begin transaction
 fn luaBegin(lua: *ziglua.Lua) i32 {
     const plugin = getPluginFromLua(lua) orelse {
@@ -822,19 +1077,13 @@ fn luaBegin(lua: *ziglua.Lua) i32 {
         return 2;
     };
 
-    if (plugin.connection) |*conn| {
-        conn.begin() catch |err| {
-            lua.pushBoolean(false);
-            _ = lua.pushString(@errorName(err));
-            return 2;
-        };
-        lua.pushBoolean(true);
-        return 1;
-    }
-
-    lua.pushBoolean(false);
-    _ = lua.pushString("No direct connection (pool mode does not support transactions across calls)");
-    return 2;
+    plugin.begin() catch |err| {
+        lua.pushBoolean(false);
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+    lua.pushBoolean(true);
+    return 1;
 }
 
 /// Lua: db.commit() - Commit transaction
@@ -845,19 +1094,13 @@ fn luaCommit(lua: *ziglua.Lua) i32 {
         return 2;
     };
 
-    if (plugin.connection) |*conn| {
-        conn.commit() catch |err| {
-            lua.pushBoolean(false);
-            _ = lua.pushString(@errorName(err));
-            return 2;
-        };
-        lua.pushBoolean(true);
-        return 1;
-    }
-
-    lua.pushBoolean(false);
-    _ = lua.pushString("No direct connection");
-    return 2;
+    plugin.commit() catch |err| {
+        lua.pushBoolean(false);
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+    lua.pushBoolean(true);
+    return 1;
 }
 
 /// Lua: db.rollback() - Rollback transaction
@@ -868,19 +1111,13 @@ fn luaRollback(lua: *ziglua.Lua) i32 {
         return 2;
     };
 
-    if (plugin.connection) |*conn| {
-        conn.rollback() catch |err| {
-            lua.pushBoolean(false);
-            _ = lua.pushString(@errorName(err));
-            return 2;
-        };
-        lua.pushBoolean(true);
-        return 1;
-    }
-
-    lua.pushBoolean(false);
-    _ = lua.pushString("No direct connection");
-    return 2;
+    plugin.rollback() catch |err| {
+        lua.pushBoolean(false);
+        _ = lua.pushString(@errorName(err));
+        return 2;
+    };
+    lua.pushBoolean(true);
+    return 1;
 }
 
 /// Lua: db.status() - Get database status
@@ -1264,4 +1501,298 @@ test "StatementCache stats" {
     try testing.expect(stats.misses == 5);
     try testing.expect(stats.size == 3);
     try testing.expect(stats.max_size == 100);
+}
+
+test "DbPlugin query and exec without caching" {
+    const testing = std.testing;
+
+    // Create a temporary database
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    // Initialize with SQLite in-memory database
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    // Create a test table
+    const create_table = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)";
+    _ = try plugin.exec(create_table, &.{});
+
+    // Test direct exec (no caching)
+    const affected = try plugin.exec("INSERT INTO users (name, age) VALUES (?, ?)", &.{
+        zdbc.Value.initText("Alice"),
+        zdbc.Value.initInt(30),
+    });
+    try testing.expect(affected == 1);
+
+    // Test direct query (no caching)
+    var result = try plugin.query("SELECT * FROM users WHERE name = ?", &.{zdbc.Value.initText("Alice")});
+    defer result.deinit();
+
+    const maybe_row = try result.next();
+    try testing.expect(maybe_row != null);
+    if (maybe_row) |row| {
+        const name = try row.getText(1);
+        try testing.expect(name != null);
+        if (name) |n| {
+            try testing.expect(std.mem.eql(u8, n, "Alice"));
+        }
+    }
+}
+
+test "DbPlugin prepare with statement caching" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    // Create table
+    _ = try plugin.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)", &.{});
+
+    // Prepare a statement (should cache it)
+    const sql = "INSERT INTO test (value) VALUES (?)";
+    var stmt1 = try plugin.prepare(sql);
+    try stmt1.bindAll(&.{zdbc.Value.initText("first")});
+    _ = try stmt1.exec();
+
+    // Verify cache statistics
+    if (plugin.getStmtCacheStats()) |stats| {
+        try testing.expect(stats.misses == 1); // First prepare is a miss
+        try testing.expect(stats.hits == 0);
+    }
+
+    // Prepare the same statement again (should hit cache)
+    var stmt2 = try plugin.prepare(sql);
+    try stmt2.bindAll(&.{zdbc.Value.initText("second")});
+    _ = try stmt2.exec();
+
+    // Verify cache hit
+    if (plugin.getStmtCacheStats()) |stats| {
+        try testing.expect(stats.hits == 1); // Second prepare is a hit
+        try testing.expect(stats.misses == 1);
+    }
+
+    // Verify both inserts worked
+    var result = try plugin.query("SELECT COUNT(*) FROM test", &.{});
+    defer result.deinit();
+    const maybe_row = try result.next();
+    try testing.expect(maybe_row != null);
+}
+
+test "DbPlugin transaction operations" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    _ = try plugin.exec("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)", &.{});
+    _ = try plugin.exec("INSERT INTO accounts (id, balance) VALUES (?, ?)", &.{ zdbc.Value.initInt(1), zdbc.Value.initInt(1000) });
+    _ = try plugin.exec("INSERT INTO accounts (id, balance) VALUES (?, ?)", &.{ zdbc.Value.initInt(2), zdbc.Value.initInt(500) });
+
+    // Test successful transaction
+    try plugin.begin();
+    _ = try plugin.exec("UPDATE accounts SET balance = balance - 100 WHERE id = ?", &.{zdbc.Value.initInt(1)});
+    _ = try plugin.exec("UPDATE accounts SET balance = balance + 100 WHERE id = ?", &.{zdbc.Value.initInt(2)});
+    try plugin.commit();
+
+    // Verify transaction committed
+    var result = try plugin.query("SELECT balance FROM accounts WHERE id = ?", &.{zdbc.Value.initInt(1)});
+    defer result.deinit();
+    const maybe_row = try result.next();
+    try testing.expect(maybe_row != null);
+    if (maybe_row) |row| {
+        const balance = try row.getInt(0);
+        try testing.expect(balance != null);
+        if (balance) |b| {
+            try testing.expect(b == 900);
+        }
+    }
+}
+
+test "DbPlugin rollback transaction" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    _ = try plugin.exec("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)", &.{});
+    _ = try plugin.exec("INSERT INTO accounts (id, balance) VALUES (?, ?)", &.{ zdbc.Value.initInt(1), zdbc.Value.initInt(1000) });
+
+    // Test rollback
+    try plugin.begin();
+    _ = try plugin.exec("UPDATE accounts SET balance = balance - 500 WHERE id = ?", &.{zdbc.Value.initInt(1)});
+    try plugin.rollback();
+
+    // Verify rollback (balance should be unchanged)
+    var result = try plugin.query("SELECT balance FROM accounts WHERE id = ?", &.{zdbc.Value.initInt(1)});
+    defer result.deinit();
+    const maybe_row = try result.next();
+    try testing.expect(maybe_row != null);
+    if (maybe_row) |row| {
+        const balance = try row.getInt(0);
+        try testing.expect(balance != null);
+        if (balance) |b| {
+            try testing.expect(b == 1000);
+        }
+    }
+}
+
+test "DbPlugin lastInsertId and affectedRows" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    _ = try plugin.exec("CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)", &.{});
+
+    // Insert and check lastInsertId
+    _ = try plugin.exec("INSERT INTO test (value) VALUES (?)", &.{zdbc.Value.initText("test1")});
+    const last_id = plugin.lastInsertId();
+    try testing.expect(last_id != null);
+    try testing.expect(last_id.? >= 1);
+
+    // Test affectedRows
+    const affected = plugin.affectedRows();
+    try testing.expect(affected == 1);
+}
+
+test "DbPlugin with max parameters" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    // Test with many parameters (up to MAX_PARAMS)
+    var params: [MAX_PARAMS]zdbc.Value = undefined;
+    var placeholders_buf: [MAX_PARAMS * 3]u8 = undefined;
+    var offset: usize = 0;
+
+    for (0..MAX_PARAMS) |i| {
+        params[i] = zdbc.Value.initInt(@intCast(i));
+        if (i > 0) {
+            placeholders_buf[offset] = ',';
+            offset += 1;
+        }
+        placeholders_buf[offset] = '?';
+        offset += 1;
+    }
+
+    const placeholders = placeholders_buf[0..offset];
+    var sql_buf: [256]u8 = undefined;
+    const sql = try std.fmt.bufPrint(&sql_buf, "SELECT {s}", .{placeholders});
+
+    // Should not error with MAX_PARAMS
+    var result = try plugin.query(sql, params[0..MAX_PARAMS]);
+    defer result.deinit();
+    _ = try result.next();
+}
+
+test "DbPlugin statement cache eviction" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    // Small cache size to test eviction
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":3}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    _ = try plugin.exec("CREATE TABLE test (id INTEGER, value TEXT)", &.{});
+
+    // Prepare more statements than cache size
+    _ = try plugin.prepare("INSERT INTO test VALUES (1, 'a')");
+    _ = try plugin.prepare("INSERT INTO test VALUES (2, 'b')");
+    _ = try plugin.prepare("INSERT INTO test VALUES (3, 'c')");
+
+    if (plugin.getStmtCacheStats()) |stats| {
+        try testing.expect(stats.size == 3); // Cache is full
+        try testing.expect(stats.misses == 3); // All were misses
+    }
+
+    // This should trigger eviction
+    _ = try plugin.prepare("INSERT INTO test VALUES (4, 'd')");
+
+    if (plugin.getStmtCacheStats()) |stats| {
+        try testing.expect(stats.size == 3); // Cache size should remain at max
+        try testing.expect(stats.misses == 4);
+    }
+}
+
+test "DbPlugin error handling" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    // Test operations without initialization
+    const result = plugin.query("SELECT 1", &.{});
+    try testing.expectError(zdbc.Error.ConnectionFailed, result);
+
+    const exec_result = plugin.exec("INSERT INTO test VALUES (1)", &.{});
+    try testing.expectError(zdbc.Error.ConnectionFailed, exec_result);
+
+    const prepare_result = plugin.prepare("SELECT 1");
+    try testing.expectError(zdbc.Error.NotImplemented, prepare_result);
+}
+
+test "DbPlugin health check" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    // Should not be healthy without initialization
+    try testing.expect(!plugin.isHealthy());
+
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    // Should be healthy after initialization
+    try testing.expect(plugin.isHealthy());
+}
+
+test "DbPlugin ping operation" {
+    const testing = std.testing;
+
+    const plugin = try DbPlugin.create(testing.allocator);
+    defer testing.allocator.destroy(plugin);
+
+    const config_json = "{\"uri\":\"sqlite://:memory:\",\"pool_size\":1,\"stmt_cache_size\":10}";
+    var p = plugin.asPlugin();
+    try testing.expect(p.init(testing.allocator, config_json));
+    defer p.deinit();
+
+    // Ping should succeed
+    try plugin.ping();
 }
