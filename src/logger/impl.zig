@@ -14,6 +14,11 @@ pub const LogFormat = formatter_mod.LogFormat;
 const LOG_BUFFER_SIZE = 4096;
 const ASYNC_QUEUE_SIZE = 1024;
 
+/// Global logger instance for std.log integration
+/// Must be set via setGlobalLogger() to enable std.log compatibility
+var global_logger: ?*Logger = null;
+var global_logger_mutex: std.Thread.Mutex = .{};
+
 /// Log message for async queue
 const LogMessage = struct {
     data: [LOG_BUFFER_SIZE]u8,
@@ -277,14 +282,37 @@ pub const Logger = struct {
     }
 };
 
+/// Set global logger for std.log integration
+/// This allows std.log.* calls to use the configured logger
+pub fn setGlobalLogger(logger: *Logger) void {
+    global_logger_mutex.lock();
+    defer global_logger_mutex.unlock();
+    global_logger = logger;
+}
+
+/// Clear global logger
+pub fn clearGlobalLogger() void {
+    global_logger_mutex.lock();
+    defer global_logger_mutex.unlock();
+    global_logger = null;
+}
+
 /// Compatibility function for std.log integration
+/// To use this, call setGlobalLogger() with your logger instance,
+/// then configure your build.zig to use this as the log function:
+///
+/// ```zig
+/// pub const std_options = .{
+///     .logFn = @import("logger/logger.zig").logFn,
+/// };
+/// ```
 pub fn logFn(
     comptime level: std.log.Level,
     comptime scope: @Type(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    _ = scope; // TODO: could add scope to log message
+    const scope_name = @tagName(scope);
 
     const our_level: LogLevel = switch (level) {
         .debug => .debug,
@@ -293,16 +321,34 @@ pub fn logFn(
         .err => .err,
     };
 
-    // This requires a global logger instance to be set
-    // For now, just print to stderr
-    var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
-    const message = std.fmt.bufPrint(&msg_buf, format, args) catch return;
+    // Try to use global logger if set
+    global_logger_mutex.lock();
+    const logger = global_logger;
+    global_logger_mutex.unlock();
 
-    var log_buf: [LOG_BUFFER_SIZE]u8 = undefined;
-    const log_line = formatter_mod.formatMessage(&log_buf, our_level, .text, message, null) catch return;
+    if (logger) |log| {
+        // Format message with scope
+        var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+        const message = if (scope == .default)
+            std.fmt.bufPrint(&msg_buf, format, args) catch return
+        else
+            std.fmt.bufPrint(&msg_buf, "({s}) " ++ format, .{scope_name} ++ args) catch return;
 
-    const stderr = std.io.getStdErr().writer();
-    _ = stderr.write(log_line) catch {};
+        log.log(our_level, "{s}", .{message});
+    } else {
+        // Fallback: print directly to stderr
+        var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+        const message = if (scope == .default)
+            std.fmt.bufPrint(&msg_buf, format, args) catch return
+        else
+            std.fmt.bufPrint(&msg_buf, "({s}) " ++ format, .{scope_name} ++ args) catch return;
+
+        var log_buf: [LOG_BUFFER_SIZE]u8 = undefined;
+        const log_line = formatter_mod.formatMessage(&log_buf, our_level, .text, message, null) catch return;
+
+        const stderr = std.io.getStdErr().writer();
+        _ = stderr.write(log_line) catch {};
+    }
 }
 
 test "Logger basic" {

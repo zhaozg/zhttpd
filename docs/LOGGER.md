@@ -26,8 +26,8 @@ The logger module in zhttpd has been refactored to provide high performance, ext
 
 ```
 logger/
-├── logger.zig        # Main entry point with backward compatibility
-├── logger_v2.zig     # New implementation
+├── logger.zig        # Main entry point with backward-compatible API
+├── impl.zig          # Core logger implementation
 ├── backend.zig       # Backend interface and implementations
 ├── formatter.zig     # Message formatting (text/JSON)
 └── async_queue.zig   # Bounded FIFO queue for async mode
@@ -52,37 +52,36 @@ pub const Backend = struct {
 
 ## Usage
 
-### Basic Usage (Legacy API)
+### Basic Usage
 
-The legacy API remains unchanged for backward compatibility:
+The simple API provides backward compatibility:
 
 ```zig
 const logger_mod = @import("logger/logger.zig");
-const Logger = logger_mod.Logger;
-const LogLevel = logger_mod.LogLevel;
 
 // Initialize with file output
-var logger = try Logger.init(allocator, .info, "app.log");
+var logger = try logger_mod.init(allocator, .info, "app.log");
 defer logger.deinit();
 
 // Log at different levels
 logger.debug("Debug message: {d}", .{42});
 logger.info("Server started on port {d}", .{8080});
 logger.warn("Connection limit reached", .{});
-logger.err("Failed to open file: {s}", .{err});
+logger.@"error"("Failed to open file: {s}", .{err});
 
 // Log with request ID for tracing
 logger.logWithRequestId(.info, "req-123", "Processing request", .{});
 ```
 
-### Advanced Usage (New API)
+### Advanced Usage
 
-The new API provides more control and features:
+The full API provides more control and features:
 
 ```zig
-const logger_v2 = @import("logger/logger_v2.zig");
-const FileBackend = logger_v2.FileBackend;
-const LoggerConfig = logger_v2.LoggerConfig;
+const logger_mod = @import("logger/logger.zig");
+const FileBackend = logger_mod.FileBackend;
+const LoggerConfig = logger_mod.LoggerConfig;
+const Logger = logger_mod.Logger;
 
 // Create a file backend
 const file_backend = try FileBackend.init(allocator, "app.log");
@@ -96,7 +95,7 @@ const config = LoggerConfig{
 };
 
 // Initialize logger
-var logger = try logger_v2.Logger.init(allocator, config, file_backend.backend());
+var logger = try Logger.init(allocator, config, file_backend.backend());
 defer logger.deinit();
 
 // Use the logger
@@ -108,9 +107,11 @@ logger.info("Application started", .{});
 Log to multiple destinations simultaneously:
 
 ```zig
-const FileBackend = logger_v2.FileBackend;
-const ConsoleBackend = logger_v2.ConsoleBackend;
-const MultiBackend = logger_v2.MultiBackend;
+const logger_mod = @import("logger/logger.zig");
+const FileBackend = logger_mod.FileBackend;
+const ConsoleBackend = logger_mod.ConsoleBackend;
+const MultiBackend = logger_mod.MultiBackend;
+const Backend = logger_mod.Backend;
 
 // Create backends
 const file = try FileBackend.init(allocator, "app.log");
@@ -121,8 +122,33 @@ const backends = [_]Backend{ file.backend(), console.backend() };
 const multi = try MultiBackend.init(allocator, &backends);
 
 // Use with logger
-var logger = try logger_v2.Logger.init(allocator, config, multi.backend());
+var logger = try logger_mod.Logger.init(allocator, config, multi.backend());
 defer logger.deinit();
+```
+
+### std.log Integration
+
+Integrate with Zig's standard logging interface:
+
+```zig
+const logger_mod = @import("logger/logger.zig");
+
+// In your root source file or build configuration
+pub const std_options = .{
+    .logFn = logger_mod.logFn,
+};
+
+// In your application initialization
+var logger = try logger_mod.init(allocator, .info, "app.log");
+logger_mod.setGlobalLogger(&logger);
+defer {
+    logger_mod.clearGlobalLogger();
+    logger.deinit();
+}
+
+// Now std.log calls will use your configured logger
+const log = std.log.scoped(.myapp);
+log.info("Application started", .{});  // Will include scope in output
 ```
 
 ### Access Logging
@@ -285,27 +311,29 @@ const CustomBackend = struct {
 
 ### From Old Logger
 
-The old logger API is maintained for compatibility:
+The old logger API is still supported:
 
 ```zig
 // Old code - still works
-var logger = try Logger.init(allocator, .info, "app.log");
+const logger_mod = @import("logger/logger.zig");
+var logger = try logger_mod.init(allocator, .info, "app.log");
 defer logger.deinit();
 logger.info("Message", .{});
 ```
 
 ### To New Logger
 
-To use new features, switch to the v2 API:
+To use new features, use the full API:
 
 ```zig
 // New code with async support
-const file_backend = try FileBackend.init(allocator, "app.log");
-const config = LoggerConfig{ 
+const logger_mod = @import("logger/logger.zig");
+const file_backend = try logger_mod.FileBackend.init(allocator, "app.log");
+const config = logger_mod.LoggerConfig{ 
     .level = .info, 
     .enable_async = true 
 };
-var logger = try logger_v2.Logger.init(allocator, config, file_backend.backend());
+var logger = try logger_mod.Logger.init(allocator, config, file_backend.backend());
 defer logger.deinit();
 logger.info("Message", .{});
 ```
@@ -352,6 +380,7 @@ Test your logging setup:
 test "logger basic usage" {
     const testing = std.testing;
     const allocator = testing.allocator;
+    const logger_mod = @import("logger/logger.zig");
 
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -361,7 +390,7 @@ test "logger basic usage" {
     const log_path = try std.fmt.allocPrint(allocator, "{s}/test.log", .{dir_path});
     defer allocator.free(log_path);
 
-    var logger = try Logger.init(allocator, .info, log_path);
+    var logger = try logger_mod.init(allocator, .info, log_path);
     defer logger.deinit();
 
     logger.info("Test message", .{});
@@ -402,11 +431,11 @@ test "logger basic usage" {
 
 Planned improvements:
 
-- [ ] std.log integration for Zig standard library logging
 - [ ] SIMD optimizations for string operations
 - [ ] Network backends (syslog, journald)
 - [ ] Log filtering and sampling
 - [ ] Performance metrics and monitoring
+- [ ] Batching optimizations for async mode
 
 ## References
 
