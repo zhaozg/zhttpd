@@ -117,9 +117,12 @@ const Backend = logger_mod.Backend;
 const file = try FileBackend.init(allocator, "app.log");
 const console = try ConsoleBackend.init(allocator);
 
-// Combine them
-const backends = [_]Backend{ file.backend(), console.backend() };
-const multi = try MultiBackend.init(allocator, &backends);
+// Allocate backends array on heap (MultiBackend will take ownership)
+const backends = try allocator.alloc(Backend, 2);
+backends[0] = file.backend();
+backends[1] = console.backend();
+
+const multi = try MultiBackend.init(allocator, backends);
 
 // Use with logger
 var logger = try logger_mod.Logger.init(allocator, config, multi.backend());

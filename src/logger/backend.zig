@@ -306,9 +306,9 @@ test "MultiBackend operations" {
     const file2 = try FileBackend.init(allocator, log_path2);
 
     const backends = try allocator.alloc(Backend, 2);
-    defer allocator.free(backends);
     backends[0] = file1.backend();
     backends[1] = file2.backend();
+    // Note: MultiBackend takes ownership and will free this slice
 
     const multi = try MultiBackend.init(allocator, backends);
     const backend = multi.backend();

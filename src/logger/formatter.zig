@@ -60,10 +60,12 @@ pub fn formatMessage(
             const escaped_msg = escapeJsonString(message, &escaped_buf);
 
             if (request_id) |rid| {
+                var escaped_rid_buf: [4096]u8 = undefined;
+                const escaped_rid = escapeJsonString(rid, &escaped_rid_buf);
                 break :blk try std.fmt.bufPrint(buf, "{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"request_id\":\"{s}\",\"message\":\"{s}\"}}\n", .{
                     &timestamp,
                     level.toJsonLevel(),
-                    rid,
+                    escaped_rid,
                     escaped_msg,
                 });
             } else {

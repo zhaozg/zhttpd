@@ -64,6 +64,7 @@ pub fn initWithFormat(allocator: std.mem.Allocator, level: LogLevel, log_file_pa
     if (log_file_path) |path| {
         const file_backend = try FileBackend.init(allocator, path);
         backend = file_backend.backend();
+        errdefer backend.?.deinit();
     }
 
     const config = LoggerConfig{

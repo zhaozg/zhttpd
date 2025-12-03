@@ -82,6 +82,8 @@ pub const Logger = struct {
         // Initialize async queue and writer thread if enabled
         if (config.enable_async and backend != null) {
             const queue = try allocator.create(AsyncQueue);
+            errdefer allocator.destroy(queue);
+
             queue.* = AsyncQueue.init();
             logger.async_queue = queue;
 
@@ -208,15 +210,16 @@ pub const Logger = struct {
         // Wait for async queue to drain if enabled
         if (self.async_queue) |queue| {
             // Use a more efficient wait with timeout instead of busy-wait
-            const timeout_ns = 100 * std.time.ns_per_ms; // 100ms timeout
+            const timeout_ns = 5 * std.time.ns_per_s; // 5 second timeout
             const start = std.time.nanoTimestamp();
             while (!queue.isEmpty()) {
                 const elapsed = std.time.nanoTimestamp() - start;
                 if (elapsed > timeout_ns) {
-                    std.debug.print("Logger flush timeout: queue not empty\n", .{});
+                    const remaining = queue.len();
+                    std.debug.print("Logger flush timeout: {d} messages remaining in queue\n", .{remaining});
                     break;
                 }
-                std.Thread.sleep(1 * std.time.ns_per_ms);
+                std.Thread.sleep(10 * std.time.ns_per_ms);
             }
         }
 
@@ -269,16 +272,23 @@ pub const Logger = struct {
         const duration_ms = @as(f64, @floatFromInt(duration_us)) / 1000.0;
         const timestamp_str = formatter_mod.formatTimestamp();
 
+        // Sanitize fields to prevent log injection
+        var sanitized_path: [LOG_BUFFER_SIZE]u8 = undefined;
+        const safe_path = sanitizeLogField(path, &sanitized_path);
+
+        var sanitized_ua: [LOG_BUFFER_SIZE]u8 = undefined;
+        const safe_ua = sanitizeLogField(user_agent, &sanitized_ua);
+
         var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
         const log_line = std.fmt.bufPrint(&msg_buf, "{s} - - [{s}] \"{s} {s} {s}\" {d} {d} \"{s}\" {d:.2}ms\n", .{
             remote_addr,
             &timestamp_str,
             method,
-            path,
+            safe_path,
             protocol,
             status,
             bytes_sent,
-            user_agent,
+            safe_ua,
             duration_ms,
         }) catch return;
 
@@ -291,6 +301,22 @@ pub const Logger = struct {
                 self.writeSync(log_line);
             }
         }
+    }
+
+    /// Sanitize log field by replacing newlines and other control characters
+    fn sanitizeLogField(input: []const u8, buf: []u8) []const u8 {
+        var pos: usize = 0;
+        for (input) |c| {
+            if (pos >= buf.len) break;
+            // Replace control characters with spaces
+            if (c < 32 or c == 127) {
+                buf[pos] = ' ';
+            } else {
+                buf[pos] = c;
+            }
+            pos += 1;
+        }
+        return buf[0..pos];
     }
 };
 
@@ -335,10 +361,10 @@ pub fn logFn(
 
     // Try to use global logger if set
     global_logger_mutex.lock();
-    const logger = global_logger;
+    const logger_copy = global_logger;
     global_logger_mutex.unlock();
 
-    if (logger) |log| {
+    if (logger_copy) |log| {
         // Format message with scope
         if (scope == .default) {
             var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
