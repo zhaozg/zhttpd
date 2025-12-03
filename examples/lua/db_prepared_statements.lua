@@ -4,7 +4,7 @@
 -- The refactored db API provides three ways to execute SQL:
 --   1. db.query(sql, ...) - Direct query without caching
 --   2. db.exec(sql, ...)  - Direct exec without caching
---   3. db.prepare(sql)    - Prepare statement with caching (returns statement object)
+--   3. db:prepare(sql)    - Prepare statement with caching (returns statement object)
 --
 -- Prepared statements are automatically cached and reused, improving performance
 -- for frequently executed queries.
@@ -95,7 +95,7 @@ function handle(request, response, context)
         end
         
         -- Use prepared statement for insert (will be cached)
-        local stmt = db.prepare("INSERT INTO users (username, email, full_name) VALUES (?, ?, ?)")
+        local stmt = db:prepare("INSERT INTO users (username, email, full_name) VALUES (?, ?, ?)")
         if not stmt then
             response:status(500)
             return {
@@ -125,7 +125,7 @@ function handle(request, response, context)
     local user_id = parse_id_from_path(path)
     if method == "GET" and user_id then
         -- Use prepared statement for select (will be cached)
-        local stmt = db.prepare("SELECT id, username, email, full_name, created_at FROM users WHERE id = ?")
+        local stmt = db:prepare("SELECT id, username, email, full_name, created_at FROM users WHERE id = ?")
         if not stmt then
             response:status(500)
             return {
@@ -209,7 +209,7 @@ function handle(request, response, context)
         local update_sql = "UPDATE users SET " .. table.concat(fields, ", ") .. " WHERE id = ?"
         
         -- Use prepared statement (will be cached for each unique SQL)
-        local stmt = db.prepare(update_sql)
+        local stmt = db:prepare(update_sql)
         if not stmt then
             response:status(500)
             return {
@@ -245,7 +245,7 @@ function handle(request, response, context)
     -- DELETE /api/prepared/users/:id - Delete user using prepared statement
     if method == "DELETE" and user_id then
         -- Use prepared statement for delete (will be cached)
-        local stmt = db.prepare("DELETE FROM users WHERE id = ?")
+        local stmt = db:prepare("DELETE FROM users WHERE id = ?")
         if not stmt then
             response:status(500)
             return {
@@ -280,7 +280,7 @@ function handle(request, response, context)
     
     -- GET /api/prepared/stats - Get cache statistics
     if method == "GET" and path == "/api/prepared/stats" then
-        local status = db.status()
+        local status = db:status()
         
         response:status(200)
         return {
