@@ -176,20 +176,23 @@ fn getSessionManager() ?*SessionManager {
 fn sessionNewIndex(lua: *ziglua.Lua) i32 {
     // Get the key being set
     const key = lua.toString(2) catch {
-        _ = lua.pushString("invalid key");
+        _ = lua.pushString("session field key must be a string");
         lua.raiseError();
     };
     
     // Prevent modification of internal fields
     if (std.mem.startsWith(u8, key, "_")) {
-        _ = lua.pushString("cannot modify internal session fields");
+        const arena = std.heap.page_allocator;
+        const err_msg = std.fmt.allocPrint(arena, "cannot modify internal session field: {s}", .{key}) catch 
+            "cannot modify internal session fields";
+        _ = lua.pushString(err_msg);
         lua.raiseError();
     }
     
     // For non-internal fields, allow the assignment to go through
     // by doing a raw set on the table
-    // Stack: [table, key, value]
-    lua.rawSetTable(1); // table[key] = value
+    // Stack: [table, key, value] at positions 1, 2, 3
+    lua.rawSetTable(1); // table[key] = value, pops key and value from stack
     return 0;
 }
 
