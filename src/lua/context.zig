@@ -689,8 +689,9 @@ fn reqHeaders(lua: *ziglua.Lua) i32 {
     lua.createTable(0, @intCast(@min(header_count, MAX_BATCH_STACK_SIZE))); // Preallocate hash part
 
     // Optimization: Prealloc stack space to avoid reallocation during iteration
-    // Each iteration needs 2 slots (key + value), plus safety margin
-    _ = lua.checkStack(@intCast(@min(header_count * 2 + 5, MAX_BATCH_STACK_SIZE)));
+    // pushKeyToTable immediately calls setField which pops both key and value
+    // Only a few slots needed at any given time
+    _ = lua.checkStack(@intCast(@min(10, MAX_BATCH_STACK_SIZE)));
 
     var iter = req.headers.iterator();
     while (iter.next()) |entry| {
@@ -763,8 +764,10 @@ fn reqQueryAll(lua: *ziglua.Lua) i32 {
         const estimated_params = @min(std.mem.count(u8, req.url.query, "&") + 1, MAX_QUERY_PARAMS_ESTIMATE);
         lua.createTable(0, @intCast(estimated_params)); // Preallocate hash part
         
-        // Optimization: Prealloc stack (each '&' or '=' indicates param)
-        _ = lua.checkStack(@intCast(@min(estimated_params * 2 + 5, MAX_BATCH_STACK_SIZE)));
+        // Optimization: Prealloc stack for query parameter iteration
+        // pushKeyToTable immediately calls setField which pops both key and value
+        // Only a few slots needed at any given time
+        _ = lua.checkStack(@intCast(@min(10, MAX_BATCH_STACK_SIZE)));
 
         var query_iter = std.mem.splitScalar(u8, req.url.query, '&');
         while (query_iter.next()) |param| {

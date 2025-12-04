@@ -41,8 +41,8 @@
 //! - **Stack Preallocation**: Preallocates stack space in `session:keys()` before batch
 //!   operations to avoid reallocation overhead.
 //!
-//! - **Light Userdata Avoided**: Session IDs are stored as strings (not userdata) since
-//!   they're immutable and short (64 chars), making string storage more efficient.
+//! - **String Storage for Session IDs**: Session IDs are stored as strings since
+//!   they're human-readable identifiers, not opaque pointers. This matches their use in the application logic.
 //!
 //! ## Binary String Support
 //! Lua strings can contain arbitrary binary data including null bytes.
@@ -79,6 +79,10 @@ pub fn registerSessionMetatable(lua: *ziglua.Lua) void {
     // Set __index to the metatable itself for method lookup
     lua.pushValue(-1);
     lua.setField(-2, "__index");
+
+    // Set __newindex to prevent modification of internal fields
+    lua.pushFunction(ziglua.wrap(sessionNewIndex));
+    lua.setField(-2, "__newindex");
 
     // Register methods
     lua.pushFunction(ziglua.wrap(sessionId));
@@ -165,6 +169,27 @@ fn getSessionIdFromLua(lua: *ziglua.Lua) ?[]const u8 {
 /// Get the session manager
 fn getSessionManager() ?*SessionManager {
     return session_mod.getGlobalManager();
+}
+
+/// __newindex metamethod to prevent modification of internal fields
+/// This protects _session_id from being modified by Lua scripts
+fn sessionNewIndex(lua: *ziglua.Lua) i32 {
+    // Get the key being set
+    const key = lua.toString(2) catch {
+        _ = lua.pushString("invalid key");
+        lua.raiseError();
+    };
+    
+    // Prevent modification of internal fields
+    if (std.mem.startsWith(u8, key, "_")) {
+        _ = lua.pushString("cannot modify internal session fields");
+        lua.raiseError();
+    }
+    
+    // For non-internal fields, allow the assignment to go through
+    // by doing a raw set on the table
+    lua.rawSet(1);
+    return 0;
 }
 
 // =============================================================================
@@ -332,7 +357,8 @@ fn sessionKeys(lua: *ziglua.Lua) i32 {
         lua.createTable(@intCast(@min(key_count, MAX_BATCH_STACK_SIZE)), 0); // Preallocate array part
         
         // Optimization: Prealloc stack for batch key insertion
-        _ = lua.checkStack(@intCast(@min(key_count * 2 + 5, MAX_BATCH_STACK_SIZE)));
+        // Each iteration pushes one key, which rawSetIndex pops immediately
+        _ = lua.checkStack(@intCast(@min(key_count + 5, MAX_BATCH_STACK_SIZE)));
         
         var idx: i32 = 1;
         var iter = result.value.data.iterator();
