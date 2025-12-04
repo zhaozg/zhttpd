@@ -188,7 +188,8 @@ fn sessionNewIndex(lua: *ziglua.Lua) i32 {
     
     // For non-internal fields, allow the assignment to go through
     // by doing a raw set on the table
-    lua.rawSet(1);
+    // Stack: [table, key, value]
+    lua.rawSetTable(1); // table[key] = value
     return 0;
 }
 
