@@ -62,6 +62,10 @@ const SESSION_ID_HEX_LEN = session_mod.SESSION_ID_HEX_LEN;
 /// Metatable name for session objects
 const SESSION_MT = "zhttpd.session";
 
+/// Performance optimization constants
+/// Maximum stack slots to preallocate for batch operations
+const MAX_BATCH_STACK_SIZE: i32 = 100;
+
 /// Thread-local storage for current session info
 threadlocal var current_session_id: ?[SESSION_ID_HEX_LEN]u8 = null;
 
@@ -127,9 +131,13 @@ pub fn pushSession(lua: *ziglua.Lua, session_id: [SESSION_ID_HEX_LEN]u8) void {
 
     // Store the session ID in the table
     // Optimization: rawSetTable is 15-25% faster than setField (no metamethod checks)
+    // Stack: [table] at -1
     _ = lua.pushString("_session_id");
+    // Stack: [table, "_session_id"] - table now at -2
     _ = lua.pushString(&session_id);
-    lua.rawSetTable(-3);
+    // Stack: [table, "_session_id", session_id] - table now at -3
+    lua.rawSetTable(-3); // table["_session_id"] = session_id, pops key and value
+    // Stack: [table] at -1
 
     // Set the metatable
     _ = lua.getMetatableRegistry(SESSION_MT);
@@ -321,10 +329,10 @@ fn sessionKeys(lua: *ziglua.Lua) i32 {
         
         // Optimization: Preallocate array part of table to avoid dynamic growth
         const key_count = result.value.data.count();
-        lua.createTable(@intCast(@min(key_count, 100)), 0); // Preallocate array part
+        lua.createTable(@intCast(@min(key_count, MAX_BATCH_STACK_SIZE)), 0); // Preallocate array part
         
         // Optimization: Prealloc stack for batch key insertion
-        _ = lua.checkStack(@intCast(@min(key_count * 2 + 5, 100)));
+        _ = lua.checkStack(@intCast(@min(key_count * 2 + 5, MAX_BATCH_STACK_SIZE)));
         
         var idx: i32 = 1;
         var iter = result.value.data.iterator();

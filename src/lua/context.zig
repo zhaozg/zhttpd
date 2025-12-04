@@ -321,9 +321,13 @@ fn contextDb(lua: *ziglua.Lua) i32 {
 
     // Store the plugin pointer as light userdata
     // Optimization: Use rawSetTable instead of setField for internal fields (15-25% faster)
+    // Stack: [table] at -1
     _ = lua.pushString("_plugin");
+    // Stack: [table, "_plugin"] - table now at -2
     lua.pushLightUserdata(@ptrCast(plugin));
-    lua.rawSetTable(-3); // table[_plugin] = userdata
+    // Stack: [table, "_plugin", userdata] - table now at -3
+    lua.rawSetTable(-3); // table["_plugin"] = userdata, pops key and value
+    // Stack: [table] at -1
 
     // Set the pre-registered metatable (no need to check/register methods)
     _ = lua.getMetatableRegistry(DB_CONN_MT);
@@ -515,9 +519,13 @@ fn pushRequestInternal(lua: *ziglua.Lua, req: *httpz.Request) void {
 
     // Store the request pointer as light userdata in the table
     // Optimization: rawSetTable is faster than setField (no metamethod overhead)
+    // Stack: [table] at -1
     _ = lua.pushString("_ptr");
+    // Stack: [table, "_ptr"] - table now at -2
     lua.pushLightUserdata(@ptrCast(req));
-    lua.rawSetTable(-3);
+    // Stack: [table, "_ptr", userdata] - table now at -3
+    lua.rawSetTable(-3); // table["_ptr"] = userdata, pops key and value
+    // Stack: [table] at -1
 
     // Set the metatable
     _ = lua.getMetatableRegistry(REQUEST_MT);
@@ -533,9 +541,13 @@ fn pushResponseInternal(lua: *ziglua.Lua, res: *httpz.Response) void {
 
     // Store the response pointer as light userdata in the table
     // Optimization: rawSetTable is faster than setField (no metamethod overhead)
+    // Stack: [table] at -1
     _ = lua.pushString("_ptr");
+    // Stack: [table, "_ptr"] - table now at -2
     lua.pushLightUserdata(@ptrCast(res));
-    lua.rawSetTable(-3);
+    // Stack: [table, "_ptr", userdata] - table now at -3
+    lua.rawSetTable(-3); // table["_ptr"] = userdata, pops key and value
+    // Stack: [table] at -1
 
     // Set the metatable
     _ = lua.getMetatableRegistry(RESPONSE_MT);
@@ -668,11 +680,11 @@ fn reqHeaders(lua: *ziglua.Lua) i32 {
 
     // Optimization: Preallocate table with expected size to avoid dynamic growth
     const header_count = req.headers.len;
-    lua.createTable(0, @intCast(@min(header_count, 100))); // Preallocate hash part
+    lua.createTable(0, @intCast(@min(header_count, MAX_BATCH_STACK_SIZE))); // Preallocate hash part
 
     // Optimization: Prealloc stack space to avoid reallocation during iteration
     // Each iteration needs 2 slots (key + value), plus safety margin
-    _ = lua.checkStack(@intCast(@min(header_count * 2 + 5, 100)));
+    _ = lua.checkStack(@intCast(@min(header_count * 2 + 5, MAX_BATCH_STACK_SIZE)));
 
     var iter = req.headers.iterator();
     while (iter.next()) |entry| {
@@ -742,7 +754,7 @@ fn reqQueryAll(lua: *ziglua.Lua) i32 {
 
     if (req.url.query.len > 0) {
         // Optimization: Estimate param count and preallocate table to avoid dynamic growth
-        const estimated_params = @min(std.mem.count(u8, req.url.query, "&") + 1, 50);
+        const estimated_params = @min(std.mem.count(u8, req.url.query, "&") + 1, MAX_QUERY_PARAMS_ESTIMATE);
         lua.createTable(0, @intCast(estimated_params)); // Preallocate hash part
         
         // Optimization: Prealloc stack (each '&' or '=' indicates param)
