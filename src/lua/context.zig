@@ -96,6 +96,12 @@ pub const ResponseUserdata = struct {
 /// Maximum size for header/query parameter keys
 const MAX_KEY_SIZE: usize = 256;
 
+/// Performance optimization constants
+/// Maximum stack slots to preallocate for batch operations
+const MAX_BATCH_STACK_SIZE: i32 = 100;
+/// Maximum query parameters to estimate for preallocation
+const MAX_QUERY_PARAMS_ESTIMATE: usize = 50;
+
 /// Metatable names for userdata types
 const REQUEST_MT = "zhttpd.request";
 const RESPONSE_MT = "zhttpd.response";
