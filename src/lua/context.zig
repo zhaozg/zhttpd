@@ -764,7 +764,7 @@ fn reqQueryAll(lua: *ziglua.Lua) i32 {
         lua.createTable(0, @intCast(estimated_params)); // Preallocate hash part
         
         // Optimization: Prealloc stack (each '&' or '=' indicates param)
-        _ = lua.checkStack(@intCast(estimated_params * 2 + 5));
+        _ = lua.checkStack(@intCast(@min(estimated_params * 2 + 5, MAX_BATCH_STACK_SIZE)));
 
         var query_iter = std.mem.splitScalar(u8, req.url.query, '&');
         while (query_iter.next()) |param| {
