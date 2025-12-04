@@ -179,13 +179,13 @@ fn sessionNewIndex(lua: *ziglua.Lua) i32 {
         _ = lua.pushString("session field key must be a string");
         lua.raiseError();
     };
-    
+
     // Prevent modification of internal fields (those starting with '_')
     if (std.mem.startsWith(u8, key, "_")) {
         _ = lua.pushString("cannot modify internal session fields");
         lua.raiseError();
     }
-    
+
     // For non-internal fields, allow the assignment to go through
     // by doing a raw set on the table
     // Stack: [table, key, value] at positions 1, 2, 3
@@ -352,15 +352,15 @@ fn sessionKeys(lua: *ziglua.Lua) i32 {
 
     if (manager.getEntry(session_id)) |result| {
         defer result.entry.release();
-        
+
         // Optimization: Preallocate array part of table to avoid dynamic growth
         const key_count = result.value.data.count();
         lua.createTable(@intCast(@min(key_count, MAX_BATCH_STACK_SIZE)), 0); // Preallocate array part
-        
+
         // Optimization: Prealloc stack for batch key insertion
         // Each iteration pushes one key, which rawSetIndex pops immediately
-        _ = lua.checkStack(@intCast(@min(key_count + 5, MAX_BATCH_STACK_SIZE)));
-        
+        lua.checkStack(@intCast(@min(key_count + 5, MAX_BATCH_STACK_SIZE))) catch {};
+
         var idx: i32 = 1;
         var iter = result.value.data.iterator();
         while (iter.next()) |kv| {

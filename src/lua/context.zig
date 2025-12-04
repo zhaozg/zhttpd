@@ -12,7 +12,7 @@
 //!   are registered once during Lua state initialization, not per-request or per-call.
 //!   This eliminates the overhead of checking and re-registering methods on every request.
 //!
-//! - **Raw Access Operations**: Uses `rawGetTable` and `rawSetTable` instead of `getField` 
+//! - **Raw Access Operations**: Uses `rawGetTable` and `rawSetTable` instead of `getField`
 //!   and `setField` for internal field access. Raw operations are 15-25% faster as they skip
 //!   metamethod checks and don't require null-terminated strings.
 //!
@@ -691,7 +691,7 @@ fn reqHeaders(lua: *ziglua.Lua) i32 {
     // Optimization: Prealloc stack space to avoid reallocation during iteration
     // pushKeyToTable immediately calls setField which pops both key and value
     // Only a few slots needed at any given time
-    _ = lua.checkStack(@intCast(@min(10, MAX_BATCH_STACK_SIZE)));
+    lua.checkStack(@intCast(@min(10, MAX_BATCH_STACK_SIZE))) catch {};
 
     var iter = req.headers.iterator();
     while (iter.next()) |entry| {
@@ -763,11 +763,11 @@ fn reqQueryAll(lua: *ziglua.Lua) i32 {
         // Optimization: Estimate param count and preallocate table to avoid dynamic growth
         const estimated_params = @min(std.mem.count(u8, req.url.query, "&") + 1, MAX_QUERY_PARAMS_ESTIMATE);
         lua.createTable(0, @intCast(estimated_params)); // Preallocate hash part
-        
+
         // Optimization: Prealloc stack for query parameter iteration
         // pushKeyToTable immediately calls setField which pops both key and value
         // Only a few slots needed at any given time
-        _ = lua.checkStack(@intCast(@min(10, MAX_BATCH_STACK_SIZE)));
+        lua.checkStack(@intCast(@min(10, MAX_BATCH_STACK_SIZE))) catch {};
 
         var query_iter = std.mem.splitScalar(u8, req.url.query, '&');
         while (query_iter.next()) |param| {
