@@ -180,12 +180,9 @@ fn sessionNewIndex(lua: *ziglua.Lua) i32 {
         lua.raiseError();
     };
     
-    // Prevent modification of internal fields
+    // Prevent modification of internal fields (those starting with '_')
     if (std.mem.startsWith(u8, key, "_")) {
-        const arena = std.heap.page_allocator;
-        const err_msg = std.fmt.allocPrint(arena, "cannot modify internal session field: {s}", .{key}) catch 
-            "cannot modify internal session fields";
-        _ = lua.pushString(err_msg);
+        _ = lua.pushString("cannot modify internal session fields");
         lua.raiseError();
     }
     
