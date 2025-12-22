@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// Lua language/engine options
 pub const LuaLang = enum {
@@ -13,7 +14,8 @@ pub fn build(b: *std.Build) void {
     // Lua engine selection option
     // LuaJIT is the default for better performance through JIT compilation
     // Use -Dlua-lang=lua54 for standard Lua 5.4 if needed
-    const lua_lang = b.option(LuaLang, "lua-lang", "Lua language/engine to use (lua54 or luajit)") orelse .luajit;
+    const default_lua_lang = if (builtin.os.tag == .macos) .lua54 else .luajit;
+    const lua_lang = b.option(LuaLang, "lua-lang", "Lua language/engine to use (lua54 or luajit)") orelse default_lua_lang;
 
     // Warn about known LuaJIT issues on macOS/Darwin
     // This is an upstream issue in ziglua - it unconditionally links libunwind
@@ -25,6 +27,7 @@ pub fn build(b: *std.Build) void {
             \\Consider using -Dlua-lang=lua54 on macOS for now.
             \\See: https://github.com/natecraddock/ziglua/issues for updates.
         , .{});
+        return;
     }
 
     // Dependencies
