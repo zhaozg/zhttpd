@@ -44,12 +44,12 @@ server {
     listen 80;
     listen [::]:80;
     server_name example.com www.example.com;
-    
+
     # ACME challenge for Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
-    
+
     location / {
         return 301 https://$host$request_uri;
     }
@@ -64,49 +64,49 @@ server {
     # SSL Certificate (Let's Encrypt)
     ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
-    
+
     # Modern TLS configuration
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers on;
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
-    
+
     # OCSP Stapling
     ssl_stapling on;
     ssl_stapling_verify on;
     resolver 8.8.8.8 8.8.4.4 valid=300s;
     resolver_timeout 5s;
-    
+
     # HSTS (HTTP Strict Transport Security)
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
-    
+
     # Proxy settings
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
-        
+
         # Preserve client IP
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Host $host;
-        
+
         # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        
+
         # Timeouts
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        
+
         # Buffering
         proxy_buffering on;
         proxy_buffer_size 4k;
         proxy_buffers 8 4k;
     }
-    
+
     # Health check bypass (for load balancers)
     location /health {
         proxy_pass http://127.0.0.1:8080;
@@ -146,25 +146,25 @@ Create `/etc/caddy/Caddyfile`:
 ```
 example.com {
     # Automatic HTTPS with Let's Encrypt
-    
+
     # Reverse proxy to zhttpd
     reverse_proxy localhost:8080 {
         # WebSocket support
         header_up Upgrade {http.request.header.Upgrade}
         header_up Connection {http.request.header.Connection}
-        
+
         # Health checks
         health_uri /health
         health_interval 30s
     }
-    
+
     # HSTS
     header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-    
+
     # Security headers (zhttpd already adds these, but extra layer doesn't hurt)
     header X-Content-Type-Options nosniff
     header X-Frame-Options SAMEORIGIN
-    
+
     # Logging
     log {
         output file /var/log/caddy/access.log
@@ -196,21 +196,21 @@ global
 frontend https_frontend
     bind *:443 ssl crt /etc/ssl/private/example.com.pem
     mode http
-    
+
     # HSTS
     http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-    
+
     # Forward real IP
     option forwardfor
     http-request set-header X-Forwarded-Proto https
-    
+
     default_backend zhttpd_backend
 
 backend zhttpd_backend
     mode http
     balance roundrobin
     option httpchk GET /health
-    
+
     server zhttpd1 127.0.0.1:8080 check
     server zhttpd2 127.0.0.1:8081 check
     server zhttpd3 127.0.0.1:8082 check

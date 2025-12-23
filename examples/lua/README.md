@@ -15,16 +15,16 @@ function handle(request, response, context)
     local path = request:path()
     local header = request:header("content-type")
     local body = request:body()
-    
+
     -- Set response properties
     response:status(200)
     response:header("X-Custom-Header", "value")
     response:content_type("application/json")
-    
+
     -- Use per-request data storage
     context.user_id = "12345"
     context.processed = true
-    
+
     return { status = "success", user = context.user_id }
 end
 
@@ -263,21 +263,21 @@ function handle_request(request)
     local method = request.method
     local path = request.path
     local body = request.body
-    
+
     -- Access headers (luvit/Node.js style)
     local auth_header = request.headers and request.headers["authorization"] or nil
-    
+
     -- Access query parameters
     local page = request.query and request.query["page"] or "1"
-    
+
     -- Your logic here
     if method == "GET" then
-        return { 
-            status = "success", 
-            data = { 
+        return {
+            status = "success",
+            data = {
                 message = "GET response",
                 page = page
-            } 
+            }
         }
     elseif method == "POST" then
         return { status = "success", data = { received = body } }

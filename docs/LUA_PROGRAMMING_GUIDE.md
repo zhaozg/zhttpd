@@ -52,7 +52,7 @@ function handle(request, response, context)
     -- request: Object for reading request data
     -- response: Object for setting response properties
     -- context: A Lua table for per-request data storage
-    
+
     return { status = "success" }
 end
 ```
@@ -219,7 +219,7 @@ local current_type = response:content_type()
 
 ### `response:body(content)`
 
-Sets or gets the response body directly. 
+Sets or gets the response body directly.
 
 > **Note:** The return value from your handler is always serialized to JSON and used as the response body. If you set the body via `response:body()`, it will be overwritten by the JSON serialization of your return value. To use a custom body, return `nil` from your handler.
 
@@ -247,17 +247,17 @@ Once `chunk()` is called, the response enters chunked mode and subsequent calls 
 ```lua
 function handle(request, response, context)
     response:content_type("text/plain")
-    
+
     -- Send first chunk
     response:chunk("Processing started...\n")
-    
+
     -- Do some work and send progress
     response:chunk("Step 1 complete\n")
     response:chunk("Step 2 complete\n")
-    
+
     -- Send final chunk
     response:chunk("Done!\n")
-    
+
     -- Return nil to avoid JSON serialization
     return nil
 end
@@ -268,11 +268,11 @@ end
 ```lua
 function handle(request, response, context)
     response:content_type("text/html")
-    
+
     -- Send initial HTML structure
     response:chunk("<!DOCTYPE html><html><body>")
     response:chunk("<h1>Loading data...</h1>")
-    
+
     -- Progressively load and send data
     response:chunk("<ul>")
     for i = 1, 10 do
@@ -280,10 +280,10 @@ function handle(request, response, context)
         response:chunk(item)
     end
     response:chunk("</ul>")
-    
+
     -- Close HTML
     response:chunk("</body></html>")
-    
+
     return nil
 end
 ```
@@ -295,14 +295,14 @@ function handle(request, response, context)
     response:content_type("text/event-stream")
     response:header("Cache-Control", "no-cache")
     response:header("Connection", "keep-alive")
-    
+
     -- Send events
     response:chunk("event: message\n")
     response:chunk("data: {\"text\":\"Hello from SSE\"}\n\n")
-    
+
     response:chunk("event: update\n")
     response:chunk("data: {\"count\":42}\n\n")
-    
+
     return nil
 end
 ```
@@ -322,19 +322,19 @@ function handle(request, response, context)
     -- Store data
     context.start_time = os.time()
     context.user_id = nil
-    
+
     -- Process request
     local auth = request:header("authorization")
     if auth then
         context.user_id = validate_auth(auth)
     end
-    
+
     -- Use stored data
     local result = {
         user_id = context.user_id,
         processing_time = os.time() - context.start_time
     }
-    
+
     return result
 end
 ```
@@ -382,7 +382,7 @@ local function safe_decode(json_str)
     local success, result = pcall(function()
         return json.decode(json_str)
     end)
-    
+
     if success then
         return result
     else
@@ -404,7 +404,7 @@ end
 ```lua
 function handle(request, response, context)
     local method = request:method()
-    
+
     if method == "GET" then
         return { users = get_all_users() }
     elseif method == "POST" then
@@ -430,12 +430,12 @@ local next_id = 1
 function handle(request, response, context)
     local method = request:method()
     local path = request:path()
-    
+
     -- GET /api/users - List all users
     if method == "GET" and path == "/api/users" then
         return { users = table_values(users) }
     end
-    
+
     -- GET /api/users/:id - Get specific user
     local id = path:match("/api/users/(%d+)$")
     if method == "GET" and id then
@@ -447,7 +447,7 @@ function handle(request, response, context)
             return { error = "User not found" }
         end
     end
-    
+
     -- POST /api/users - Create user
     if method == "POST" and path == "/api/users" then
         local data = request:body()
@@ -455,7 +455,7 @@ function handle(request, response, context)
             response:status(400)
             return { error = "Name is required" }
         end
-        
+
         local user = {
             id = next_id,
             name = data.name,
@@ -464,11 +464,11 @@ function handle(request, response, context)
         }
         users[next_id] = user
         next_id = next_id + 1
-        
+
         response:status(201)
         return user
     end
-    
+
     response:status(404)
     return { error = "Route not found" }
 end
@@ -490,29 +490,29 @@ return { handle = handle }
 function handle(request, response, context)
     -- Check for authentication token
     local auth_header = request:header("authorization")
-    
+
     if not auth_header then
         response:status(401)
         response:header("WWW-Authenticate", "Bearer")
         return { error = "Authentication required" }
     end
-    
+
     -- Extract and validate token
     local token = auth_header:match("Bearer%s+(.+)")
     if not token then
         response:status(401)
         return { error = "Invalid authorization format" }
     end
-    
+
     local user = validate_token(token)
     if not user then
         response:status(403)
         return { error = "Invalid or expired token" }
     end
-    
+
     -- Store user in context for later use
     context.user = user
-    
+
     -- Process authenticated request
     return process_request(request, response, context)
 end
@@ -542,23 +542,23 @@ function handle(request, response, context)
     -- Set custom headers
     response:header("X-API-Version", "2.0")
     response:header("X-Request-ID", generate_id())
-    
+
     -- Conditional status
     local data = request:body()
     if not data then
         response:status(400)
         return { error = "Request body required" }
     end
-    
+
     -- Process and return
     local result = process(data)
-    
+
     if result.is_new then
         response:status(201)  -- Created
     else
         response:status(200)  -- OK
     end
-    
+
     return result
 end
 
@@ -591,22 +591,22 @@ Always validate request data before processing:
 ```lua
 function handle(request, response, context)
     local data = request:body()
-    
+
     if not data then
         response:status(400)
         return { error = "Request body required" }
     end
-    
+
     if not data.username or #data.username == 0 then
         response:status(400)
         return { error = "Username is required" }
     end
-    
+
     if #data.username > 100 then
         response:status(400)
         return { error = "Username too long" }
     end
-    
+
     -- Process validated data
 end
 ```
@@ -620,7 +620,7 @@ function handle(request, response, context)
     local success, result = pcall(function()
         return process_request(request, response, context)
     end)
-    
+
     if success then
         return result
     else

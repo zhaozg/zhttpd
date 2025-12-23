@@ -235,7 +235,7 @@ Production-ready observability:
 fn myHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     // Apply middleware
     if (!applyMiddleware(ctx, req, res)) return;
-    
+
     // Your logic here
     res.body = "Hello!";
 }
@@ -252,11 +252,11 @@ router.get("/my-path", myHandler, .{});
 ```zig
 pub const MyMiddleware = struct {
     config: MyConfig,
-    
+
     pub fn init(config: MyConfig) MyMiddleware {
         return .{ .config = config };
     }
-    
+
     pub fn check(self: *MyMiddleware, req: *Request) bool {
         // Return true to continue, false to block
     }

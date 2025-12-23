@@ -133,7 +133,7 @@ Sanitized output: "curl/1.0 [ERROR] Fake log entry"
 
 **Security measures:**
 - 512-byte buffer for path sanitization
-- 256-byte buffer for user-agent sanitization  
+- 256-byte buffer for user-agent sanitization
 - 128-byte buffer for IPv6 address formatting
 - Truncation detection with warning logs
 
@@ -218,7 +218,7 @@ pub fn access(...) void {
     // Format access-specific data
     const duration_ms = @as(f64, @floatFromInt(duration_us)) / 1000.0;
     const timestamp_str = formatTimestamp();
-    
+
     // Use general logger with custom format
     self.logWithTimestamp(
         "{s} - - [{s}] \"{s} {s} {s}\" {d} {d} \"{s}\" {d:.2}ms",

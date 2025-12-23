@@ -241,10 +241,10 @@ data_sources:
 function handle(request, response, context)
     -- 获取默认数据源
     local db = context:db()
-    
+
     -- 或获取指定名称的数据源
     local users_db = context:db("users_db")
-    
+
     if db then
         -- 执行查询
         local result, err = db:query("SELECT * FROM users WHERE id = ?", 1)
@@ -270,7 +270,7 @@ function handle(request, response, context)
         local status = db:status()
         print(status.connected)  -- true/false
     end
-    
+
     return { status = "ok" }
 end
 ```
@@ -524,7 +524,7 @@ h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
 - ✅ SSE 实时推送
 - ✅ JWT/OAuth 认证接口
 - ✅ WebSocket 支持 (Lua 消息处理)
-- ✅ LuaJIT 默认引擎（更高性能）
+- ✅ LuaJIT/Lua 默认引擎
 - ✅ 内置 json 模块
 - ✅ 零拷贝缓存优化
 - ✅ Lua 模块注册表缓存

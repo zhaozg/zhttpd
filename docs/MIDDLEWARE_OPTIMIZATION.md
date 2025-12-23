@@ -42,7 +42,7 @@ The middleware chain in `server.zig::applyMiddleware()` executes in the followin
    - Would require custom address parsing logic
    - Trade-off: code complexity vs. marginal performance gain
 
-**Recommended Action**: 
+**Recommended Action**:
 - **Document as optimization opportunity** for future consideration
 - Current implementation is reasonable given library constraints
 - Consider contribution to httpz for connection-level user data support
@@ -237,13 +237,13 @@ For long-lived connections (HTTP keep-alive, WebSocket, SSE), we should cache mi
 pub const ConnectionData = struct {
     // Cached IP string (parsed once at connection time)
     client_ip: []const u8,
-    
+
     // Cached IP access control decision
     ip_access_result: IpAccessResult,
-    
+
     // Skip middleware checks if whitelisted
     is_whitelisted: bool,
-    
+
     // Connection start time
     connected_at: i64,
 };
@@ -252,7 +252,7 @@ pub const ConnectionData = struct {
 fn onConnectionEstablished(conn: *Connection) void {
     const client_ip = parseAddress(conn.address);
     const access_result = ip_access_control.checkAccess(client_ip);
-    
+
     conn.user_data = ConnectionData{
         .client_ip = client_ip,
         .ip_access_result = access_result,
@@ -267,17 +267,17 @@ fn applyMiddleware(ctx: *AppContext, req: *Request, res: *Response) bool {
         // Fallback for connections without cached data
         return applyMiddlewareSlow(ctx, req, res);
     };
-    
+
     // Use cached IP and access result
     if (conn_data.is_whitelisted) {
         return true; // Skip all checks for whitelisted IPs
     }
-    
+
     if (conn_data.ip_access_result == .blocked) {
         res.status = 403;
         return false;
     }
-    
+
     // Continue with other middleware using cached IP
     // ...
 }

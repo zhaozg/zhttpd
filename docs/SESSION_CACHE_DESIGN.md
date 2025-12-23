@@ -100,7 +100,7 @@ pub const SessionValue = union(enum) {
     integer: i64,
     float: f64,
     string: []const u8,  // Binary-safe, length-based
-    
+
     /// Size estimation for cache eviction (bytes)
     pub fn size(self: SessionValue) u32 {
         return switch (self) {
@@ -148,7 +148,7 @@ pub const Session = struct {
     data: std.StringHashMap(SessionValue),    // Session data
     created_at: i64,                          // Unix timestamp
     last_accessed: i64,                       // For access tracking
-    
+
     /// Size for cache eviction
     pub fn size(self: *const Session) u32 {
         var total: u32 = @intCast(self.id.len);
@@ -159,7 +159,7 @@ pub const Session = struct {
         }
         return total;
     }
-    
+
     pub fn removedFromCache(self: *Session, allocator: std.mem.Allocator) void {
         self.deinit(allocator);
     }
@@ -176,7 +176,7 @@ pub const SessionManager = struct {
     cache: cache.Cache(Session),
     allocator: std.mem.Allocator,
     default_ttl: u32,           // Default session TTL in seconds
-    
+
     pub fn init(allocator: std.mem.Allocator, config: SessionConfig) !SessionManager {
         return SessionManager{
             .cache = try cache.Cache(Session).init(allocator, .{
@@ -187,16 +187,16 @@ pub const SessionManager = struct {
             .default_ttl = config.default_ttl,
         };
     }
-    
+
     /// Get or create session
     pub fn getOrCreate(self: *SessionManager, session_id: []const u8) !*Session { ... }
-    
+
     /// Get existing session
     pub fn get(self: *SessionManager, session_id: []const u8) ?*Session { ... }
-    
+
     /// Set session value
     pub fn set(self: *SessionManager, session_id: []const u8, key: []const u8, value: SessionValue) !void { ... }
-    
+
     /// Delete session
     pub fn delete(self: *SessionManager, session_id: []const u8) bool { ... }
 };
@@ -227,25 +227,25 @@ Sessions are accessed via the context object:
 function handle(request, response, context)
     -- Get session (auto-created if not exists)
     local session = context:session()
-    
+
     -- Get session ID
     local sid = session:id()
-    
+
     -- Get/Set values
     local user_id = session:get("user_id")
     session:set("user_id", 12345)
     session:set("logged_in", true)
     session:set("name", "John Doe")
-    
+
     -- Delete specific key
     session:delete("temp_data")
-    
+
     -- Clear all session data
     session:clear()
-    
+
     -- Destroy session completely
     session:destroy()
-    
+
     return { status = "ok", session_id = sid }
 end
 ```
@@ -256,28 +256,28 @@ end
 // Register session metatable
 fn registerSessionMetatable(lua: *ziglua.Lua) void {
     lua.newMetatable("zhttpd.session") catch return;
-    
+
     lua.pushValue(-1);
     lua.setField(-2, "__index");
-    
+
     lua.pushFunction(ziglua.wrap(sessionId));
     lua.setField(-2, "id");
-    
+
     lua.pushFunction(ziglua.wrap(sessionGet));
     lua.setField(-2, "get");
-    
+
     lua.pushFunction(ziglua.wrap(sessionSet));
     lua.setField(-2, "set");
-    
+
     lua.pushFunction(ziglua.wrap(sessionDelete));
     lua.setField(-2, "delete");
-    
+
     lua.pushFunction(ziglua.wrap(sessionClear));
     lua.setField(-2, "clear");
-    
+
     lua.pushFunction(ziglua.wrap(sessionDestroy));
     lua.setField(-2, "destroy");
-    
+
     lua.pop(1);
 }
 
@@ -355,11 +355,11 @@ pub const CachedConnection = struct {
     created_at: i64,
     last_used: i64,
     query_count: u64,
-    
+
     pub fn size(self: CachedConnection) u32 {
         return 1; // Each connection counts as 1 unit
     }
-    
+
     pub fn removedFromCache(self: *CachedConnection, _: std.mem.Allocator) void {
         self.connection.close();
     }
@@ -369,7 +369,7 @@ pub const ConnectionPool = struct {
     cache: cache.Cache(CachedConnection),
     uri: []const u8,
     max_connections: u32,
-    
+
     pub fn init(allocator: std.mem.Allocator, uri: []const u8, pool_size: u32) !ConnectionPool {
         return ConnectionPool{
             .cache = try cache.Cache(CachedConnection).init(allocator, .{
@@ -381,14 +381,14 @@ pub const ConnectionPool = struct {
             .max_connections = pool_size,
         };
     }
-    
+
     /// Get or create a connection
     pub fn acquire(self: *ConnectionPool) !*zdbc.Connection {
         // Check for idle connection in cache
         // If not found, create new connection
         // Track usage
     }
-    
+
     /// Return connection to pool
     pub fn release(self: *ConnectionPool, conn: *zdbc.Connection) void {
         // Update last_used timestamp
@@ -425,13 +425,13 @@ cache:
     max_sessions: 10000
     default_ttl: 1800          # 30 minutes
     segment_count: 8
-    
+
   # Database connection pool
   db_pool:
     enabled: true
     idle_timeout: 300          # 5 minutes idle before cleanup
     max_idle_per_source: 10
-    
+
   # General object cache (for Lua scripts)
   objects:
     enabled: true
@@ -451,12 +451,12 @@ pub const CacheConfig = struct {
     session_cookie_name: []const u8 = "ZHTTPD_SESSION",
     session_cookie_secure: bool = true,
     session_cookie_http_only: bool = true,
-    
+
     // DB pool configuration
     db_pool_enabled: bool = true,
     db_pool_idle_timeout: u32 = 300,
     db_pool_max_idle: u32 = 10,
-    
+
     // Object cache configuration
     object_cache_enabled: bool = true,
     object_cache_max_size: u32 = 50000,
@@ -504,7 +504,7 @@ const std = @import("std");
 pub fn generateSessionId() ![32]u8 {
     var buf: [16]u8 = undefined;
     std.crypto.random.bytes(&buf);
-    
+
     var result: [32]u8 = undefined;
     _ = std.fmt.bufPrint(&result, "{x}", .{std.fmt.fmtSliceHexLower(&buf)}) catch unreachable;
     return result;
@@ -522,7 +522,7 @@ pub fn generateSessionId() ![32]u8 {
 pub const SessionStore = union(enum) {
     memory: *MemoryStore,
     redis: *RedisStore,      // Future implementation
-    
+
     pub fn get(self: SessionStore, key: []const u8) !?Session { ... }
     pub fn put(self: SessionStore, key: []const u8, session: Session, ttl: u32) !void { ... }
     pub fn delete(self: SessionStore, key: []const u8) bool { ... }
@@ -644,16 +644,16 @@ session:destroy()
 1. **Session ID Security**
    - Use cryptographically secure random session IDs
    - Session ID length >= 128 bits (32 hex chars)
-   
+
 2. **Cookie Security**
    - HttpOnly flag to prevent XSS
    - Secure flag for HTTPS-only
    - SameSite=Lax to prevent CSRF
-   
+
 3. **Session Hijacking Prevention**
    - Rotate session ID on privilege change
    - Validate session against IP (optional)
-   
+
 4. **Memory Protection**
    - Clear sensitive data on session destroy
    - Limit session data size

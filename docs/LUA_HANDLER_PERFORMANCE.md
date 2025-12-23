@@ -39,7 +39,7 @@ This meant approximately **30+ Lua C API calls per `context:db()` invocation**, 
 ```zig
 fn contextDb(lua: *ziglua.Lua) i32 {
     // ... get plugin ...
-    
+
     // Set the metatable for database connection methods
     lua.newMetatable(DB_CONN_MT) catch {
         _ = lua.getMetatableRegistry(DB_CONN_MT);
@@ -58,7 +58,7 @@ fn contextDb(lua: *ziglua.Lua) i32 {
     } else {
         lua.pop(1);
     }
-    
+
     lua.setMetatable(-2);
     return 1;
 }
@@ -88,29 +88,29 @@ fn registerDbConnMetatable(lua: *ziglua.Lua) void {
     lua.newMetatable(DB_CONN_MT) catch {
         _ = lua.getMetatableRegistry(DB_CONN_MT);
     };
-    
+
     lua.pushValue(-1);
     lua.setField(-2, "__index");
-    
+
     // Register all methods once
     lua.pushFunction(ziglua.wrap(dbConnQuery));
     lua.setField(-2, "query");
     // ... all other methods ...
-    
+
     lua.pop(1);
 }
 
 fn contextDb(lua: *ziglua.Lua) i32 {
     // ... get plugin ...
-    
+
     lua.newTable();
     lua.pushLightUserdata(@ptrCast(plugin));
     lua.setField(-2, "_plugin");
-    
+
     // Get pre-registered metatable (fast)
     _ = lua.getMetatableRegistry(DB_CONN_MT);
     lua.setMetatable(-2);
-    
+
     return 1;
 }
 ```

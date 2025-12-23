@@ -119,18 +119,16 @@ zhttpd has achieved its core objectives and is production-ready. This document p
 
 ### Comparison with Major Web Servers
 
-| Feature | zhttpd | nginx | Apache | Caddy |
-|---------|--------|-------|--------|-------|
-| Static Files | ✅ | ✅ | ✅ | ✅ |
-| Reverse Proxy | ❌ | ✅ | ✅ | ✅ |
-| Load Balancing | ❌ | ✅ | ✅ | ✅ |
-| HTTP/2 | ❌ | ✅ | ✅ | ✅ |
-| Native TLS | ❌ | ✅ | ✅ | ✅ |
-| Lua Scripting | ✅ | ✅* | ❌ | ❌ |
-| Config Format | YAML | Custom | Custom | Caddyfile |
-| Memory Safety | ✅ | ❌ | ❌ | ✅ |
-
-*nginx requires OpenResty for Lua
+| Feature        | zhttpd   | nginx   | Apache   | Caddy     |
+| ---------      | -------- | ------- | -------- | -------   |
+| Static Files   | ✅       | ✅      | ✅       | ✅        |
+| Reverse Proxy  | ❌       | ✅      | ✅       | ✅        |
+| Load Balancing | ❌       | ✅      | ✅       | ✅        |
+| HTTP/2         | ❌       | ✅      | ✅       | ✅        |
+| Native TLS     | ❌       | ✅      | ✅       | ✅        |
+| Lua Scripting  | ✅       | ✅      | ❌       | ❌        |
+| Config Format  | YAML     | Custom  | Custom   | Caddyfile |
+| Memory Safety  | ✅       | ❌      | ❌       | ✅        |
 
 ---
 
@@ -352,7 +350,7 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 1: Enhanced Lua Integration
 
-**Priority:** Medium  
+**Priority:** Medium
 **Effort:** Medium
 **Status:** ✅ Completed (v0.6.0)
 
@@ -366,7 +364,7 @@ The following are **optional enhancements** that could be considered for future 
 - [x] Module registry caching - zerocopy loading with registry caching for optimized script loading
 
 
-**Priority:** Medium  
+**Priority:** Medium
 **Effort:** High
 **Status:** ✅ Completed (v0.5.0)
 
@@ -379,7 +377,7 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 3: Advanced httpz Features
 
-**Priority:** Low  
+**Priority:** Low
 **Effort:** Medium
 **Status:** ✅ Completed (v0.2.0)
 
@@ -393,7 +391,7 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 4: Performance & Scalability
 
-**Priority:** Low  
+**Priority:** Low
 **Effort:** Medium-High
 **Status:** ✅ Completed (v0.6.0)
 
@@ -407,7 +405,7 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 5: Observability
 
-**Priority:** Medium  
+**Priority:** Medium
 **Effort:** Low-Medium
 **Status:** ✅ Completed (v0.2.0)
 
@@ -420,7 +418,7 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 6: Developer Experience
 
-**Priority:** Low  
+**Priority:** Low
 **Effort:** Low
 
 - [ ] Development mode with auto-reload
@@ -433,8 +431,8 @@ The following are **optional enhancements** that could be considered for future 
 
 ### Phase 7: Security Enhancements
 
-**Priority:** High  
-**Effort:** Medium  
+**Priority:** High
+**Effort:** Medium
 **Status:** ✅ Completed (v0.4.0)
 
 **Note:** HTTPS/TLS support is essential for production deployments handling sensitive data.
@@ -499,5 +497,5 @@ This roadmap is a living document. Community feedback is encouraged:
 
 ---
 
-**Last Updated:** 2025-12-01  
+**Last Updated:** 2025-12-01
 **Status:** Active Development

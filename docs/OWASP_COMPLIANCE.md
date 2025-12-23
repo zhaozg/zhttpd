@@ -103,7 +103,7 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 **zhttpd Dependencies:**
 - httpz (http.zig) - Active development
-- ziglua - Active development  
+- ziglua - Active development
 
 **Recommendations:**
 1. Regularly update dependencies in `build.zig.zon`

@@ -14,7 +14,7 @@ The logger module in zhttpd has been refactored to provide high performance, ext
 - **Log Rotation**: Automatic file rotation with configurable size limits
 - **Request Tracing**: Optional request ID tracking
 
-### Advanced Features  
+### Advanced Features
 - **FIFO Ordering**: Async logging maintains message order
 - **Pluggable Backends**: Easy to add custom log destinations
 - **Configurable Console**: Independent console output control
@@ -281,7 +281,7 @@ Implement the `Backend` interface for custom destinations:
 ```zig
 const CustomBackend = struct {
     // Your state here
-    
+
     pub fn backend(self: *CustomBackend) Backend {
         return .{
             .ptr = self,
@@ -332,9 +332,9 @@ To use new features, use the full API:
 // New code with async support
 const logger_mod = @import("logger/logger.zig");
 const file_backend = try logger_mod.FileBackend.init(allocator, "app.log");
-const config = logger_mod.LoggerConfig{ 
-    .level = .info, 
-    .enable_async = true 
+const config = logger_mod.LoggerConfig{
+    .level = .info,
+    .enable_async = true
 };
 var logger = try logger_mod.Logger.init(allocator, config, file_backend.backend());
 defer logger.deinit();
@@ -344,7 +344,7 @@ logger.info("Message", .{});
 ## Best Practices
 
 1. **Initialize once**: Create logger during application startup
-2. **Use appropriate levels**: 
+2. **Use appropriate levels**:
    - `debug`: Detailed diagnostic information
    - `info`: General informational messages
    - `warn`: Warning conditions
@@ -402,7 +402,7 @@ test "logger basic usage" {
     // Verify log file contents
     const file = try std.fs.cwd().openFile(log_path, .{});
     defer file.close();
-    
+
     var buf: [1024]u8 = undefined;
     const n = try file.readAll(&buf);
     try testing.expect(std.mem.indexOf(u8, buf[0..n], "Test message") != null);

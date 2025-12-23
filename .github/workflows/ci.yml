@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 permissions:
   contents: read
@@ -12,56 +12,56 @@ permissions:
 jobs:
   format-check:
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: read
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
         version: 0.15.2
-    
+
     - name: Check code formatting
       run: zig fmt --check src
 
   build-and-test:
     runs-on: ubuntu-latest
     needs: format-check
-    
+
     permissions:
       contents: read
       actions: read
-    
+
     strategy:
       matrix:
         lua-lang: [luajit, lua54]
       fail-fast: false
-    
+
     name: build-and-test (${{ matrix.lua-lang }})
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
         version: 0.15.2
-    
+
     - name: Verify Zig installation
       run: zig version
-    
+
     - name: Build project (${{ matrix.lua-lang }})
       run: zig build -Dlua-lang=${{ matrix.lua-lang }}
-    
+
     - name: Run tests (${{ matrix.lua-lang }})
       run: zig build test -Dlua-lang=${{ matrix.lua-lang }}
-    
+
     - name: Build release (${{ matrix.lua-lang }})
       run: zig build -Doptimize=ReleaseFast -Dlua-lang=${{ matrix.lua-lang }}
-    
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -71,46 +71,46 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     needs: build-and-test
-    
+
     permissions:
       contents: read
       actions: read
-    
+
     strategy:
       matrix:
         lua-lang: [luajit, lua54]
       fail-fast: false
-    
+
     name: benchmark (${{ matrix.lua-lang }})
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
         version: 0.15.2
-    
+
     - name: Install Apache Bench
       run: |
         sudo apt-get update
         sudo apt-get install -y apache2-utils
-    
+
     - name: Build release binary (${{ matrix.lua-lang }})
       run: zig build -Doptimize=ReleaseFast -Dlua-lang=${{ matrix.lua-lang }}
-    
+
     - name: Create test directories and files
       run: |
         mkdir -p examples/static examples/lua
         echo "<html><body>Hello World</body></html>" > examples/static/index.html
         cp config.example.yaml zhttpd.yaml
-    
+
     - name: Run benchmark
       run: |
         # Start server in background
         ./zig-out/bin/zhttpd &
         SERVER_PID=$!
-        
+
         # Wait for server to start with health check
         for i in {1..30}; do
           if curl -s http://127.0.0.1:8080/ > /dev/null 2>&1; then
@@ -119,17 +119,17 @@ jobs:
           fi
           sleep 1
         done
-        
+
         # Run benchmark with Apache Bench
         ab -n 1000 -c 10 http://127.0.0.1:8080/ > benchmark_results.txt || true
-        
+
         # Stop server
         kill $SERVER_PID 2>/dev/null || true
         wait $SERVER_PID 2>/dev/null || true
-        
+
         # Display results
         cat benchmark_results.txt
-    
+
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
       with:

@@ -56,13 +56,13 @@ pub fn init(allocator: std.mem.Allocator, config: Config) !AppContext {
     // Initialize logger with format from config
     var logger = try Logger.initWithFormat(allocator, log_level, config.log_file, log_format);
     errdefer logger.deinit();
-    
+
     // Initialize file cache (shared across all handlers)
     const file_cache = try allocator.create(FileCache);
     errdefer allocator.destroy(file_cache);
     file_cache.* = FileCache.init(allocator, config.reload, config.max_cache_file_size);
     errdefer file_cache.deinit();
-    
+
     // Initialize context with handlers and middleware
     var ctx = AppContext{
         .allocator = allocator,
@@ -71,16 +71,16 @@ pub fn init(allocator: std.mem.Allocator, config: Config) !AppContext {
         .logger = logger,
         .start_time = std.time.timestamp(),
     };
-    
+
     // Initialize Lua handler if enabled
     if (config.enable_lua) {
         ctx.lua_handler = try LuaHandler.initWithConfig(allocator, config.lua_scripts_dir, ...);
         errdefer if (ctx.lua_handler) |*lua| lua.deinit();
     }
-    
+
     // Initialize middleware (rate limiter, CORS, auth)
     // Initialize observability (metrics, health)
-    
+
     return ctx;
 }
 ```
@@ -488,7 +488,7 @@ pub const MyMiddleware = struct {
         }
         return true;
     }
-    
+
     pub fn deinit(self: *MyMiddleware) void {
         // Clean up resources
     }
@@ -504,18 +504,18 @@ For servers with many middleware components, use a registry approach:
 ```zig
 pub const MiddlewareRegistry = struct {
     items: std.ArrayList(MiddlewareEntry),
-    
+
     pub const MiddlewareEntry = struct {
         name: []const u8,
         priority: u32,  // Lower = earlier execution
         check_fn: *const fn(req: *Request, res: *Response) bool,
     };
-    
+
     pub fn register(self: *MiddlewareRegistry, entry: MiddlewareEntry) !void {
         try self.items.append(entry);
         // Sort by priority
     }
-    
+
     pub fn apply(self: *MiddlewareRegistry, req: *Request, res: *Response) bool {
         for (self.items.items) |entry| {
             if (!entry.check_fn(req, res)) return false;
@@ -532,7 +532,7 @@ For a small number of middleware, you can add optional fields directly:
 ```zig
 pub const AppContext = struct {
     // ...existing fields...
-    
+
     // Note: This approach is simpler but doesn't scale well beyond a few
     // middleware components. Use the registry pattern for many middleware.
     my_middleware: ?MyMiddleware = null,
@@ -549,10 +549,10 @@ Extend `lua/lua.zig` to expose Zig functions to Lua:
 fn myZigFunction(lua: *ziglua.Lua) i32 {
     // Get arguments from Lua stack
     const arg = lua.toString(1) orelse "";
-    
+
     // Do something
     const result = processData(arg);
-    
+
     // Push result to Lua stack
     lua.pushString(result);
     return 1; // Number of return values

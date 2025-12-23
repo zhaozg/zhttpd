@@ -84,7 +84,7 @@ function handle_request(request)
     if request.body then
         body_data = request.body  -- Already parsed by zhttpd
     end
-    
+
     -- Process the request
     local response = {
         status = "success",
@@ -92,7 +92,7 @@ function handle_request(request)
         received = body_data,
         timestamp = os.time()
     }
-    
+
     -- The response will be automatically encoded to JSON
     return response
 end
@@ -105,11 +105,11 @@ function process_complex_data(request)
         input = request.body
     }
     local json_payload = json.encode(internal_data)
-    
+
     -- Decode JSON from an external source
     local external_json = '{"config": {"enabled": true}}'
     local config = json.decode(external_json)
-    
+
     return {
         processed = true,
         config_enabled = config.config.enabled
@@ -234,11 +234,11 @@ local domain = (letter + digit + lpeg.S("-"))^1
 local tld = letter^2  -- At least 2 letters
 
 local email = lpeg.C(
-    username * 
-    lpeg.P("@") * 
-    domain * 
-    (lpeg.P(".") * domain)^0 * 
-    lpeg.P(".") * 
+    username *
+    lpeg.P("@") *
+    domain *
+    (lpeg.P(".") * domain)^0 *
+    lpeg.P(".") *
     tld
 )
 
@@ -278,12 +278,12 @@ local key, val = lpeg.match(line, "DATABASE_URL=postgresql://localhost/db")
 -- api_handler.lua using lpeg for input validation
 function handle(request, response, context)
     local path = request:path()
-    
+
     -- Parse user ID from path like /api/users/123
     local digit = lpeg.R("09")
     local user_id_pattern = lpeg.P("/api/users/") * lpeg.C(digit^1)
     local user_id = lpeg.match(user_id_pattern, path)
-    
+
     if user_id then
         return {
             status = "success",
@@ -476,13 +476,13 @@ function handle_request(request)
     if not request.body or not request.body.user_id then
         return {status = "error", message = "Missing user_id"}
     end
-    
+
     -- Sanitize string input
     local user_id = tostring(request.body.user_id)
     if #user_id > 100 then
         return {status = "error", message = "user_id too long"}
     end
-    
+
     -- Process validated input
     return process_user(user_id)
 end
@@ -495,7 +495,7 @@ function safe_decode(json_str)
     local success, result = pcall(function()
         return json.decode(json_str)
     end)
-    
+
     if success then
         return result
     else
@@ -508,7 +508,7 @@ function handle_request(request)
     if err then
         return {status = "error", message = err}
     end
-    
+
     -- Process data...
     return {status = "success", data = data}
 end

@@ -8,19 +8,19 @@ zhttpd implements multiple layers of security to protect your applications. This
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Reverse Proxy (TLS)                       │
+│                    Reverse Proxy (TLS)                      │
 ├─────────────────────────────────────────────────────────────┤
-│                    IP Access Control                         │
+│                    IP Access Control                        │
 ├─────────────────────────────────────────────────────────────┤
-│                    Rate Limiting                             │
+│                    Rate Limiting                            │
 ├─────────────────────────────────────────────────────────────┤
-│                    Authentication                            │
+│                    Authentication                           │
 ├─────────────────────────────────────────────────────────────┤
-│                    CORS / Security Headers                   │
+│                    CORS / Security Headers                  │
 ├─────────────────────────────────────────────────────────────┤
-│                    Request Validation                        │
+│                    Request Validation                       │
 ├─────────────────────────────────────────────────────────────┤
-│                    Lua Sandbox                               │
+│                    Lua Sandbox                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
