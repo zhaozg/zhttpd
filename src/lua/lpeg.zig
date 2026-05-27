@@ -28,7 +28,6 @@ extern fn luaopen_lpeg(L: ?*ziglua.LuaState) c_int;
 
 /// Register the lpeg module
 /// This provides powerful pattern matching capabilities based on PEGs
-/// The allocator parameter is kept for API compatibility.
 pub fn registerLpegModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) !void {
     // Store the allocator getter for API consistency
     _ = getAllocator;

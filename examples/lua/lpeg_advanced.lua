@@ -1,7 +1,7 @@
 -- Advanced LPeg examples for zhttpd
 -- This demonstrates more complex pattern matching scenarios
 
-local lpeg = lpeg
+local lpeg = require('lpeg')
 
 function handle(request, response, context)
     -- Example 1: Parse HTTP-like headers
@@ -12,7 +12,7 @@ function handle(request, response, context)
         local headers_pattern = lpeg.Ct(lpeg.Ct(header) * (lpeg.P("\n") * lpeg.Ct(header))^0)
         return lpeg.match(headers_pattern, text)
     end
-    
+
     -- Example 2: Parse CSV line
     local function parse_csv(text)
         local comma = lpeg.P(",")
@@ -21,7 +21,7 @@ function handle(request, response, context)
         local record = lpeg.Ct(field * (comma * field)^0)
         return lpeg.match(record, text)
     end
-    
+
     -- Example 3: URL path parameter extraction
     local function extract_path_params(pattern_path, actual_path)
         -- Convert /api/users/:id/posts/:post_id to lpeg pattern
@@ -35,7 +35,7 @@ function handle(request, response, context)
                 table.insert(segments, lpeg.P(segment))
             end
         end
-        
+
         local pattern = lpeg.P("/")
         for i, seg in ipairs(segments) do
             pattern = pattern * seg
@@ -43,25 +43,25 @@ function handle(request, response, context)
                 pattern = pattern * lpeg.P("/")
             end
         end
-        
+
         return lpeg.match(pattern, actual_path)
     end
-    
+
     -- Example 4: Simple expression evaluator
     local function eval_expr(expr)
         local V = lpeg.V
         local space = lpeg.S(" \t\n")^0
-        
+
         local grammar = lpeg.P({
             "expr",
             expr = space * V("term") * space * ((lpeg.C(lpeg.S("+-")) * space * V("term") * space)^0),
             term = space * V("factor") * space * ((lpeg.C(lpeg.S("*/")) * space * V("factor") * space)^0),
             factor = lpeg.C(lpeg.R("09")^1) + lpeg.P("(") * V("expr") * lpeg.P(")"),
         })
-        
+
         return lpeg.match(lpeg.Ct(grammar), expr)
     end
-    
+
     -- Example 5: Color code parser (hex)
     local function parse_color(color_str)
         local hex_digit = lpeg.R("09", "af", "AF")
@@ -69,20 +69,20 @@ function handle(request, response, context)
         local color = lpeg.P("#") * lpeg.Ct(hex2 * hex2 * hex2)
         return lpeg.match(color, color_str)
     end
-    
+
     -- Run examples
     local header_text = "Content-Type: application/json\nAuthorization: Bearer token123"
     local csv_line = 'John,Doe,"123 Main St",Springfield'
     local url_path = "/api/users/42/posts/99"
     local expression = "1 + 2 * 3"
     local color = "#ff5733"
-    
+
     local headers_result = parse_headers(header_text)
     local csv_result = parse_csv(csv_line)
     local path_params = extract_path_params("/api/users/:id/posts/:post_id", url_path)
     local expr_result = eval_expr(expression)
     local color_result = parse_color(color)
-    
+
     return {
         status = "success",
         message = "Advanced LPeg examples",

@@ -5,7 +5,7 @@
 function handle(request, response, context)
     -- Access database through context
     local db, db_err = context:db()
-    
+
     if not db then
         return {
             status = "error",
@@ -13,19 +13,19 @@ function handle(request, response, context)
             note = "This is expected if database is not configured"
         }
     end
-    
+
     -- Get database status (lightweight operation for testing overhead)
     local status = db:status()
-    
+
     -- Store some context data
     context.processed = true
     context.timestamp = os.time()
     context.db_connected = status.connected
-    
+
     -- Return JSON response
     response:status(200)
     response:content_type("application/json")
-    
+
     return {
         status = "success",
         db_connected = status.connected,

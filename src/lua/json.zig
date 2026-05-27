@@ -53,9 +53,6 @@ pub fn appendJsonEscapedString(buf: *std.ArrayList(u8), allocator: std.mem.Alloc
     }
 }
 
-/// Register the json module using lua-cjson
-/// This provides high-performance JSON encoding/decoding (~60x faster than Zig std.json)
-/// The allocator parameter is kept for API compatibility but is not used by lua-cjson.
 pub fn registerJsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) !void {
     _ = getAllocator;
 
@@ -66,7 +63,6 @@ pub fn registerJsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.A
     lua.pop(2); // pop package and preload
 }
 
-/// Thread-local storage for allocator getter function (for legacy code compatibility)
 threadlocal var allocator_getter: ?*const fn () std.mem.Allocator = null;
 
 // ============================================================================

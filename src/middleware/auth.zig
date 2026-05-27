@@ -123,30 +123,36 @@ pub const AuthMiddleware = struct {
 
 /// Escape a string for safe inclusion in JSON
 fn escapeJsonString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    // Use page_allocator for internal ArrayList operations to avoid remap/resize
+    // issues with arena allocators (which don't support remap of non-arena memory).
+    // The final result is copied to the provided allocator.
+    const pa = std.heap.page_allocator;
     var result = std.ArrayListUnmanaged(u8){};
-    errdefer result.deinit(allocator);
+    errdefer result.deinit(pa);
 
     for (input) |c| {
         switch (c) {
-            '"' => try result.appendSlice(allocator, "\\\""),
-            '\\' => try result.appendSlice(allocator, "\\\\"),
-            '\n' => try result.appendSlice(allocator, "\\n"),
-            '\r' => try result.appendSlice(allocator, "\\r"),
-            '\t' => try result.appendSlice(allocator, "\\t"),
+            '"' => try result.appendSlice(pa, "\\\""),
+            '\\' => try result.appendSlice(pa, "\\\\"),
+            '\n' => try result.appendSlice(pa, "\\n"),
+            '\r' => try result.appendSlice(pa, "\\r"),
+            '\t' => try result.appendSlice(pa, "\\t"),
             else => {
                 if (c < 32) {
                     // Escape control characters as \uXXXX
                     var buf: [6]u8 = undefined;
                     const escape_str = std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{c}) catch continue;
-                    try result.appendSlice(allocator, escape_str);
+                    try result.appendSlice(pa, escape_str);
                 } else {
-                    try result.append(allocator, c);
+                    try result.append(pa, c);
                 }
             },
         }
     }
 
-    return try result.toOwnedSlice(allocator);
+    const owned = try result.toOwnedSlice(pa);
+    defer pa.free(owned);
+    return try allocator.dupe(u8, owned);
 }
 
 /// Simple path matching with wildcard support
