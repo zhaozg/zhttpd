@@ -143,7 +143,20 @@ pub const Config = struct {
 pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8, io: std.Io) !Config {
     // Try to load config file, fallback to defaults
     // Note: Using std.debug.print here since logger is not yet initialized
-    const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch |err| {
+    // Resolve relative path to absolute path for openFileAbsolute
+    // realPathFileAlloc returns a sentinel-terminated slice, use allocator.free on the full slice
+    const abs_path_owned = if (std.fs.path.isAbsolute(path))
+        null
+    else
+        (std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator) catch |err| {
+            std.debug.print("Config file '{s}' not found: {}\n", .{ path, err });
+            std.debug.print("Using default configuration\n", .{});
+            return getDefaultConfig(allocator);
+        });
+    defer if (abs_path_owned) |p| allocator.free(p);
+    const abs_path = abs_path_owned orelse path;
+
+    const file = std.Io.Dir.openFileAbsolute(io, abs_path, .{}) catch |err| {
         std.debug.print("Config file '{s}' not found: {}\n", .{ path, err });
         std.debug.print("Using default configuration\n", .{});
         return getDefaultConfig(allocator);

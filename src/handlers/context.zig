@@ -64,6 +64,7 @@ pub const AppContext = struct {
     session_manager: ?*SessionManager = null,
     // Cached absolute path for static directory (optimization: avoids realpath syscall per request)
     static_dir_abs: [4096]u8 = undefined,
+    static_dir_abs_len: usize = 0,
     // Pre-formatted rate limit window string (optimization: avoids formatting on every 429 response)
     rate_limit_window_str: [16]u8 = undefined,
     rate_limit_window_len: usize = 0,
@@ -123,9 +124,12 @@ pub const AppContext = struct {
         };
 
         // Cache the absolute path of static directory (optimization: avoids realpath syscall per request)
-        _ = std.Io.Dir.cwd().realPath(ctx.io, &ctx.static_dir_abs) catch |err| {
+        // Use realPathFile to resolve the config.static_dir relative path to an absolute path
+        if (std.Io.Dir.cwd().realPathFile(ctx.io, ctx.config.static_dir, &ctx.static_dir_abs)) |n| {
+            ctx.static_dir_abs_len = n;
+        } else |err| {
             logger.warn("Could not cache static directory path (will resolve per request): {}", .{err});
-        };
+        }
 
         // Initialize Lua handler if enabled
         if (config.enable_lua) {

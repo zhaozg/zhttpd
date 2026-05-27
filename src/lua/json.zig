@@ -32,7 +32,7 @@ const OBJECT_DEFAULT_SIZE = 128;
 /// Handles quotes, backslashes, and control characters according to RFC 8259
 /// Note: This function is kept for backward compatibility with other parts
 /// of the codebase that may use it directly.
-pub fn appendJsonEscapedString(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, s: []const u8) !void {
+pub fn appendJsonEscapedString(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
     for (s) |c| {
         switch (c) {
             '"' => try buf.appendSlice(allocator, "\\\""),
@@ -111,7 +111,13 @@ pub fn pushJsonValue(lua: *ziglua.Lua, value: std.json.Value) !void {
 }
 
 /// Convert a Lua value to JSON string
+/// Uses a pre-allocated buffer to avoid ArrayListUnmanaged resize issues
+/// with arena allocators that don't support remap/resize operations.
 pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32) ![]const u8 {
+    // Use page_allocator for internal ArrayList operations to avoid remap/resize
+    // issues with arena allocators (which don't support remap of non-arena memory).
+    // The final result is copied to the provided allocator.
+    const pa = std.heap.page_allocator;
     const lua_type = lua.typeOf(index);
 
     switch (lua_type) {
@@ -134,15 +140,17 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
             const s = lua.toString(index) catch "";
             // Pre-allocate buffer with estimated size (string length + quotes + escape overhead)
             // Use saturating arithmetic to prevent overflow for very large strings
-            var buf: std.ArrayListUnmanaged(u8) = .empty;
-            defer buf.deinit(allocator);
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(pa);
             const escape_overhead = s.len / STRING_ESCAPE_OVERHEAD_RATIO;
             const estimated_size = s.len +| 2 +| escape_overhead;
-            try buf.ensureTotalCapacity(allocator, estimated_size);
-            try buf.append(allocator, '"');
-            try appendJsonEscapedString(&buf, allocator, s);
-            try buf.append(allocator, '"');
-            return try buf.toOwnedSlice(allocator);
+            try buf.ensureTotalCapacity(pa, estimated_size);
+            try buf.append(pa, '"');
+            try appendJsonEscapedString(&buf, pa, s);
+            try buf.append(pa, '"');
+            const owned = try buf.toOwnedSlice(pa);
+            defer pa.free(owned);
+            return try allocator.dupe(u8, owned);
         },
         .table => {
             // Determine if table is an array (sequence) or object.
@@ -156,24 +164,24 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
 
             // Pre-allocate buffer with estimated size based on table length
             // Use saturating arithmetic to prevent overflow for very large arrays
-            var buf: std.ArrayListUnmanaged(u8) = .empty;
-            defer buf.deinit(allocator);
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(pa);
             const estimated_size: usize = if (is_array) @as(usize, @intCast(len)) *| ARRAY_ELEMENT_AVG_SIZE +| 2 else OBJECT_DEFAULT_SIZE;
-            try buf.ensureTotalCapacity(allocator, estimated_size);
+            try buf.ensureTotalCapacity(pa, estimated_size);
 
             if (is_array) {
-                try buf.append(allocator, '[');
+                try buf.append(pa, '[');
                 var i: i32 = 1;
                 while (i <= len) : (i += 1) {
-                    if (i > 1) try buf.append(allocator, ',');
+                    if (i > 1) try buf.append(pa, ',');
                     _ = lua.getIndexRaw(index, i);
                     const value_json = try luaValueToJson(allocator, lua, -1);
-                    try buf.appendSlice(allocator, value_json);
+                    try buf.appendSlice(pa, value_json);
                     lua.pop(1);
                 }
-                try buf.append(allocator, ']');
+                try buf.append(pa, ']');
             } else {
-                try buf.append(allocator, '{');
+                try buf.append(pa, '{');
                 lua.pushNil();
                 // After pushNil, the table index needs adjustment:
                 // - For negative indices: the table moved (e.g., -1 becomes -2)
@@ -181,7 +189,7 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
                 const table_index = if (index < 0) index - 1 else index;
                 var first = true;
                 while (lua.next(table_index)) {
-                    if (!first) try buf.append(allocator, ',');
+                    if (!first) try buf.append(pa, ',');
                     first = false;
 
                     // JSON object keys must be strings
@@ -198,12 +206,12 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
                         "";
 
                     if (key.len > 0) {
-                        try buf.append(allocator, '"');
-                        try appendJsonEscapedString(&buf, allocator, key);
-                        try buf.appendSlice(allocator, "\":");
+                        try buf.append(pa, '"');
+                        try appendJsonEscapedString(&buf, pa, key);
+                        try buf.appendSlice(pa, "\":");
 
                         const value_json = try luaValueToJson(allocator, lua, -1);
-                        try buf.appendSlice(allocator, value_json);
+                        try buf.appendSlice(pa, value_json);
                     } else {
                         // If key was skipped, remove the trailing comma
                         if (!first and buf.items.len > 0 and buf.items[buf.items.len - 1] == ',') {
@@ -214,10 +222,12 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
 
                     lua.pop(1);
                 }
-                try buf.append(allocator, '}');
+                try buf.append(pa, '}');
             }
 
-            return try buf.toOwnedSlice(allocator);
+            const owned = try buf.toOwnedSlice(pa);
+            defer pa.free(owned);
+            return try allocator.dupe(u8, owned);
         },
         .light_userdata => {
             // json.null is represented as light userdata with null pointer
@@ -237,7 +247,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping quotes
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "hello \"world\"");
         try testing.expectEqualStrings("hello \\\"world\\\"", buf.items);
@@ -245,7 +255,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping backslashes
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "path\\to\\file");
         try testing.expectEqualStrings("path\\\\to\\\\file", buf.items);
@@ -253,7 +263,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping newlines
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "line1\nline2");
         try testing.expectEqualStrings("line1\\nline2", buf.items);
@@ -261,7 +271,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping tabs
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "col1\tcol2");
         try testing.expectEqualStrings("col1\\tcol2", buf.items);
@@ -269,7 +279,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping carriage return
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "before\rafter");
         try testing.expectEqualStrings("before\\rafter", buf.items);
@@ -277,7 +287,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping backspace
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "before\x08after");
         try testing.expectEqualStrings("before\\bafter", buf.items);
@@ -285,7 +295,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping form feed
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "before\x0cafter");
         try testing.expectEqualStrings("before\\fafter", buf.items);
@@ -293,7 +303,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping null character
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "before\x00after");
         try testing.expectEqualStrings("before\\u0000after", buf.items);
@@ -301,7 +311,7 @@ test "appendJsonEscapedString handles special characters" {
 
     // Test escaping other control characters (e.g., 0x01)
     {
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
         try appendJsonEscapedString(&buf, allocator, "before\x01after");
         try testing.expectEqualStrings("before\\u0001after", buf.items);

@@ -14,11 +14,7 @@ const std = @import("std");
 const httpz = @import("httpz");
 const lua_mod = @import("../lua/lua.zig");
 const LuaHandler = lua_mod.LuaHandler;
-const KeyValue = lua_mod.KeyValue;
 const AppContext = @import("context.zig").AppContext;
-
-const MAX_HEADERS_FOR_LUA = 32; // Maximum number of headers to pass to Lua
-const MAX_QUERY_PARAMS_FOR_LUA = 32; // Maximum number of query params to pass to Lua
 
 /// Extract script name from path (/api/test -> test, /api/users -> users)
 fn extractScriptName(path: []const u8) []const u8 {
