@@ -18,20 +18,26 @@ pub fn handle(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
         return;
     };
 
+    const io = res.conn.io;
+    var write_buf: [256]u8 = undefined;
+    var writer = stream.writer(io, &write_buf);
+
     // Send a welcome event
-    _ = stream.write("event: connected\ndata: {\"status\":\"connected\",\"message\":\"SSE stream established\"}\n\n") catch |err| {
+    writer.interface.writeAll("event: connected\ndata: {\"status\":\"connected\",\"message\":\"SSE stream established\"}\n\n") catch |err| {
         ctx.logger.warn("Failed to write SSE welcome event: {}", .{err});
         return;
     };
 
     // Send a heartbeat event with actual timestamp
     var heartbeat_buf: [128]u8 = undefined;
-    const timestamp = std.time.timestamp();
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    const timestamp = ts.sec;
     const heartbeat_data = std.fmt.bufPrint(&heartbeat_buf, "event: heartbeat\ndata: {{\"timestamp\":{d}}}\n\n", .{timestamp}) catch {
         ctx.logger.warn("Failed to format SSE heartbeat", .{});
         return;
     };
-    _ = stream.write(heartbeat_data) catch |err| {
+    writer.interface.writeAll(heartbeat_data) catch |err| {
         ctx.logger.warn("Failed to write SSE heartbeat: {}", .{err});
         return;
     };

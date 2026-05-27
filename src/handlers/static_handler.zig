@@ -30,10 +30,10 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
     }
 
     // Get the absolute path of static directory (use cached value if available)
-    const static_dir_abs = ctx.static_dir_abs orelse blk: {
+    const static_dir_abs: []const u8 = if (ctx.static_dir_abs[0] != 0) ctx.static_dir_abs[0..] else blk: {
         // Fallback: compute the path if not cached (should rarely happen).
         // Uses arena allocator which is automatically cleaned up with the response.
-        break :blk std.fs.cwd().realpathAlloc(res.arena, ctx.config.static_dir) catch {
+        break :blk std.Io.Dir.cwd().realPathFileAlloc(ctx.io, ctx.config.static_dir, res.arena) catch {
             res.status = 500;
             res.body = "Internal Server Error";
             return;
@@ -49,7 +49,7 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
     };
 
     // Resolve the full path and verify it stays within static_dir
-    const target_abs = std.fs.cwd().realpathAlloc(res.arena, joined_path) catch {
+    const target_abs = std.Io.Dir.cwd().realPathFileAlloc(ctx.io, joined_path, res.arena) catch {
         // File doesn't exist or can't be resolved
         res.status = 404;
         res.body = "File Not Found";

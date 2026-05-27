@@ -78,7 +78,7 @@ pub const PluginVTable = struct {
 
     /// Initialize the plugin with configuration
     /// Returns true on success, false on failure
-    init: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator, config: ?[]const u8) bool,
+    init: *const fn (ctx: *anyopaque, io: std.Io, allocator: std.mem.Allocator, config: ?[]const u8) bool,
 
     /// Deinitialize the plugin and release resources
     deinit: *const fn (ctx: *anyopaque) void,
@@ -110,9 +110,9 @@ pub const Plugin = struct {
     }
 
     /// Initialize the plugin
-    pub fn init(self: *Plugin, allocator: std.mem.Allocator, config: ?[]const u8) bool {
+    pub fn init(self: *Plugin, io: std.Io, allocator: std.mem.Allocator, config: ?[]const u8) bool {
         self.state = .initializing;
-        const success = self.vtable.init(self.ctx, allocator, config);
+        const success = self.vtable.init(self.ctx, io, allocator, config);
         self.state = if (success) .ready else .failed;
         return success;
     }
@@ -199,7 +199,7 @@ pub const PluginManager = struct {
         while (it.next()) |entry| {
             var plugin = entry.value_ptr;
             const config = config_map.get(entry.key_ptr.*);
-            _ = plugin.init(self.allocator, config);
+            _ = plugin.init(undefined, self.allocator, config);
         }
     }
 

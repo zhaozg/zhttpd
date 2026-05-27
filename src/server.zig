@@ -59,16 +59,19 @@ pub const HttpzServer = struct {
     context: *AppContext,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, config: Config) !HttpzServer {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, config: Config) !HttpzServer {
         const context = try allocator.create(AppContext);
         errdefer allocator.destroy(context);
 
-        context.* = try AppContext.init(allocator, config);
+        context.* = try AppContext.init(io, allocator, config);
         errdefer context.deinit();
 
-        const server = try httpz.Server(*AppContext).init(allocator, .{
-            .port = config.port,
-            .address = config.host,
+        const address = std.Io.net.IpAddress.parse(config.host, config.port) catch blk: {
+            std.log.warn("Failed to parse host '{s}', falling back to localhost", .{config.host});
+            break :blk std.Io.net.IpAddress.parse("127.0.0.1", config.port) catch unreachable;
+        };
+        const server = try httpz.Server(*AppContext).init(io, allocator, .{
+            .address = .{ .ip = address },
             .request = .{
                 .max_body_size = config.max_body_size,
                 .max_form_count = 20,
@@ -457,10 +460,16 @@ fn websocketHandler(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response)
     try websocket_handler.handle(ctx, req, res);
 }
 
+fn microTimestamp() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    return @as(i64, @intCast(ts.sec)) * 1000000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1000);
+}
+
 fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    const start_time = std.time.microTimestamp();
+    const start_time = microTimestamp();
     defer {
-        const duration = std.time.microTimestamp() - start_time;
+        const duration = microTimestamp() - start_time;
         logAccess(ctx, req, res, duration);
     }
 
@@ -477,9 +486,9 @@ fn serveStatic(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !voi
 }
 
 fn luaApi(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
-    const start_time = std.time.microTimestamp();
+    const start_time = microTimestamp();
     defer {
-        const duration = std.time.microTimestamp() - start_time;
+        const duration = microTimestamp() - start_time;
         logAccess(ctx, req, res, duration);
     }
 

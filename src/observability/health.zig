@@ -67,20 +67,18 @@ pub const HealthCheck = struct {
 
     /// Generate detailed JSON health response
     pub fn toJson(self: *const HealthCheck, allocator: std.mem.Allocator) ![]const u8 {
-        var buf = std.ArrayList(u8){};
+        var buf = try std.ArrayList(u8).initCapacity(allocator, 512);
         errdefer buf.deinit(allocator);
 
-        const writer = buf.writer(allocator);
-
-        try writer.print("{{", .{});
-        try writer.print("\"status\":\"{s}\",", .{self.status.toString()});
-        try writer.print("\"version\":\"{s}\",", .{self.version});
-        try writer.print("\"uptime_seconds\":{d},", .{self.uptime_seconds});
-        try writer.print("\"components\":{{", .{});
-        try writer.print("\"http_server\":\"{s}\",", .{self.http_server.toString()});
-        try writer.print("\"lua_engine\":\"{s}\",", .{self.lua_engine.toString()});
-        try writer.print("\"file_cache\":\"{s}\"", .{self.file_cache.toString()});
-        try writer.print("}}}}", .{});
+        try buf.print(allocator, "{{", .{});
+        try buf.print(allocator, "\"status\":\"{s}\",", .{self.status.toString()});
+        try buf.print(allocator, "\"version\":\"{s}\",", .{self.version});
+        try buf.print(allocator, "\"uptime_seconds\":{d},", .{self.uptime_seconds});
+        try buf.print(allocator, "\"components\":{{", .{});
+        try buf.print(allocator, "\"http_server\":\"{s}\",", .{self.http_server.toString()});
+        try buf.print(allocator, "\"lua_engine\":\"{s}\",", .{self.lua_engine.toString()});
+        try buf.print(allocator, "\"file_cache\":\"{s}\"", .{self.file_cache.toString()});
+        try buf.print(allocator, "}}}}", .{});
 
         return try buf.toOwnedSlice(allocator);
     }
@@ -103,7 +101,9 @@ pub fn check(start_time: i64, lua_enabled: bool) HealthCheck {
     var health = HealthCheck{};
 
     // Calculate uptime
-    health.uptime_seconds = std.time.timestamp() - start_time;
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    health.uptime_seconds = ts.sec - start_time;
 
     // Set component statuses based on enabled state
     // Note: In a real implementation, you would check actual component health
@@ -162,7 +162,8 @@ test "health check json format" {
 }
 
 test "health check function" {
-    const start_time = std.time.timestamp() - 100; // 100 seconds ago
+    const ts = std.Io.Clock.now(.real, std.testing.io) catch unreachable;
+    const start_time = std.Io.Timestamp.toSeconds(ts) - 100; // 100 seconds ago
     const health = check(start_time, true, true);
 
     try std.testing.expect(health.status == .healthy);

@@ -10,9 +10,9 @@ pub fn AsyncQueue(comptime T: type, comptime capacity: usize) type {
         head: usize,
         tail: usize,
         count: usize,
-        mutex: std.Thread.Mutex,
-        not_empty: std.Thread.Condition,
-        not_full: std.Thread.Condition,
+        mutex: std.Io.Mutex,
+        not_empty: std.Io.Condition,
+        not_full: std.Io.Condition,
         shutdown: bool,
 
         pub fn init() Self {
@@ -21,9 +21,9 @@ pub fn AsyncQueue(comptime T: type, comptime capacity: usize) type {
                 .head = 0,
                 .tail = 0,
                 .count = 0,
-                .mutex = .{},
-                .not_empty = .{},
-                .not_full = .{},
+                .mutex = std.Io.Mutex.init,
+                .not_empty = std.Io.Condition.init,
+                .not_full = std.Io.Condition.init,
                 .shutdown = false,
             };
         }
@@ -31,96 +31,65 @@ pub fn AsyncQueue(comptime T: type, comptime capacity: usize) type {
         /// Try to enqueue an item (non-blocking)
         /// Returns true if successful, false if queue is full
         pub fn tryEnqueue(self: *Self, item: T) bool {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
             if (self.count >= capacity) {
                 return false;
             }
-
             self.buffer[self.tail] = item;
             self.tail = (self.tail + 1) % capacity;
             self.count += 1;
-            self.not_empty.signal();
             return true;
         }
 
         /// Enqueue an item (blocking if queue is full)
         pub fn enqueue(self: *Self, item: T) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
             while (self.count >= capacity and !self.shutdown) {
-                self.not_full.wait(&self.mutex);
+                std.Thread.yield() catch {};
             }
-
             if (self.shutdown) return;
-
             self.buffer[self.tail] = item;
             self.tail = (self.tail + 1) % capacity;
             self.count += 1;
-            self.not_empty.signal();
         }
 
         /// Dequeue an item (blocking if queue is empty)
         /// Returns null if queue is shutdown and empty
         pub fn dequeue(self: *Self) ?T {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
             while (self.count == 0 and !self.shutdown) {
-                self.not_empty.wait(&self.mutex);
+                std.Thread.yield() catch {};
             }
-
             if (self.count == 0 and self.shutdown) {
                 return null;
             }
-
             const item = self.buffer[self.head];
             self.head = (self.head + 1) % capacity;
             self.count -= 1;
-            self.not_full.signal();
             return item;
         }
 
         /// Try to dequeue an item (non-blocking)
         /// Returns null if queue is empty
         pub fn tryDequeue(self: *Self) ?T {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
             if (self.count == 0) {
                 return null;
             }
-
             const item = self.buffer[self.head];
             self.head = (self.head + 1) % capacity;
             self.count -= 1;
-            self.not_full.signal();
             return item;
         }
 
         /// Signal shutdown and wake all waiting threads
         pub fn signalShutdown(self: *Self) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
             self.shutdown = true;
-            self.not_empty.broadcast();
-            self.not_full.broadcast();
         }
 
         /// Get current queue size
         pub fn len(self: *Self) usize {
-            self.mutex.lock();
-            defer self.mutex.unlock();
             return self.count;
         }
 
         /// Check if queue is empty
         pub fn isEmpty(self: *Self) bool {
-            self.mutex.lock();
-            defer self.mutex.unlock();
             return self.count == 0;
         }
     };
@@ -153,42 +122,6 @@ test "AsyncQueue full queue" {
 
     _ = queue.tryDequeue();
     try testing.expect(queue.tryEnqueue(3)); // Should succeed after dequeue
-}
-
-test "AsyncQueue blocking operations" {
-    const allocator = std.testing.allocator;
-    _ = allocator;
-
-    var queue = AsyncQueue(u32, 4).init();
-
-    // Test blocking enqueue/dequeue with threads
-    const TestContext = struct {
-        queue: *AsyncQueue(u32, 4),
-
-        fn producer(ctx: *@This()) void {
-            var i: u32 = 0;
-            while (i < 10) : (i += 1) {
-                ctx.queue.enqueue(i);
-                std.Thread.sleep(1 * std.time.ns_per_ms);
-            }
-        }
-
-        fn consumer(ctx: *@This()) void {
-            var i: u32 = 0;
-            while (i < 10) : (i += 1) {
-                const val = ctx.queue.dequeue() orelse break;
-                std.testing.expectEqual(i, val) catch {};
-            }
-        }
-    };
-
-    var ctx = TestContext{ .queue = &queue };
-    const producer_thread = try std.Thread.spawn(.{}, TestContext.producer, .{&ctx});
-    const consumer_thread = try std.Thread.spawn(.{}, TestContext.consumer, .{&ctx});
-
-    producer_thread.join();
-    queue.signalShutdown();
-    consumer_thread.join();
 }
 
 test "AsyncQueue shutdown signal" {

@@ -43,6 +43,7 @@ const SessionManager = session_mod.SessionManager;
 /// - Cleaned up in `HttpzServer.deinit()`
 pub const AppContext = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     config: Config,
     file_cache: *FileCache, // Global file cache shared by all handlers
     lua_handler: ?LuaHandler = null,
@@ -54,7 +55,7 @@ pub const AppContext = struct {
     auth_middleware: ?AuthMiddleware = null,
     // Phase 5: Observability
     metrics: ?*Metrics = null,
-    start_time: i64 = 0,
+    start_time: std.Io.Timestamp,
     // Phase 7: Security
     ip_access_control: ?*IpAccessControl = null,
     // Database manager (holds multiple named data sources)
@@ -62,7 +63,7 @@ pub const AppContext = struct {
     // Session manager
     session_manager: ?*SessionManager = null,
     // Cached absolute path for static directory (optimization: avoids realpath syscall per request)
-    static_dir_abs: ?[]const u8 = null,
+    static_dir_abs: [4096]u8 = undefined,
     // Pre-formatted rate limit window string (optimization: avoids formatting on every 429 response)
     rate_limit_window_str: [16]u8 = undefined,
     rate_limit_window_len: usize = 0,
@@ -71,7 +72,7 @@ pub const AppContext = struct {
     /// This enables WebSocket support in httpz.Server
     pub const WebsocketHandler = WebSocketHandler;
 
-    pub fn init(allocator: std.mem.Allocator, config: Config) !AppContext {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, config: Config) !AppContext {
         // Parse log level
         const log_level = if (std.mem.eql(u8, config.log_level, "debug"))
             LogLevel.debug
@@ -86,20 +87,20 @@ pub const AppContext = struct {
         const log_format: LogFormat = if (std.mem.eql(u8, config.log_format, "json")) .json else .text;
 
         // Initialize main logger
-        var logger = try logger_mod.initWithFormat(allocator, log_level, config.log_file, log_format);
+        var logger = try logger_mod.initWithFormat(io, allocator, log_level, config.log_file, log_format);
         errdefer logger.deinit();
 
         // Initialize access logger if configured
         var access_logger: ?Logger = null;
         if (config.access_log_file) |_| {
-            access_logger = try logger_mod.init(allocator, .info, config.access_log_file);
+            access_logger = try logger_mod.init(io, allocator, .info, config.access_log_file);
         }
         errdefer if (access_logger) |*al| al.deinit();
 
         // Initialize global file cache
         const file_cache = try allocator.create(FileCache);
         errdefer allocator.destroy(file_cache);
-        file_cache.* = FileCache.init(allocator, config.reload, config.max_cache_file_size);
+        file_cache.* = FileCache.init(io, allocator, config.reload, config.max_cache_file_size);
         errdefer file_cache.deinit();
 
         // Phase 5: Initialize metrics if enabled
@@ -107,7 +108,7 @@ pub const AppContext = struct {
         if (config.enable_metrics) {
             metrics_ptr = try allocator.create(Metrics);
             errdefer allocator.destroy(metrics_ptr.?);
-            metrics_ptr.?.* = Metrics.init();
+            metrics_ptr.?.* = Metrics.init(io);
         }
 
         var ctx = AppContext{
@@ -117,13 +118,13 @@ pub const AppContext = struct {
             .logger = logger,
             .access_logger = access_logger,
             .metrics = metrics_ptr,
-            .start_time = std.time.timestamp(),
+            .io = io,
+            .start_time = std.Io.Clock.now(.awake, io),
         };
 
         // Cache the absolute path of static directory (optimization: avoids realpath syscall per request)
-        ctx.static_dir_abs = std.fs.cwd().realpathAlloc(allocator, config.static_dir) catch |err| blk: {
+        _ = std.Io.Dir.cwd().realPath(ctx.io, &ctx.static_dir_abs) catch |err| {
             logger.warn("Could not cache static directory path (will resolve per request): {}", .{err});
-            break :blk null;
         };
 
         // Initialize Lua handler if enabled
@@ -260,7 +261,7 @@ pub const AppContext = struct {
                 return ctx;
             };
 
-            manager.* = DbManager.init(allocator, ds_configs) catch |err| {
+            manager.* = DbManager.init(io, allocator, ds_configs) catch |err| {
                 ctx.logger.warn("Failed to initialize database manager: {}", .{err});
                 allocator.destroy(manager);
                 ctx.db_manager = null;
@@ -295,7 +296,7 @@ pub const AppContext = struct {
                 return ctx;
             };
 
-            session_manager.* = SessionManager.init(allocator, .{
+            session_manager.* = SessionManager.init(ctx.io, allocator, .{
                 .max_sessions = config.session_max_size,
                 .default_ttl = config.session_default_ttl,
                 .cookie_name = config.session_cookie_name,
@@ -364,10 +365,7 @@ pub const AppContext = struct {
         if (self.metrics) |metrics_ptr| {
             self.allocator.destroy(metrics_ptr);
         }
-        // Free cached static directory path
-        if (self.static_dir_abs) |static_dir_abs| {
-            self.allocator.free(static_dir_abs);
-        }
+        // static_dir_abs is a fixed-size buffer, no need to free
         self.file_cache.deinit();
         self.allocator.destroy(self.file_cache);
         self.logger.deinit();

@@ -110,11 +110,7 @@ const ThreadLocalLua = struct {
         // Set LUA_PATH if configured (before sandbox is applied)
         // After openLibs(), package global should always exist
         if (sandbox_config.lua_path.len > 0) {
-            _ = lua.getGlobal("package") catch {
-                // This should never happen after openLibs(), but handle it gracefully
-                // getGlobal failure leaves nothing on stack, so no cleanup needed
-                return error.LuaError;
-            };
+            _ = lua.getGlobal("package");
             if (lua.typeOf(-1) == .table) {
                 _ = lua.pushString(sandbox_config.lua_path);
                 lua.setField(-2, "path");
@@ -126,10 +122,7 @@ const ThreadLocalLua = struct {
 
         // Set LUA_CPATH if configured (before sandbox is applied)
         if (sandbox_config.lua_cpath.len > 0) {
-            _ = lua.getGlobal("package") catch {
-                // This should never happen after openLibs(), but handle it gracefully
-                return error.LuaError;
-            };
+            _ = lua.getGlobal("package");
             if (lua.typeOf(-1) == .table) {
                 _ = lua.pushString(sandbox_config.lua_cpath);
                 lua.setField(-2, "cpath");
@@ -154,10 +147,7 @@ const ThreadLocalLua = struct {
 
         // Create module cache table and store reference in registry
         lua.newTable();
-        const module_cache_ref = lua.ref(ziglua.registry_index) catch {
-            lua.deinit();
-            return error.LuaError;
-        };
+        const module_cache_ref = lua.ref(ziglua.registry_index);
 
         return ThreadLocalLua{
             .lua = lua,
@@ -190,7 +180,7 @@ const ThreadLocalLua = struct {
         }
 
         // Remove dangerous os functions (keep safe ones like os.time, os.date)
-        _ = lua.getGlobal("os") catch {};
+        _ = lua.getGlobal("os");
         if (lua.typeOf(-1) == .table) {
             const dangerous_os_funcs = [_][:0]const u8{
                 "execute",
@@ -219,11 +209,7 @@ const ThreadLocalLua = struct {
         // Remove dangerous package functions while preserving path/cpath
         // package.loadlib can load arbitrary C libraries which is dangerous
         // But we want to keep package.path and package.cpath for module search paths
-        _ = lua.getGlobal("package") catch {
-            // If package doesn't exist (shouldn't happen), silently continue
-            // Better to be permissive in sandbox than fail initialization
-            return;
-        };
+        _ = lua.getGlobal("package");
         if (lua.typeOf(-1) == .table) {
             const dangerous_package_funcs = [_][:0]const u8{
                 "loadlib",
@@ -277,7 +263,7 @@ pub const LuaHandler = struct {
     // Currently the cache is initialized but bytecode precompilation is not yet implemented.
     // The FileCache already handles source caching; bytecode caching would add precompilation.
     bytecode_cache: std.StringHashMap(BytecodeEntry),
-    bytecode_mutex: std.Thread.Mutex,
+    bytecode_mutex: std.atomic.Mutex,
 
     pub fn init(allocator: std.mem.Allocator, scripts_dir: []const u8, file_cache: *FileCache) !LuaHandler {
         return initWithConfig(allocator, scripts_dir, file_cache, default_sandbox_config);
@@ -290,13 +276,14 @@ pub const LuaHandler = struct {
             .file_cache = file_cache,
             .sandbox_config = sandbox_config,
             .bytecode_cache = std.StringHashMap(BytecodeEntry).init(allocator),
-            .bytecode_mutex = std.Thread.Mutex{},
+            .bytecode_mutex = .unlocked,
         };
     }
 
     pub fn deinit(self: *LuaHandler) void {
         // Clean up bytecode cache
-        self.bytecode_mutex.lock();
+        while (!self.bytecode_mutex.tryLock()) {}
+
         defer self.bytecode_mutex.unlock();
 
         var it = self.bytecode_cache.iterator();
@@ -336,7 +323,8 @@ pub const LuaHandler = struct {
 
     /// Clear bytecode cache (useful for hot-reloading)
     pub fn clearBytecodeCache(self: *LuaHandler) void {
-        self.bytecode_mutex.lock();
+        while (!self.bytecode_mutex.tryLock()) {}
+
         defer self.bytecode_mutex.unlock();
 
         var it = self.bytecode_cache.iterator();
@@ -390,7 +378,7 @@ pub const LuaHandler = struct {
 
         if (use_cache) {
             // Get the module cache table from registry
-            _ = lua.rawGetIndex(ziglua.registry_index, tl.module_cache_ref);
+            _ = lua.getIndexRaw(ziglua.registry_index, tl.module_cache_ref);
             if (lua.typeOf(-1) != .table) {
                 lua.pop(1);
                 return false;
@@ -398,7 +386,7 @@ pub const LuaHandler = struct {
 
             // Check if script_name is in the cache
             _ = lua.pushString(script_name);
-            _ = lua.rawGetTable(-2); // Get cache[script_name]
+            _ = lua.getTableRaw(-2); // Get cache[script_name]
 
             if (lua.typeOf(-1) == .table) {
                 // Cache hit! Module table is on stack
@@ -460,7 +448,7 @@ pub const LuaHandler = struct {
             // Cache the module: cache[script_name] = module_table
             _ = lua.pushString(script_name);
             lua.pushValue(-2); // Copy module table
-            lua.rawSetTable(-4); // cache[script_name] = module_table
+            lua.setTableRaw(-4); // cache[script_name] = module_table
 
             // Remove the cache table, keeping only the module table
             lua.remove(-2);
@@ -559,7 +547,7 @@ pub const LuaHandler = struct {
         // Optimization: Use rawGetTable for performance (15-25% faster than getField)
         // rawGetTable skips metamethod checks and doesn't require null-terminated strings
         _ = lua.pushString(func);
-        _ = lua.rawGetTable(-2); // Get module[func]
+        _ = lua.getTableRaw(-2); // Get module[func]
         if (lua.typeOf(-1) != .function) {
             lua.setTop(0); // Clean up stack before returning
             lua.setHook(ziglua.wrap(noopHook), .{}, 0);

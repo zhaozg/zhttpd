@@ -2,13 +2,13 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const server = @import("server.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // Parse command-line arguments and load configuration
-    const result = try cli.parseArgs(allocator);
+    const result = try cli.parseArgs(allocator, init.minimal.args, init.io);
     const cfg = switch (result) {
         .exit => |code| {
             std.process.exit(code);
@@ -18,7 +18,7 @@ pub fn main() !void {
     defer cfg.deinit();
 
     // Initialize the HTTP server with httpz
-    var server_instance = try server.HttpzServer.init(allocator, cfg);
+    var server_instance = try server.HttpzServer.init(init.io, allocator, cfg);
     defer server_instance.deinit();
 
     // Log startup information using the integrated logger

@@ -288,7 +288,7 @@ fn contextIndex(lua: *ziglua.Lua) i32 {
     // Fall back to the table itself for user-defined fields
     lua.pushValue(1); // Push the table
     lua.pushValue(2); // Push the key
-    _ = lua.rawGetTable(-2); // Get table[key], value is now at -1
+    _ = lua.getTableRaw(-2); // Get table[key], value is now at -1
     lua.remove(-2); // Remove the duplicate table to avoid stack imbalance
     return 1;
 }
@@ -332,7 +332,7 @@ fn contextDb(lua: *ziglua.Lua) i32 {
     // Stack: [table, "_plugin"] - table now at -2
     lua.pushLightUserdata(@ptrCast(plugin));
     // Stack: [table, "_plugin", userdata] - table now at -3
-    lua.rawSetTable(-3); // table["_plugin"] = userdata, pops key and value
+    lua.setTableRaw(-3); // table["_plugin"] = userdata, pops key and value
     // Stack: [table] at -1
 
     // Set the pre-registered metatable (no need to check/register methods)
@@ -429,12 +429,12 @@ fn getDbPluginFromConn(lua: *ziglua.Lua) ?*db_plugin.DbPlugin {
     // Get the _plugin field from the table at index 1 (self)
     // Optimization: Use rawGetTable instead of getField to skip metamethod checks
     _ = lua.pushString("_plugin");
-    _ = lua.rawGetTable(1);
+    _ = lua.getTableRaw(1);
     if (lua.typeOf(-1) != .light_userdata) {
         lua.pop(1);
         return null;
     }
-    const raw_ptr = lua.toPointer(-1) catch {
+    const raw_ptr = lua.toPointer(-1) orelse {
         lua.pop(1);
         return null;
     };
@@ -530,7 +530,7 @@ fn pushRequestInternal(lua: *ziglua.Lua, req: *httpz.Request) void {
     // Stack: [table, "_ptr"] - table now at -2
     lua.pushLightUserdata(@ptrCast(req));
     // Stack: [table, "_ptr", userdata] - table now at -3
-    lua.rawSetTable(-3); // table["_ptr"] = userdata, pops key and value
+    lua.setTableRaw(-3); // table["_ptr"] = userdata, pops key and value
     // Stack: [table] at -1
 
     // Set the metatable
@@ -552,7 +552,7 @@ fn pushResponseInternal(lua: *ziglua.Lua, res: *httpz.Response) void {
     // Stack: [table, "_ptr"] - table now at -2
     lua.pushLightUserdata(@ptrCast(res));
     // Stack: [table, "_ptr", userdata] - table now at -3
-    lua.rawSetTable(-3); // table["_ptr"] = userdata, pops key and value
+    lua.setTableRaw(-3); // table["_ptr"] = userdata, pops key and value
     // Stack: [table] at -1
 
     // Set the metatable

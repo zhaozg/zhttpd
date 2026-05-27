@@ -24,6 +24,32 @@
 
 const std = @import("std");
 
+/// Get current timestamp in milliseconds since epoch
+fn milliTimestamp() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    return @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1000000);
+}
+
+/// Simple spin lock for thread safety
+const SpinLock = struct {
+    state: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    pub fn lock(self: *SpinLock) void {
+        while (self.state.swap(1, .acquire) != 0) {
+            std.atomic.spinLoopHint();
+        }
+    }
+
+    pub fn unlock(self: *SpinLock) void {
+        self.state.store(0, .release);
+    }
+
+    pub fn tryLock(self: *SpinLock) bool {
+        return self.state.swap(1, .acquire) == 0;
+    }
+};
+
 /// Configuration for LRU cache
 pub const CacheConfig = struct {
     /// Maximum number of entries
@@ -78,7 +104,7 @@ pub fn LruCache(comptime K: type, comptime V: type, comptime Context: type) type
         /// Allocator for nodes
         allocator: std.mem.Allocator,
         /// Mutex for thread safety
-        mutex: std.Thread.Mutex = .{},
+        mutex: SpinLock,
         /// Optional context for cleanup callbacks
         context: Context,
         /// Cleanup callback for evicted values
@@ -88,6 +114,7 @@ pub fn LruCache(comptime K: type, comptime V: type, comptime Context: type) type
         pub fn init(allocator: std.mem.Allocator, config: CacheConfig, context: Context, on_evict: ?*const fn (K, *V, Context) void) Self {
             return Self{
                 .map = std.StringHashMap(*Node).init(allocator),
+                .mutex = .{},
                 .allocator = allocator,
                 .max_size = config.max_size,
                 .default_ttl_ms = config.default_ttl_ms,
@@ -124,7 +151,7 @@ pub fn LruCache(comptime K: type, comptime V: type, comptime Context: type) type
         /// Check if an entry has expired
         fn isExpired(node: *Node) bool {
             if (node.expires_ms == 0) return false;
-            return std.time.milliTimestamp() >= node.expires_ms;
+            return milliTimestamp() >= node.expires_ms;
         }
 
         /// Get entry by key and lock it for exclusive access
@@ -178,9 +205,9 @@ pub fn LruCache(comptime K: type, comptime V: type, comptime Context: type) type
             defer self.mutex.unlock();
 
             const expires = if (ttl_ms) |ttl|
-                if (ttl > 0) std.time.milliTimestamp() + ttl else 0
+                if (ttl > 0) milliTimestamp() + ttl else 0
             else if (self.default_ttl_ms > 0)
-                std.time.milliTimestamp() + self.default_ttl_ms
+                milliTimestamp() + self.default_ttl_ms
             else
                 0;
 

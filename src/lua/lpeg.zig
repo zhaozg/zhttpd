@@ -33,7 +33,7 @@ pub fn registerLpegModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.A
     // Store the allocator getter for API consistency
     _ = getAllocator;
 
-    _ = try lua.getGlobal("package");
+    _ = lua.getGlobal("package");
     _ = lua.getField(-1, "preload");
     lua.pushFunction(luaopen_lpeg);
     _ = lua.setField(-2, "lpeg");

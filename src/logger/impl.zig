@@ -17,7 +17,7 @@ const ASYNC_QUEUE_SIZE = 1024;
 /// Global logger instance for std.log integration
 /// Must be set via setGlobalLogger() to enable std.log compatibility
 var global_logger: ?*Logger = null;
-var global_logger_mutex: std.Thread.Mutex = .{};
+var global_logger_mutex: std.atomic.Mutex = .unlocked;
 
 /// Log message for async queue
 const LogMessage = struct {
@@ -56,10 +56,11 @@ pub const Logger = struct {
     console_backend_ptr: ?*ConsoleBackend,
     async_queue: ?*AsyncQueue,
     writer_thread: ?std.Thread,
-    mutex: std.Thread.Mutex,
-    flush_semaphore: std.Thread.Semaphore,
+    mutex: std.atomic.Mutex,
+    flush_semaphore: std.Io.Semaphore,
+    io: std.Io,
 
-    pub fn init(allocator: std.mem.Allocator, config: LoggerConfig, backend: ?Backend) !Logger {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, config: LoggerConfig, backend: ?Backend) !Logger {
         var logger = Logger{
             .allocator = allocator,
             .config = config,
@@ -67,8 +68,9 @@ pub const Logger = struct {
             .console_backend_ptr = null,
             .async_queue = null,
             .writer_thread = null,
-            .mutex = .{},
+            .mutex = .unlocked,
             .flush_semaphore = .{},
+            .io = io,
         };
 
         // Initialize console backend if enabled
@@ -136,7 +138,7 @@ pub const Logger = struct {
             // Signal if queue is now empty (for flush)
             if (self.async_queue) |queue| {
                 if (queue.isEmpty()) {
-                    self.flush_semaphore.post();
+                    self.flush_semaphore.post(self.io);
                 }
             }
         }
@@ -170,7 +172,7 @@ pub const Logger = struct {
 
         // Format the complete log line
         var log_buf: [LOG_BUFFER_SIZE]u8 = undefined;
-        const log_line = formatter_mod.formatMessage(&log_buf, level, self.config.format, message, request_id) catch |err| blk: {
+        const log_line = formatter_mod.formatMessage(self.io, &log_buf, level, self.config.format, message, request_id) catch |err| blk: {
             std.debug.print("Failed to format log line: {}\n", .{err});
             break :blk message;
         };
@@ -180,7 +182,7 @@ pub const Logger = struct {
             // Use text format for console even if file uses JSON
             var console_buf: [LOG_BUFFER_SIZE]u8 = undefined;
             const console_line = if (self.config.format == .json)
-                formatter_mod.formatMessage(&console_buf, level, .text, message, request_id) catch log_line
+                formatter_mod.formatMessage(self.io, &console_buf, level, .text, message, request_id) catch log_line
             else
                 log_line;
 
@@ -220,11 +222,11 @@ pub const Logger = struct {
         if (self.async_queue) |queue| {
             // Use semaphore-based waiting with timeout
             const timeout_ns = 5 * std.time.ns_per_s; // 5 second timeout
-            const start = std.time.nanoTimestamp();
+            const start = std.Io.Clock.now(.awake, self.io).toNanoseconds();
 
             // Wait for queue to be empty
             while (!queue.isEmpty()) {
-                const elapsed = std.time.nanoTimestamp() - start;
+                const elapsed = std.Io.Clock.now(.awake, self.io).toNanoseconds() - start;
                 if (elapsed > timeout_ns) {
                     const remaining = queue.len();
                     std.debug.print("Logger flush timeout: {d} messages remaining in queue\n", .{remaining});
@@ -236,10 +238,10 @@ pub const Logger = struct {
                 if (!queue.isEmpty()) {
                     // Wait for signal from writer thread or timeout
                     const wait_time_ns = 100 * std.time.ns_per_ms; // 100ms per iteration
-                    const iteration_start = std.time.nanoTimestamp();
+                    const iteration_start = std.Io.Clock.now(.awake, self.io).toNanoseconds();
 
                     // Try to wait on semaphore (non-blocking attempt)
-                    while (std.time.nanoTimestamp() - iteration_start < wait_time_ns) {
+                    while (std.Io.Clock.now(.awake, self.io).toNanoseconds() - iteration_start < wait_time_ns) {
                         if (queue.isEmpty()) break;
                         self.flush_semaphore.wait(); // Wait for signal
                         break;
@@ -295,7 +297,7 @@ pub const Logger = struct {
         duration_us: i64,
     ) void {
         const duration_ms = @as(f64, @floatFromInt(duration_us)) / 1000.0;
-        const timestamp_str = formatter_mod.formatTimestamp();
+        const timestamp_str = formatter_mod.formatTimestamp(self.io);
 
         // Sanitize fields to prevent log injection
         var sanitized_path: [LOG_BUFFER_SIZE]u8 = undefined;
@@ -348,14 +350,14 @@ pub const Logger = struct {
 /// Set global logger for std.log integration
 /// This allows std.log.* calls to use the configured logger
 pub fn setGlobalLogger(logger: *Logger) void {
-    global_logger_mutex.lock();
+    while (!global_logger_mutex.tryLock()) {}
     defer global_logger_mutex.unlock();
     global_logger = logger;
 }
 
 /// Clear global logger
 pub fn clearGlobalLogger() void {
-    global_logger_mutex.lock();
+    while (!global_logger_mutex.tryLock()) {}
     defer global_logger_mutex.unlock();
     global_logger = null;
 }
@@ -371,11 +373,11 @@ pub fn clearGlobalLogger() void {
 /// ```
 pub fn logFn(
     comptime level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: []const u8,
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const scope_name = @tagName(scope);
+    const scope_name = scope;
 
     const our_level: LogLevel = switch (level) {
         .debug => .debug,
@@ -385,13 +387,13 @@ pub fn logFn(
     };
 
     // Try to use global logger if set
-    global_logger_mutex.lock();
+    while (!global_logger_mutex.tryLock()) {}
     const logger_copy = global_logger;
     global_logger_mutex.unlock();
 
     if (logger_copy) |log| {
         // Format message with scope
-        if (scope == .default) {
+        if (std.mem.eql(u8, scope, "default")) {
             var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
             const message = std.fmt.bufPrint(&msg_buf, format, args) catch return;
             log.log(our_level, "{s}", .{message});
@@ -407,7 +409,7 @@ pub fn logFn(
     } else {
         // Fallback: print directly to stderr
         var msg_buf: [LOG_BUFFER_SIZE]u8 = undefined;
-        const message = if (scope == .default)
+        const message = if (std.mem.eql(u8, scope, "default"))
             std.fmt.bufPrint(&msg_buf, format, args) catch return
         else blk: {
             const scope_prefix = std.fmt.bufPrint(&msg_buf, "({s}) ", .{scope_name}) catch return;
@@ -434,7 +436,7 @@ test "Logger basic" {
         .enable_async = false,
     };
 
-    var logger = try Logger.init(allocator, config, null);
+    var logger = try Logger.init(testing.io, allocator, config, null);
     defer logger.deinit();
 
     logger.info("Test message: {s}", .{"hello"});
@@ -460,7 +462,7 @@ test "Logger with file backend" {
         .enable_async = false,
     };
 
-    var logger = try Logger.init(allocator, config, file_backend.backend());
+    var logger = try Logger.init(testing.io, allocator, config, file_backend.backend());
     defer logger.deinit();
 
     logger.info("Test file logging", .{});
@@ -486,7 +488,7 @@ test "Logger async mode" {
         .enable_async = true,
     };
 
-    var logger = try Logger.init(allocator, config, file_backend.backend());
+    var logger = try Logger.init(testing.io, allocator, config, file_backend.backend());
     defer logger.deinit();
 
     // Log multiple messages
@@ -518,7 +520,7 @@ test "Logger access log format" {
         .enable_async = false,
     };
 
-    var logger = try Logger.init(allocator, config, file_backend.backend());
+    var logger = try Logger.init(testing.io, allocator, config, file_backend.backend());
     defer logger.deinit();
 
     logger.access(
@@ -566,7 +568,7 @@ test "std.log integration with global logger" {
         .enable_async = false,
     };
 
-    var logger = try Logger.init(allocator, config, file_backend.backend());
+    var logger = try Logger.init(testing.io, allocator, config, file_backend.backend());
     defer logger.deinit();
 
     // Set global logger

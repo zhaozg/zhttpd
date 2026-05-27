@@ -2,27 +2,23 @@
     .name = .zhttpd,
     .version = "0.1.0",
     .fingerprint = 0x607c98786ab287ec,
-    .minimum_zig_version = "0.15.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .httpz = .{
-            .url = "https://github.com/karlseguin/http.zig/archive/a4477b1dbdc5b820fd4ad301797ca6399f7eb6e4.tar.gz",
-            .hash = "httpz-0.0.0-PNVzrBgtBwCVkSJyophIX6WHwDR0r8XhBGQr96Kk-1El",
-        },
-        .ziglua = .{
-            .url = "https://github.com/natecraddock/ziglua/archive/315b7f25efd29d9e2143d6c0ab685bb7f640450f.tar.gz",
-            .hash = "zlua-0.1.0-hGRpCww-BQCx3cX6zbKWfTgOx6B7Peo4P17RK2hm7-xV",
+            .url = "git+https://github.com/karlseguin/http.zig#zig-0.16",
+            .hash = "httpz-0.0.0-PNVzrOO_BwDQuZej17hqyhdz7iGP671975A3uF8Ln3gu",
         },
         .yaml = .{
-            .url = "https://github.com/kubkon/zig-yaml/archive/a6c2cd8760bf45c49b17a3f6259c4dfe3ded528e.tar.gz",
-            .hash = "zig_yaml-0.2.0-C1161pmrAgDnipDTh_4v4RQD27XN5GNaVlzzvlXf1jfW",
+            .url = "git+https://github.com/Stuff7/zig-yaml#zig-0.16",
+            .hash = "zig_yaml-0.3.0-C1161gmsAgBMXfMGSbvs1jaocmD2KVCEZRPKBSO0x1Hc",
         },
         .zdbc = .{
-            .url = "https://github.com/zhaozg/zdbc/archive/be8640d3159cc740170479e4c0c3e9d3350dc9ee.tar.gz",
-            .hash = "zdbc-0.1.0-_uIxvqowAgDriyZw-LAZnRdXb8ClR2TXfox1es0IbTUJ",
+            .url = "https://github.com/zhaozg/zdbc/archive/88b7cc603a655a0fa9d8ec4d111c91bba92f9283.zip",
+            .hash = "zdbc-0.1.0-_uIxvi6LAgDLPFzZA7U6AkK-YShJDFlaaXPo-Rf8WsS8",
         },
         .zlua = .{
-            .url = "https://github.com/natecraddock/ziglua/archive/315b7f25efd29d9e2143d6c0ab685bb7f640450f.tar.gz",
-            .hash = "zlua-0.1.0-hGRpCww-BQCx3cX6zbKWfTgOx6B7Peo4P17RK2hm7-xV",
+            .url = "git+https://github.com/natecraddock/ziglua#main",
+            .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
         },
     },
     .paths = .{

@@ -140,17 +140,19 @@ pub const Config = struct {
     }
 };
 
-pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config {
+pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8, io: std.Io) !Config {
     // Try to load config file, fallback to defaults
     // Note: Using std.debug.print here since logger is not yet initialized
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+    const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch |err| {
         std.debug.print("Config file '{s}' not found: {}\n", .{ path, err });
         std.debug.print("Using default configuration\n", .{});
         return getDefaultConfig(allocator);
     };
-    defer file.close();
+    defer file.close(io);
 
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    var buf: [1024 * 1024]u8 = undefined;
+    var reader = file.reader(io, &buf);
+    const content = try reader.interface.readAlloc(allocator, 1024 * 1024);
     defer allocator.free(content);
 
     // Only YAML configuration is supported
@@ -348,7 +350,7 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
     y.load(arena.allocator()) catch |err| switch (err) {
         error.ParseFailure => {
             if (y.parse_errors.errorMessageCount() > 0) {
-                y.parse_errors.renderToStdErr(.{ .ttyconf = .no_color });
+                std.debug.print("YAML parse errors occurred\n", .{});
             }
             return error.ParseFailure;
         },

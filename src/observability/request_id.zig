@@ -21,15 +21,18 @@ threadlocal var tls_counter: u32 = 0;
 /// Generate a unique request ID
 /// Returns a null-terminated string suitable for HTTP headers
 pub fn generate(buf: *[37]u8) []const u8 {
-    const now = std.time.microTimestamp();
-    const secs: u32 = @intCast(@divFloor(now, std.time.us_per_s) & 0xFFFFFFFF);
-    const micros: u16 = @intCast(@mod(now, std.time.us_per_s) >> 4 & 0xFFFF);
+    // Use std.time.nanoTimestamp() equivalent via std.c.clock_gettime
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    const now = @as(i128, @intCast(ts.sec)) * std.time.ns_per_s + @as(i128, @intCast(ts.nsec));
+    const secs: u32 = @intCast(@divFloor(now, std.time.ns_per_s) & 0xFFFFFFFF);
+    const micros: u16 = @intCast(@mod(now, std.time.ns_per_s) >> 12 & 0xFFFF);
 
     tls_counter +%= 1;
     const counter = tls_counter;
 
     // Use a simple PRNG for the random component
-    var prng = std.Random.DefaultPrng.init(@bitCast(now));
+    var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(now & 0xFFFFFFFFFFFFFFFF)));
     const random = prng.random();
 
     // Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 characters exactly)

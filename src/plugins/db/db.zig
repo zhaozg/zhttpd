@@ -364,7 +364,7 @@ pub const DbPlugin = struct {
     }
 
     /// Initialize the plugin
-    fn initPlugin(ctx: *anyopaque, allocator: std.mem.Allocator, config_str: ?[]const u8) bool {
+    fn initPlugin(ctx: *anyopaque, io: std.Io, allocator: std.mem.Allocator, config_str: ?[]const u8) bool {
         const self: *Self = @ptrCast(@alignCast(ctx));
         _ = allocator;
 
@@ -413,7 +413,7 @@ pub const DbPlugin = struct {
             // Initialize database connection
             if (self.config) |db_cfg| {
                 // Use single connection (pooling not currently supported)
-                self.connection = zdbc.open(self.allocator, db_cfg.uri) catch {
+                self.connection = zdbc.open(io, self.allocator, db_cfg.uri) catch {
                     self.error_message = "Failed to open database connection";
                     return false;
                 };
@@ -689,7 +689,7 @@ fn getPluginFromLua(lua: *ziglua.Lua) ?*DbPlugin {
     _ = lua.getField(ziglua.registry_index, "_db_plugin");
     if (lua.typeOf(-1) == .light_userdata) {
         // toPointer returns a non-null const pointer
-        const raw_ptr = lua.toPointer(-1) catch {
+        const raw_ptr = lua.toPointer(-1) orelse {
             lua.pop(1);
             return global_db_plugin;
         };
@@ -807,11 +807,11 @@ fn luaQuery(lua: *ziglua.Lua) i32 {
                     name_buf[len] = 0;
                     lua.setField(-2, name_buf[0..len :0]);
                 } else {
-                    lua.rawSetIndex(-2, @intCast(col_idx + 1));
+                    lua.setIndexRaw(-2, @intCast(col_idx + 1));
                 }
             }
 
-            lua.rawSetIndex(-2, row_idx);
+            lua.setIndexRaw(-2, row_idx);
             row_idx += 1;
         } else {
             break;
@@ -998,11 +998,11 @@ fn luaStatementQuery(lua: *ziglua.Lua) i32 {
                     name_buf[len] = 0;
                     lua.setField(-2, name_buf[0..len :0]);
                 } else {
-                    lua.rawSetIndex(-2, @intCast(col_idx + 1));
+                    lua.setIndexRaw(-2, @intCast(col_idx + 1));
                 }
             }
 
-            lua.rawSetIndex(-2, row_idx);
+            lua.setIndexRaw(-2, row_idx);
             row_idx += 1;
         } else {
             break;
@@ -1252,11 +1252,11 @@ pub fn luaQueryWithPlugin(lua: *ziglua.Lua, plugin: *DbPlugin, sql_arg_idx: i32)
                     name_buf[len] = 0;
                     lua.setField(-2, name_buf[0..len :0]);
                 } else {
-                    lua.rawSetIndex(-2, @intCast(col_idx + 1));
+                    lua.setIndexRaw(-2, @intCast(col_idx + 1));
                 }
             }
 
-            lua.rawSetIndex(-2, row_idx);
+            lua.setIndexRaw(-2, row_idx);
             row_idx += 1;
         } else {
             break;
@@ -1443,7 +1443,7 @@ fn luaStatementQueryWithPlugin(lua: *ziglua.Lua) i32 {
 
     // Get the plugin from the statement table
     _ = lua.getField(1, "_plugin");
-    const raw_ptr = lua.toPointer(-1) catch {
+    const raw_ptr = lua.toPointer(-1) orelse {
         lua.pushNil();
         _ = lua.pushString("Invalid plugin in statement");
         return 2;
@@ -1523,11 +1523,11 @@ fn luaStatementQueryWithPlugin(lua: *ziglua.Lua) i32 {
                     name_buf[len] = 0;
                     lua.setField(-2, name_buf[0..len :0]);
                 } else {
-                    lua.rawSetIndex(-2, @intCast(col_idx + 1));
+                    lua.setIndexRaw(-2, @intCast(col_idx + 1));
                 }
             }
 
-            lua.rawSetIndex(-2, row_idx);
+            lua.setIndexRaw(-2, row_idx);
             row_idx += 1;
         } else {
             break;
@@ -1548,7 +1548,7 @@ fn luaStatementExecWithPlugin(lua: *ziglua.Lua) i32 {
 
     // Get the plugin from the statement table
     _ = lua.getField(1, "_plugin");
-    const raw_ptr = lua.toPointer(-1) catch {
+    const raw_ptr = lua.toPointer(-1) orelse {
         lua.pushNil();
         _ = lua.pushString("Invalid plugin in statement");
         return 2;

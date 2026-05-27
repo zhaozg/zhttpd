@@ -31,7 +31,7 @@ pub const RateLimiter = struct {
     config: Config,
     entries: std.StringHashMap(Entry),
     global_entry: Entry,
-    mutex: std.Thread.Mutex,
+    mutex: std.atomic.Mutex,
 
     /// Initialize a new rate limiter
     pub fn init(allocator: std.mem.Allocator, config: Config) RateLimiter {
@@ -41,15 +41,19 @@ pub const RateLimiter = struct {
             .entries = std.StringHashMap(Entry).init(allocator),
             .global_entry = Entry{
                 .tokens = config.max_requests + config.burst_size,
-                .last_update = std.time.timestamp(),
+                .last_update = @as(i64, @intCast(blk: {
+                    var ts: std.c.timespec = undefined;
+                    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+                    break :blk @as(i64, @intCast(ts.sec));
+                })),
             },
-            .mutex = std.Thread.Mutex{},
+            .mutex = .unlocked,
         };
     }
 
     /// Clean up resources
     pub fn deinit(self: *RateLimiter) void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         var it = self.entries.keyIterator();
@@ -62,10 +66,14 @@ pub const RateLimiter = struct {
     /// Check if a request is allowed and consume a token if so
     /// Returns true if request is allowed, false if rate limited
     pub fn checkRequest(self: *RateLimiter, client_ip: ?[]const u8) bool {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
-        const now = std.time.timestamp();
+        const now = blk: {
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+            break :blk @as(i64, @intCast(ts.sec));
+        };
 
         if (self.config.per_ip) {
             const ip = client_ip orelse return self.checkGlobal(now);
@@ -131,10 +139,14 @@ pub const RateLimiter = struct {
     /// Get remaining tokens for a client
     /// Note: Refills tokens based on elapsed time before returning count
     pub fn getRemainingTokens(self: *RateLimiter, client_ip: ?[]const u8) u32 {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
-        const now = std.time.timestamp();
+        const now = blk: {
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+            break :blk @as(i64, @intCast(ts.sec));
+        };
 
         if (self.config.per_ip) {
             const ip = client_ip orelse {
@@ -154,7 +166,7 @@ pub const RateLimiter = struct {
 
     /// Clear all entries (useful for testing)
     pub fn clear(self: *RateLimiter) void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         var it = self.entries.keyIterator();
@@ -165,7 +177,11 @@ pub const RateLimiter = struct {
 
         self.global_entry = Entry{
             .tokens = self.config.max_requests + self.config.burst_size,
-            .last_update = std.time.timestamp(),
+            .last_update = blk: {
+                var ts: std.c.timespec = undefined;
+                _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+                break :blk @as(i64, @intCast(ts.sec));
+            },
         };
     }
 };
@@ -227,7 +243,7 @@ pub const IpAccessControl = struct {
     /// Parsed whitelist entries
     whitelist_entries: std.ArrayList(IpEntry),
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex,
+    mutex: std.atomic.Mutex,
     /// LRU cache for IP access decisions (optimization for persistent connections)
     access_cache: ?LruCache([]const u8, IpAccessResult, void),
     /// Optional metrics pointer for tracking cache performance
@@ -257,10 +273,10 @@ pub const IpAccessControl = struct {
     pub fn init(allocator: std.mem.Allocator, config: Config) !IpAccessControl {
         var control = IpAccessControl{
             .config = config,
-            .blacklist_entries = std.ArrayList(IpEntry){},
-            .whitelist_entries = std.ArrayList(IpEntry){},
+            .blacklist_entries = .{ .items = &.{}, .capacity = 0 },
+            .whitelist_entries = .{ .items = &.{}, .capacity = 0 },
             .allocator = allocator,
-            .mutex = std.Thread.Mutex{},
+            .mutex = .unlocked,
             .access_cache = null,
             .metrics = null,
         };
@@ -299,7 +315,7 @@ pub const IpAccessControl = struct {
 
     /// Clean up resources
     pub fn deinit(self: *IpAccessControl) void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         // Clean up cache if it exists
@@ -343,7 +359,7 @@ pub const IpAccessControl = struct {
 
         // Acquire lock once for entire operation to avoid race conditions
         // between cache check and list iteration
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         // Try cache first if enabled (optimization for persistent connections)
@@ -407,7 +423,7 @@ pub const IpAccessControl = struct {
     /// Add an IP to the blacklist at runtime
     /// Clears the cache to ensure consistency
     pub fn addToBlacklist(self: *IpAccessControl, ip_str: []const u8) !void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         if (parseIpEntry(ip_str)) |entry| {
@@ -425,7 +441,7 @@ pub const IpAccessControl = struct {
     /// Remove an IP from the blacklist
     /// Clears the cache to ensure consistency
     pub fn removeFromBlacklist(self: *IpAccessControl, ip_str: []const u8) void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         var i: usize = 0;
@@ -451,7 +467,7 @@ pub const IpAccessControl = struct {
     /// Add an IP to the whitelist at runtime
     /// Clears the cache to ensure consistency
     pub fn addToWhitelist(self: *IpAccessControl, ip_str: []const u8) !void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         if (parseIpEntry(ip_str)) |entry| {
@@ -468,14 +484,14 @@ pub const IpAccessControl = struct {
 
     /// Get the number of blacklisted entries
     pub fn getBlacklistCount(self: *IpAccessControl) usize {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
         return self.blacklist_entries.items.len;
     }
 
     /// Get the number of whitelisted entries
     pub fn getWhitelistCount(self: *IpAccessControl) usize {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
         return self.whitelist_entries.items.len;
     }

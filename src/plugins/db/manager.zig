@@ -52,7 +52,7 @@ pub const DbManager = struct {
     const Self = @This();
 
     /// Initialize the database manager with a list of data source configs
-    pub fn init(allocator: std.mem.Allocator, configs: []const DataSourceConfig) !Self {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, configs: []const DataSourceConfig) !Self {
         var manager = Self{
             .allocator = allocator,
             .plugins = std.StringHashMap(*DbPlugin).init(allocator),
@@ -142,7 +142,7 @@ pub const DbManager = struct {
 
             // Initialize the plugin
             var p = plugin.asPlugin();
-            if (p.init(allocator, db_config_json)) {
+            if (p.init(io, allocator, db_config_json)) {
                 // Dupe the name for the hashmap key
                 const name_key = try allocator.dupe(u8, cfg.name);
                 errdefer allocator.free(name_key);

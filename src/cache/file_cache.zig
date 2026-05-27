@@ -118,9 +118,10 @@ pub const FileCacheEntry = struct {
     }
 
     /// Check if this entry has expired
-    pub fn expired(self: FileCacheEntry) bool {
+    pub fn expired(self: FileCacheEntry, io: std.Io) bool {
         if (self.expires_ms == 0) return false;
-        return std.time.milliTimestamp() >= self.expires_ms;
+        const now_ts = std.Io.Clock.now(.real, io);
+        return now_ts.toMilliseconds() >= self.expires_ms;
     }
 
     /// Free memory when entry is no longer needed.
@@ -171,21 +172,24 @@ const StringLruCache = struct {
     /// Allocator for nodes
     allocator: std.mem.Allocator,
     /// Mutex for thread safety
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.atomic.Mutex = .unlocked,
+    /// Io instance for system calls
+    io: std.Io,
 
     /// Initialize a new LRU cache
-    pub fn init(allocator: std.mem.Allocator, max_size: usize, max_bytes: usize) Self {
+    pub fn init(allocator: std.mem.Allocator, max_size: usize, max_bytes: usize, io: std.Io) Self {
         return Self{
             .map = std.StringHashMap(*Node).init(allocator),
             .allocator = allocator,
             .max_size = max_size,
             .max_bytes = max_bytes,
+            .io = io,
         };
     }
 
     /// Clean up and free all resources
     pub fn deinit(self: *Self) void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         // Free all nodes and their values
@@ -211,12 +215,12 @@ const StringLruCache = struct {
     /// Get a value by key, returns null if not found or expired
     /// The returned entry's content is duplicated and owned by the caller
     pub fn get(self: *Self, key: []const u8, allocator: std.mem.Allocator) !?FileCacheEntry {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         if (self.map.get(key)) |node| {
             // Check expiration
-            if (node.value.expired()) {
+            if (node.value.expired(self.io)) {
                 self.removeNodeLocked(node);
                 return null;
             }
@@ -262,12 +266,12 @@ const StringLruCache = struct {
     /// This method is optimized for static file serving where the cached
     /// data can be directly used in the response without copying.
     pub fn getZeroCopy(self: *Self, key: []const u8) ?ZeroCopyRef {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         if (self.map.get(key)) |node| {
             // Check expiration
-            if (node.value.expired()) {
+            if (node.value.expired(self.io)) {
                 self.removeNodeLocked(node);
                 return null;
             }
@@ -294,7 +298,7 @@ const StringLruCache = struct {
     /// The cache acquires its own reference to the RefCountedData.
     /// Takes ownership of the etag parameter on success; caller must free on error.
     pub fn putWithRef(self: *Self, key: []const u8, ref_data: *RefCountedData, mtime: i128, etag: ?[]const u8, expires_ms: i64) !void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         const entry_size = ref_data.data.len + if (etag) |e| e.len else 0;
@@ -313,7 +317,7 @@ const StringLruCache = struct {
             existing.value = FileCacheEntry{
                 .content = acquired.data,
                 .mtime = mtime,
-                .last_check_time = std.time.nanoTimestamp(),
+                .last_check_time = std.Io.Clock.now(.awake, self.io).toNanoseconds(),
                 .etag = etag,
                 .allocator = self.allocator,
                 .expires_ms = expires_ms,
@@ -344,7 +348,7 @@ const StringLruCache = struct {
             .value = FileCacheEntry{
                 .content = acquired.data,
                 .mtime = mtime,
-                .last_check_time = std.time.nanoTimestamp(),
+                .last_check_time = std.Io.Clock.now(.awake, self.io).toNanoseconds(),
                 .etag = etag,
                 .allocator = self.allocator,
                 .expires_ms = expires_ms,
@@ -367,7 +371,7 @@ const StringLruCache = struct {
     /// Put a value into the cache
     /// The cache takes ownership of the content and etag in the value
     pub fn put(self: *Self, key: []const u8, value: FileCacheEntry) !void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         const entry_size = value.size();
@@ -411,7 +415,7 @@ const StringLruCache = struct {
 
     /// Remove an entry by key
     pub fn remove(self: *Self, key: []const u8) bool {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         if (self.map.get(key)) |node| {
@@ -423,7 +427,7 @@ const StringLruCache = struct {
 
     /// Clear all entries
     pub fn clear(self: *Self) void {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
 
         var node = self.head;
@@ -444,7 +448,7 @@ const StringLruCache = struct {
 
     /// Get the current number of entries
     pub fn getCount(self: *Self) usize {
-        self.mutex.lock();
+        while (!self.mutex.tryLock()) {}
         defer self.mutex.unlock();
         return self.count;
     }
@@ -515,18 +519,20 @@ const StringLruCache = struct {
 /// full control over thread safety and memory management.
 pub const FileCache = struct {
     cache: StringLruCache,
-    allocator: std.mem.Allocator,
     reload_mode: ReloadMode,
+    allocator: std.mem.Allocator,
+    io: std.Io,
     max_cache_file_size: usize,
 
     /// Initialize a new file cache with the specified reload mode and max cache file size
-    pub fn init(allocator: std.mem.Allocator, reload_mode: ReloadMode, max_cache_file_size: usize) FileCache {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, reload_mode: ReloadMode, max_cache_file_size: usize) FileCache {
         // Calculate max cache entries based on average file size assumption (10KB)
         const max_entries: usize = @min(max_cache_file_size / 10240 + 100, 10000);
 
         return FileCache{
-            .cache = StringLruCache.init(allocator, max_entries, max_cache_file_size),
+            .cache = StringLruCache.init(allocator, max_entries, max_cache_file_size, io),
             .allocator = allocator,
+            .io = io,
             .reload_mode = reload_mode,
             .max_cache_file_size = max_cache_file_size,
         };
@@ -563,10 +569,10 @@ pub const FileCache = struct {
         const entry = FileCacheEntry{
             .content = owned_content,
             .mtime = mtime,
-            .last_check_time = std.time.nanoTimestamp(),
+            .last_check_time = std.Io.Clock.now(.awake, self.io).toNanoseconds(),
             .etag = owned_etag,
             .allocator = self.allocator,
-            .expires_ms = std.time.milliTimestamp() + DEFAULT_FILE_TTL_MS,
+            .expires_ms = std.Io.Clock.now(.real, self.io).toMilliseconds() + DEFAULT_FILE_TTL_MS,
         };
 
         try self.cache.put(key, entry);
@@ -591,16 +597,16 @@ pub const FileCache = struct {
                 }
 
                 // Check file size before reading
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
 
                 // If file is too large, don't cache it
                 if (stat.size > self.max_cache_file_size) {
-                    return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    return try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 }
 
-                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
 
                 // Cache makes its own copy, so we can return the original
@@ -610,7 +616,7 @@ pub const FileCache = struct {
             .auto => {
                 // First, check cache to see if we have a recent entry
                 if (try self.getCachedContent(path)) |cached| {
-                    const current_time = std.time.nanoTimestamp();
+                    const current_time = std.Io.Clock.now(.awake, self.io).toNanoseconds();
                     // Skip stat check if we checked recently (within STAT_CHECK_INTERVAL_NS)
                     if (current_time - cached.last_check_time < STAT_CHECK_INTERVAL_NS) {
                         // Return cached content without stat check
@@ -618,7 +624,7 @@ pub const FileCache = struct {
                     }
 
                     // Check file modification time
-                    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+                    const file = std.Io.Dir.cwd().openFile(self.io, path, .{}) catch |err| {
                         if (err == error.FileNotFound) {
                             // File was deleted, cache is stale - free the duplicate and return error
                             self.allocator.free(cached.content);
@@ -627,10 +633,10 @@ pub const FileCache = struct {
                         // For other errors (permission, etc.), return cached content as fallback
                         return cached.content;
                     };
-                    defer file.close();
-                    const stat = try file.stat();
+                    defer file.close(self.io);
+                    const stat = try file.stat(self.io);
 
-                    if (cached.mtime == stat.mtime) {
+                    if (cached.mtime == stat.mtime.nanoseconds) {
                         // File hasn't changed, update last_check_time in cache
                         try self.putCached(path, cached.content, cached.mtime, null);
                         // Return the already-duplicated content
@@ -642,31 +648,31 @@ pub const FileCache = struct {
 
                     // If file is too large, don't cache it
                     if (stat.size > self.max_cache_file_size) {
-                        return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                        return try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                     }
 
                     // File changed, read and update cache
-                    const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                     errdefer self.allocator.free(content);
 
-                    try self.putCached(path, content, stat.mtime, null);
+                    try self.putCached(path, content, stat.mtime.nanoseconds, null);
                     return content;
                 }
 
                 // Not cached, read from disk
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
 
                 // If file is too large, don't cache it
                 if (stat.size > self.max_cache_file_size) {
-                    return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    return try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 }
 
-                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
 
-                try self.putCached(path, content, stat.mtime, null);
+                try self.putCached(path, content, stat.mtime.nanoseconds, null);
                 return content;
             },
         }
@@ -674,9 +680,29 @@ pub const FileCache = struct {
 
     /// Read file content from disk
     fn readFileFromDisk(self: *FileCache, path: []const u8) ![]const u8 {
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-        return try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+        return try readFileAlloc(self.io, self.allocator, path, MAX_FILE_SIZE);
+    }
+
+    /// Helper to read file content into an allocator
+    fn readFileAlloc(io: std.Io, allocator: std.mem.Allocator, path: []const u8, max_size: usize) ![]const u8 {
+        const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+        defer file.close(io);
+        const stat = try file.stat(io);
+        const file_size = @min(stat.size, max_size);
+        var buf: [8]u8 = undefined;
+        var reader = file.reader(io, &buf);
+        const io_reader = &reader.interface;
+        return try io_reader.readAlloc(allocator, @intCast(file_size));
+    }
+
+    /// Helper to read from an already opened file
+    fn readOpenedFileAlloc(file: std.Io.File, io: std.Io, allocator: std.mem.Allocator, max_size: usize) ![]const u8 {
+        const stat = try file.stat(io);
+        const file_size = @min(stat.size, max_size);
+        var buf: [8]u8 = undefined;
+        var reader = file.reader(io, &buf);
+        const io_reader = &reader.interface;
+        return try io_reader.readAlloc(allocator, @intCast(file_size));
     }
 
     /// Generate ETag from file stat (using size and mtime)
@@ -700,12 +726,12 @@ pub const FileCache = struct {
         switch (self.reload_mode) {
             .force => {
                 // Always read from disk, regenerate ETag
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
-                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
+                const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
-                const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                const etag = try generateETag(self.allocator, stat.size, stat.mtime.nanoseconds);
                 return .{ .content = content, .etag = etag };
             },
             .never => {
@@ -715,31 +741,31 @@ pub const FileCache = struct {
                 }
 
                 // Check file size before reading
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
 
                 // If file is too large, don't cache it
                 if (stat.size > self.max_cache_file_size) {
-                    const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                     errdefer self.allocator.free(content);
-                    const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                    const etag = try generateETag(self.allocator, stat.size, stat.mtime.nanoseconds);
                     return .{ .content = content, .etag = etag };
                 }
 
-                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
-                const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                const etag = try generateETag(self.allocator, stat.size, stat.mtime.nanoseconds);
                 errdefer self.allocator.free(etag);
 
                 // Cache makes its own copy, store mtime for consistency
-                try self.putCached(path, content, stat.mtime, etag);
+                try self.putCached(path, content, stat.mtime.nanoseconds, etag);
                 return .{ .content = content, .etag = etag };
             },
             .auto => {
                 // First, check cache to see if we have a recent entry
                 if (try self.cache.get(path, self.allocator)) |entry| {
-                    const current_time = std.time.nanoTimestamp();
+                    const current_time = std.Io.Clock.now(.awake, self.io).toNanoseconds();
                     // Skip stat check if we checked recently (within STAT_CHECK_INTERVAL_NS)
                     if (current_time - entry.last_check_time < STAT_CHECK_INTERVAL_NS) {
                         // Return cached content without stat check
@@ -753,7 +779,7 @@ pub const FileCache = struct {
                     }
 
                     // Check file modification time
-                    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+                    const file = std.Io.Dir.cwd().openFile(self.io, path, .{}) catch |err| {
                         if (err == error.FileNotFound) {
                             // Clean up entry's content since we're returning error
                             var mutable_entry = entry;
@@ -766,10 +792,10 @@ pub const FileCache = struct {
                         } else try generateETag(self.allocator, entry.content.len, entry.mtime);
                         return .{ .content = entry.content, .etag = etag };
                     };
-                    defer file.close();
-                    const stat = try file.stat();
+                    defer file.close(self.io);
+                    const stat = try file.stat(self.io);
 
-                    if (entry.mtime == stat.mtime) {
+                    if (entry.mtime == stat.mtime.nanoseconds) {
                         // File hasn't changed - return the entry as-is
                         // The entry.content and entry.etag are already duplicated and owned by us
                         const etag = if (entry.etag) |e| blk: {
@@ -786,24 +812,24 @@ pub const FileCache = struct {
                 }
 
                 // Not cached or cache is stale, read from disk
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
 
                 // If file is too large, don't cache it
                 if (stat.size > self.max_cache_file_size) {
-                    const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                    const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                     errdefer self.allocator.free(content);
-                    const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                    const etag = try generateETag(self.allocator, stat.size, stat.mtime.nanoseconds);
                     return .{ .content = content, .etag = etag };
                 }
 
-                const content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                const content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 errdefer self.allocator.free(content);
-                const etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                const etag = try generateETag(self.allocator, stat.size, stat.mtime.nanoseconds);
                 errdefer self.allocator.free(etag);
 
-                try self.putCached(path, content, stat.mtime, etag);
+                try self.putCached(path, content, stat.mtime.nanoseconds, etag);
                 return .{ .content = content, .etag = etag };
             },
         }
@@ -823,13 +849,13 @@ pub const FileCache = struct {
 
     /// Get file info with ETag support (for zero-copy serving)
     pub fn getFileInfo(file_cache: *FileCache, path: []const u8, allocator: std.mem.Allocator) !struct { size: u64, mtime: i128, etag: []const u8 } {
-        _ = file_cache; // unused but kept for API consistency
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-        const stat = try file.stat();
+        _ = file_cache.io;
+        const file = try std.Io.Dir.cwd().openFile(file_cache.io, path, .{});
+        defer file.close(file_cache.io);
+        const stat = try file.stat(file_cache.io);
 
-        const etag = try generateETag(allocator, stat.size, stat.mtime);
-        return .{ .size = stat.size, .mtime = stat.mtime, .etag = etag };
+        const etag = try generateETag(allocator, stat.size, stat.mtime.nanoseconds);
+        return .{ .size = stat.size, .mtime = stat.mtime.nanoseconds, .etag = etag };
     }
 
     /// Clear all cached entries (useful for testing or manual cache invalidation)
@@ -898,21 +924,21 @@ pub const FileCache = struct {
         if (self.cache.getZeroCopy(path)) |cache_ref| {
             // Check if file needs revalidation in auto mode
             if (self.reload_mode == .auto) {
-                const current_time = std.time.nanoTimestamp();
+                const current_time = std.Io.Clock.now(.awake, self.io).toNanoseconds();
                 // Only revalidate if stat check interval has elapsed
                 if (current_time - cache_ref.last_check_time >= STAT_CHECK_INTERVAL_NS) {
                     // Check if file has changed
-                    const file = std.fs.cwd().openFile(path, .{}) catch {
+                    const file = std.Io.Dir.cwd().openFile(self.io, path, .{}) catch {
                         // File error (not found, permission, etc.) - keep cached version
                         return self.buildZeroCopyRef(cache_ref);
                     };
-                    defer file.close();
-                    const stat = file.stat() catch {
+                    defer file.close(self.io);
+                    const stat = file.stat(self.io) catch {
                         // Stat error - keep cached version
                         return self.buildZeroCopyRef(cache_ref);
                     };
 
-                    if (cache_ref.mtime != stat.mtime) {
+                    if (cache_ref.mtime != stat.mtime.nanoseconds) {
                         // File changed - need to reload
                         cache_ref.release();
                         return null;
@@ -959,7 +985,7 @@ pub const FileCache = struct {
         const owned_etag = if (etag) |e| try self.allocator.dupe(u8, e) else null;
         errdefer if (owned_etag) |e| self.allocator.free(e);
 
-        const expires_ms = std.time.milliTimestamp() + DEFAULT_FILE_TTL_MS;
+        const expires_ms = std.Io.Clock.now(.real, self.io).toMilliseconds() + DEFAULT_FILE_TTL_MS;
 
         // Store in cache (cache acquires its own reference)
         try self.cache.putWithRef(key, ref_data, mtime, owned_etag, expires_ms);
@@ -976,12 +1002,12 @@ pub const FileCache = struct {
         switch (self.reload_mode) {
             .force => {
                 // Always read from disk, regenerate ETag
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
-                const content = try file.readToEndAlloc(target_allocator, MAX_FILE_SIZE);
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
+                const content = try readOpenedFileAlloc(file, self.io, target_allocator, MAX_FILE_SIZE);
                 errdefer target_allocator.free(content);
-                const etag = try generateETag(target_allocator, stat.size, stat.mtime);
+                const etag = try generateETag(target_allocator, stat.size, stat.mtime.nanoseconds);
                 return .{ .content = content, .etag = etag };
             },
             .never => {
@@ -991,26 +1017,26 @@ pub const FileCache = struct {
                 }
 
                 // Check file size before reading
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
 
                 // If file is too large, don't cache it - just read into target allocator
                 if (stat.size > self.max_cache_file_size) {
-                    const content = try file.readToEndAlloc(target_allocator, MAX_FILE_SIZE);
+                    const content = try readOpenedFileAlloc(file, self.io, target_allocator, MAX_FILE_SIZE);
                     errdefer target_allocator.free(content);
-                    const etag = try generateETag(target_allocator, stat.size, stat.mtime);
+                    const etag = try generateETag(target_allocator, stat.size, stat.mtime.nanoseconds);
                     return .{ .content = content, .etag = etag };
                 }
 
                 // Read file content into self.allocator for caching
-                const cache_content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                const cache_content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 defer self.allocator.free(cache_content); // Will be duplicated by putCachedWithRef
-                const cache_etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                const cache_etag = try generateETag(self.allocator, stat.size, stat.mtime.nanoseconds);
                 errdefer self.allocator.free(cache_etag);
 
                 // Cache it with ref-counting for zerocopy access
-                try self.putCachedWithRef(path, cache_content, stat.mtime, cache_etag);
+                try self.putCachedWithRef(path, cache_content, stat.mtime.nanoseconds, cache_etag);
 
                 // Return duplicated content in target allocator
                 const content = try target_allocator.dupe(u8, cache_content);
@@ -1021,7 +1047,7 @@ pub const FileCache = struct {
             .auto => {
                 // First, check cache to see if we have a recent entry
                 if (try self.cache.get(path, target_allocator)) |entry| {
-                    const current_time = std.time.nanoTimestamp();
+                    const current_time = std.Io.Clock.now(.awake, self.io).toNanoseconds();
                     // Skip stat check if we checked recently (within STAT_CHECK_INTERVAL_NS)
                     if (current_time - entry.last_check_time < STAT_CHECK_INTERVAL_NS) {
                         // entry.content and entry.etag are already allocated in target_allocator
@@ -1032,7 +1058,7 @@ pub const FileCache = struct {
                     }
 
                     // Check file modification time
-                    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+                    const file = std.Io.Dir.cwd().openFile(self.io, path, .{}) catch |err| {
                         if (err == error.FileNotFound) {
                             // Clean up entry's content since we're returning error
                             var mutable_entry = entry;
@@ -1045,10 +1071,10 @@ pub const FileCache = struct {
                         } else try generateETag(target_allocator, entry.content.len, entry.mtime);
                         return .{ .content = entry.content, .etag = etag };
                     };
-                    defer file.close();
-                    const stat = try file.stat();
+                    defer file.close(self.io);
+                    const stat = try file.stat(self.io);
 
-                    if (entry.mtime == stat.mtime) {
+                    if (entry.mtime == stat.mtime.nanoseconds) {
                         // File hasn't changed - return the entry as-is
                         const etag = if (entry.etag) |e| blk: {
                             break :blk e;
@@ -1062,26 +1088,26 @@ pub const FileCache = struct {
                 }
 
                 // Not cached or cache is stale, read from disk
-                const file = try std.fs.cwd().openFile(path, .{});
-                defer file.close();
-                const stat = try file.stat();
+                const file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+                defer file.close(self.io);
+                const stat = try file.stat(self.io);
 
                 // If file is too large, don't cache it - just read into target allocator
                 if (stat.size > self.max_cache_file_size) {
-                    const content = try file.readToEndAlloc(target_allocator, MAX_FILE_SIZE);
+                    const content = try readOpenedFileAlloc(file, self.io, target_allocator, MAX_FILE_SIZE);
                     errdefer target_allocator.free(content);
-                    const etag = try generateETag(target_allocator, stat.size, stat.mtime);
+                    const etag = try generateETag(target_allocator, stat.size, stat.mtime.nanoseconds);
                     return .{ .content = content, .etag = etag };
                 }
 
                 // Read file content into self.allocator for caching
-                const cache_content = try file.readToEndAlloc(self.allocator, MAX_FILE_SIZE);
+                const cache_content = try readOpenedFileAlloc(file, self.io, self.allocator, MAX_FILE_SIZE);
                 defer self.allocator.free(cache_content); // Will be duplicated by putCachedWithRef
-                const cache_etag = try generateETag(self.allocator, stat.size, stat.mtime);
+                const cache_etag = try generateETag(self.allocator, stat.size, stat.mtime.nanoseconds);
                 errdefer self.allocator.free(cache_etag);
 
                 // Cache it with ref-counting for zerocopy access
-                try self.putCachedWithRef(path, cache_content, stat.mtime, cache_etag);
+                try self.putCachedWithRef(path, cache_content, stat.mtime.nanoseconds, cache_etag);
 
                 // Return duplicated content in target allocator
                 const content = try target_allocator.dupe(u8, cache_content);
@@ -1184,11 +1210,11 @@ test "file cache force mode" {
     // Create a temporary file
     const test_file = "test_cache_force.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("test content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     // Load file twice - should read from disk both times
     const content1 = try file_cache.loadFile(test_file);
@@ -1206,11 +1232,11 @@ test "file cache auto mode rate limiting" {
     // Create a temporary file
     const test_file = "test_cache_auto_rate_limit.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("original content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     // First load - should read from disk and cache
     const content1 = try file_cache.loadFile(test_file);
@@ -1219,8 +1245,8 @@ test "file cache auto mode rate limiting" {
 
     // Modify the file
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("modified content");
     }
 
@@ -1240,11 +1266,11 @@ test "loadFileWithETag caches content and etag" {
     // Create a temporary file
     const test_file = "test_load_with_etag.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("cached content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     // First load - should read from disk and cache with ETag
     const info1 = try file_cache.loadFileWithETag(test_file);
@@ -1273,11 +1299,11 @@ test "loadFileWithETag force mode always reads from disk" {
     // Create a temporary file
     const test_file = "test_load_with_etag_force.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("force content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     // Load in force mode - should always read from disk
     const info = try file_cache.loadFileWithETag(test_file);
@@ -1298,11 +1324,11 @@ test "loadFileWithETag never mode caches" {
     // Create a temporary file
     const test_file = "test_load_with_etag_never.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("never reload content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     // First load
     const info1 = try file_cache.loadFileWithETag(test_file);
@@ -1313,8 +1339,8 @@ test "loadFileWithETag never mode caches" {
 
     // Modify the file
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("modified content");
     }
 
@@ -1336,11 +1362,11 @@ test "loadFileWithETagAlloc allocates into target allocator" {
     // Create a temporary file
     const test_file = "test_load_with_etag_alloc.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("alloc test content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     // Use a different allocator as target (simulating arena allocator)
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -1371,11 +1397,11 @@ test "loadFileWithETagAlloc force mode" {
     // Create a temporary file
     const test_file = "test_load_with_etag_alloc_force.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("force alloc content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -1398,11 +1424,11 @@ test "loadFileWithETagAlloc never mode" {
     // Create a temporary file
     const test_file = "test_load_with_etag_alloc_never.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("never alloc content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -1414,8 +1440,8 @@ test "loadFileWithETagAlloc never mode" {
 
     // Modify the file
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("modified alloc content");
     }
 
@@ -1503,11 +1529,11 @@ test "loadFileZeroCopy with never mode" {
     // Create a temporary file
     const test_file = "test_zerocopy_never.tmp";
     {
-        const file = try std.fs.cwd().createFile(test_file, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(std.testing.io, test_file, .{});
+        defer file.close(std.testing.io);
         try file.writeAll("zerocopy content");
     }
-    defer std.fs.cwd().deleteFile(test_file) catch {};
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, test_file) catch {};
 
     // First access - cache miss, should return null
     const result1 = file_cache.loadFileZeroCopy(test_file);

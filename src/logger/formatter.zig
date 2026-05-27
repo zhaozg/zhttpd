@@ -33,13 +33,14 @@ pub const LogFormat = enum {
 /// Format a log message into a buffer
 /// Returns the formatted message slice
 pub fn formatMessage(
+    io: std.Io,
     buf: []u8,
     level: LogLevel,
     format: LogFormat,
     message: []const u8,
     request_id: ?[]const u8,
 ) ![]const u8 {
-    const timestamp = formatTimestamp();
+    const timestamp = formatTimestamp(io);
 
     return switch (format) {
         .text => if (request_id) |rid|
@@ -81,10 +82,10 @@ pub fn formatMessage(
 
 /// Format current timestamp as human-readable string with microsecond precision
 /// Format: YYYY-MM-DD HH:MM:SS.microseconds
-pub fn formatTimestamp() [26]u8 {
-    const now = std.time.microTimestamp();
-    const epoch_seconds: u64 = @intCast(@divFloor(now, std.time.us_per_s));
-    const microseconds: u64 = @intCast(@mod(@mod(now, std.time.us_per_s) + std.time.us_per_s, std.time.us_per_s));
+pub fn formatTimestamp(io: std.Io) [26]u8 {
+    const now = std.Io.Clock.now(.awake, io);
+    const epoch_seconds: u64 = @intCast(@divFloor(now.nanoseconds, std.time.ns_per_s));
+    const microseconds: u64 = @as(u64, @intCast(@mod(@mod(now.nanoseconds, std.time.ns_per_s) + std.time.ns_per_s, std.time.ns_per_s))) / 1000;
 
     const seconds_per_day = 86400;
     const days_since_epoch = epoch_seconds / seconds_per_day;

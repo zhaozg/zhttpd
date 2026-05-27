@@ -12,7 +12,7 @@ const AppContext = @import("context.zig").AppContext;
 pub fn handle(ctx: *AppContext, _: *httpz.Request, res: *httpz.Response) !void {
     // Generate health check
     var health = observability.health.check(
-        ctx.start_time,
+        ctx.start_time.toSeconds(),
         ctx.config.enable_lua,
     );
 

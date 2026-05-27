@@ -25,16 +25,15 @@ pub const CliOptions = struct {
 };
 
 /// Parse command-line arguments and return configuration or exit code
-pub fn parseArgs(allocator: std.mem.Allocator) !CliResult {
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+pub fn parseArgs(allocator: std.mem.Allocator, args: std.process.Args, io: std.Io) !CliResult {
+    var args_iter = std.process.Args.Iterator.init(args);
 
     // Skip the program name
-    _ = args.next();
+    _ = args_iter.next();
 
     var options = CliOptions{};
 
-    while (args.next()) |arg| {
+    while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             printHelp();
             return .{ .exit = 0 };
@@ -42,12 +41,12 @@ pub fn parseArgs(allocator: std.mem.Allocator) !CliResult {
             printVersion();
             return .{ .exit = 0 };
         } else if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--config")) {
-            options.config_file = args.next() orelse {
+            options.config_file = args_iter.next() orelse {
                 std.debug.print("Error: --config requires a file path argument\n", .{});
                 return .{ .exit = 1 };
             };
         } else if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--port")) {
-            const port_str = args.next() orelse {
+            const port_str = args_iter.next() orelse {
                 std.debug.print("Error: --port requires a port number argument\n", .{});
                 return .{ .exit = 1 };
             };
@@ -56,27 +55,27 @@ pub fn parseArgs(allocator: std.mem.Allocator) !CliResult {
                 return .{ .exit = 1 };
             };
         } else if (std.mem.eql(u8, arg, "-H") or std.mem.eql(u8, arg, "--host")) {
-            options.host = args.next() orelse {
+            options.host = args_iter.next() orelse {
                 std.debug.print("Error: --host requires an address argument\n", .{});
                 return .{ .exit = 1 };
             };
         } else if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--static-dir")) {
-            options.static_dir = args.next() orelse {
+            options.static_dir = args_iter.next() orelse {
                 std.debug.print("Error: --static-dir requires a directory path argument\n", .{});
                 return .{ .exit = 1 };
             };
         } else if (std.mem.eql(u8, arg, "-l") or std.mem.eql(u8, arg, "--lua-dir")) {
-            options.lua_scripts_dir = args.next() orelse {
+            options.lua_scripts_dir = args_iter.next() orelse {
                 std.debug.print("Error: --lua-dir requires a directory path argument\n", .{});
                 return .{ .exit = 1 };
             };
         } else if (std.mem.eql(u8, arg, "--log-level")) {
-            options.log_level = args.next() orelse {
+            options.log_level = args_iter.next() orelse {
                 std.debug.print("Error: --log-level requires a level argument (debug, info, warn, error)\n", .{});
                 return .{ .exit = 1 };
             };
         } else if (std.mem.eql(u8, arg, "-t") or std.mem.eql(u8, arg, "--threads")) {
-            const threads_str = args.next() orelse {
+            const threads_str = args_iter.next() orelse {
                 std.debug.print("Error: --threads requires a number argument\n", .{});
                 return .{ .exit = 1 };
             };
@@ -96,22 +95,22 @@ pub fn parseArgs(allocator: std.mem.Allocator) !CliResult {
     }
 
     // Load configuration with CLI overrides
-    const cfg = try loadConfigWithOverrides(allocator, options);
+    const cfg = try loadConfigWithOverrides(allocator, options, io);
     return .{ .run = cfg };
 }
 
 /// Load configuration from file (or default) and apply CLI overrides
-fn loadConfigWithOverrides(allocator: std.mem.Allocator, options: CliOptions) !config.Config {
+fn loadConfigWithOverrides(allocator: std.mem.Allocator, options: CliOptions, io: std.Io) !config.Config {
     // Load configuration using block expression to avoid undefined state
     var cfg = blk: {
         if (options.config_file) |config_path| {
             // User specified a config file - verify it exists first
-            std.fs.cwd().access(config_path, .{}) catch |err| {
+            std.Io.Dir.accessAbsolute(io, config_path, .{}) catch |err| {
                 std.debug.print("Error: Config file '{s}' not accessible: {}\n", .{ config_path, err });
                 return error.ConfigLoadFailed;
             };
             // File exists, load it
-            const c = config.loadConfig(allocator, config_path) catch |err| {
+            const c = config.loadConfig(allocator, config_path, io) catch |err| {
                 std.debug.print("Error: Failed to parse config file '{s}': {}\n", .{ config_path, err });
                 return error.ConfigLoadFailed;
             };
@@ -119,7 +118,7 @@ fn loadConfigWithOverrides(allocator: std.mem.Allocator, options: CliOptions) !c
             break :blk c;
         } else {
             // Try default YAML config file (JSON no longer supported)
-            if (config.loadConfig(allocator, "zhttpd.yaml")) |c| {
+            if (config.loadConfig(allocator, "zhttpd.yaml", io)) |c| {
                 std.debug.print("Loaded configuration from zhttpd.yaml\n", .{});
                 break :blk c;
             } else |_| {

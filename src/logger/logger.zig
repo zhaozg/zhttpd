@@ -28,7 +28,7 @@
 //! };
 //!
 //! // Initialize logger
-//! var logger = try Logger.init(allocator, config, file_backend.backend());
+//! var logger = try Logger.init(testing.io, allocator, config, file_backend.backend());
 //! defer logger.deinit();
 //!
 //! // Use the logger
@@ -54,15 +54,15 @@ pub const setGlobalLogger = impl.setGlobalLogger;
 pub const clearGlobalLogger = impl.clearGlobalLogger;
 
 // Backward compatibility: old API that wraps new implementation
-pub fn init(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8) !Logger {
-    return initWithFormat(allocator, level, log_file_path, .text);
+pub fn init(io: std.Io, allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8) !Logger {
+    return initWithFormat(io, allocator, level, log_file_path, .text);
 }
 
-pub fn initWithFormat(allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8, format: LogFormat) !Logger {
+pub fn initWithFormat(io: std.Io, allocator: std.mem.Allocator, level: LogLevel, log_file_path: ?[]const u8, format: LogFormat) !Logger {
     var backend: ?Backend = null;
 
     if (log_file_path) |path| {
-        const file_backend = try FileBackend.init(allocator, path);
+        const file_backend = try FileBackend.init(io, allocator, path);
         backend = file_backend.backend();
         errdefer backend.?.deinit();
     }
@@ -74,7 +74,7 @@ pub fn initWithFormat(allocator: std.mem.Allocator, level: LogLevel, log_file_pa
         .enable_async = false,
     };
 
-    return try Logger.init(allocator, config, backend);
+    return try Logger.init(io, allocator, config, backend);
 }
 
 // Tests

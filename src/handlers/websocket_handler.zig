@@ -12,7 +12,8 @@ const WebSocketContext = ws_mod.WebSocketContext;
 const AppContext = @import("context.zig").AppContext;
 
 /// Handle WebSocket upgrade requests
-pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
+pub fn handle(ctx: *AppContext, _req: *httpz.Request, res: *httpz.Response) !void {
+    _ = _req;
     ctx.logger.debug("WebSocket upgrade request received", .{});
 
     // Get a mutable pointer to lua_handler if it exists
@@ -22,21 +23,14 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
         break :blk @constCast(&ctx.lua_handler.?);
     } else null;
 
-    // Create WebSocket context with Lua handler
-    // Note: The path from req.url.path is stored in WebSocketContext. Since httpz manages
-    // the request lifetime and WebSocket connections are handled synchronously within the
-    // request context by httpz, the path reference remains valid during the upgrade process.
-    // After upgrade, WebSocketHandler stores its own copy of connection metadata.
-    const ws_ctx = WebSocketContext.init(req.url.path, lua_handler_ptr);
+    // WebSocket upgrade is temporarily disabled due to Zig 0.16 API migration
+    _ = lua_handler_ptr;
 
-    // Attempt to upgrade the connection to WebSocket
-    if (try httpz.upgradeWebsocket(WebSocketHandler, req, res, &ws_ctx) == false) {
-        ctx.logger.warn("WebSocket upgrade failed - invalid request", .{});
-        res.status = 400;
-        res.body = "{\"error\":\"Invalid WebSocket request\"}";
-        res.content_type = httpz.ContentType.JSON;
-    } else {
-        ctx.logger.info("WebSocket connection established: id={d}, path={s}", .{ ws_ctx.connection_id, req.url.path });
-    }
-    // After successful upgrade, the request and response are no longer valid
+    // WebSocket upgrade is temporarily disabled due to Zig 0.16 API migration
+    // The httpz.upgradeWebsocket function is commented out in the httpz source
+    // See: https://github.com/karlseguin/http.zig/issues
+    ctx.logger.warn("WebSocket upgrade not available in this build", .{});
+    res.status = 501;
+    res.body = "{\"error\":\"WebSocket not available\"}";
+    res.content_type = httpz.ContentType.JSON;
 }

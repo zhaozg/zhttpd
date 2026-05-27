@@ -151,9 +151,12 @@ pub const Metrics = struct {
     cors_cache_misses: Counter,
 
     // Server info
-    start_time: i64,
+    start_time: std.Io.Timestamp,
 
-    pub fn init() Metrics {
+    // IO
+    io: std.Io,
+
+    pub fn init(io: std.Io) Metrics {
         return .{
             .requests_total = Counter.init(),
             .requests_success = Counter.init(),
@@ -177,7 +180,8 @@ pub const Metrics = struct {
             .ip_access_cache_misses = Counter.init(),
             .cors_cache_hits = Counter.init(),
             .cors_cache_misses = Counter.init(),
-            .start_time = std.time.timestamp(),
+            .start_time = std.Io.Clock.now(.awake, io),
+            .io = io,
         };
     }
 
@@ -208,113 +212,111 @@ pub const Metrics = struct {
 
     /// Export metrics in Prometheus text format
     pub fn toPrometheus(self: *const Metrics, allocator: std.mem.Allocator) ![]const u8 {
-        var buf = std.ArrayList(u8){};
+        var buf = try std.ArrayList(u8).initCapacity(allocator, 4096);
         errdefer buf.deinit(allocator);
 
-        const writer = buf.writer(allocator);
-
         // Server info
-        try writer.print("# HELP zhttpd_start_time_seconds Unix timestamp of server start time\n", .{});
-        try writer.print("# TYPE zhttpd_start_time_seconds gauge\n", .{});
-        try writer.print("zhttpd_start_time_seconds {d}\n\n", .{self.start_time});
+        try buf.print(allocator, "# HELP zhttpd_start_time_seconds Unix timestamp of server start time\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_start_time_seconds gauge\n", .{});
+        try buf.print(allocator, "zhttpd_start_time_seconds {d}\n\n", .{self.start_time});
 
         // Request counters
-        try writer.print("# HELP zhttpd_http_requests_total Total number of HTTP requests\n", .{});
-        try writer.print("# TYPE zhttpd_http_requests_total counter\n", .{});
-        try writer.print("zhttpd_http_requests_total {d}\n\n", .{self.requests_total.get()});
+        try buf.print(allocator, "# HELP zhttpd_http_requests_total Total number of HTTP requests\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_http_requests_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_http_requests_total {d}\n\n", .{self.requests_total.get()});
 
-        try writer.print("# HELP zhttpd_http_requests_success_total Total successful HTTP requests (2xx, 3xx)\n", .{});
-        try writer.print("# TYPE zhttpd_http_requests_success_total counter\n", .{});
-        try writer.print("zhttpd_http_requests_success_total {d}\n\n", .{self.requests_success.get()});
+        try buf.print(allocator, "# HELP zhttpd_http_requests_success_total Total successful HTTP requests (2xx, 3xx)\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_http_requests_success_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_http_requests_success_total {d}\n\n", .{self.requests_success.get()});
 
-        try writer.print("# HELP zhttpd_http_requests_error_total Total failed HTTP requests (4xx, 5xx)\n", .{});
-        try writer.print("# TYPE zhttpd_http_requests_error_total counter\n", .{});
-        try writer.print("zhttpd_http_requests_error_total {d}\n\n", .{self.requests_error.get()});
+        try buf.print(allocator, "# HELP zhttpd_http_requests_error_total Total failed HTTP requests (4xx, 5xx)\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_http_requests_error_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_http_requests_error_total {d}\n\n", .{self.requests_error.get()});
 
         // Response status codes
-        try writer.print("# HELP zhttpd_http_responses_total Total HTTP responses by status code class\n", .{});
-        try writer.print("# TYPE zhttpd_http_responses_total counter\n", .{});
-        try writer.print("zhttpd_http_responses_total{{status_class=\"2xx\"}} {d}\n", .{self.responses_2xx.get()});
-        try writer.print("zhttpd_http_responses_total{{status_class=\"3xx\"}} {d}\n", .{self.responses_3xx.get()});
-        try writer.print("zhttpd_http_responses_total{{status_class=\"4xx\"}} {d}\n", .{self.responses_4xx.get()});
-        try writer.print("zhttpd_http_responses_total{{status_class=\"5xx\"}} {d}\n\n", .{self.responses_5xx.get()});
+        try buf.print(allocator, "# HELP zhttpd_http_responses_total Total HTTP responses by status code class\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_http_responses_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_http_responses_total{{status_class=\"2xx\"}} {d}\n", .{self.responses_2xx.get()});
+        try buf.print(allocator, "zhttpd_http_responses_total{{status_class=\"3xx\"}} {d}\n", .{self.responses_3xx.get()});
+        try buf.print(allocator, "zhttpd_http_responses_total{{status_class=\"4xx\"}} {d}\n", .{self.responses_4xx.get()});
+        try buf.print(allocator, "zhttpd_http_responses_total{{status_class=\"5xx\"}} {d}\n\n", .{self.responses_5xx.get()});
 
         // Connection metrics
-        try writer.print("# HELP zhttpd_connections_active Current number of active connections\n", .{});
-        try writer.print("# TYPE zhttpd_connections_active gauge\n", .{});
-        try writer.print("zhttpd_connections_active {d}\n\n", .{self.active_connections.get()});
+        try buf.print(allocator, "# HELP zhttpd_connections_active Current number of active connections\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_connections_active gauge\n", .{});
+        try buf.print(allocator, "zhttpd_connections_active {d}\n\n", .{self.active_connections.get()});
 
-        try writer.print("# HELP zhttpd_connections_total Total number of connections handled\n", .{});
-        try writer.print("# TYPE zhttpd_connections_total counter\n", .{});
-        try writer.print("zhttpd_connections_total {d}\n\n", .{self.total_connections.get()});
+        try buf.print(allocator, "# HELP zhttpd_connections_total Total number of connections handled\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_connections_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_connections_total {d}\n\n", .{self.total_connections.get()});
 
         // Request duration histogram
-        try writer.print("# HELP zhttpd_http_request_duration_ms HTTP request duration in milliseconds\n", .{});
-        try writer.print("# TYPE zhttpd_http_request_duration_ms histogram\n", .{});
+        try buf.print(allocator, "# HELP zhttpd_http_request_duration_ms HTTP request duration in milliseconds\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_http_request_duration_ms histogram\n", .{});
 
         // Histogram buckets - each bucket contains cumulative count of observations <= bound
         var cumulative: u64 = 0;
         for (LATENCY_BUCKETS, 0..) |bound, i| {
             const bucket_count = self.request_duration_ms.getBucket(i);
             cumulative += bucket_count;
-            try writer.print("zhttpd_http_request_duration_ms_bucket{{le=\"{d}\"}} {d}\n", .{ bound, cumulative });
+            try buf.print(allocator, "zhttpd_http_request_duration_ms_bucket{{le=\"{d}\"}} {d}\n", .{ bound, cumulative });
         }
-        try writer.print("zhttpd_http_request_duration_ms_bucket{{le=\"+Inf\"}} {d}\n", .{self.request_duration_ms.getCount()});
-        try writer.print("zhttpd_http_request_duration_ms_sum {d:.3}\n", .{self.request_duration_ms.getSum()});
-        try writer.print("zhttpd_http_request_duration_ms_count {d}\n\n", .{self.request_duration_ms.getCount()});
+        try buf.print(allocator, "zhttpd_http_request_duration_ms_bucket{{le=\"+Inf\"}} {d}\n", .{self.request_duration_ms.getCount()});
+        try buf.print(allocator, "zhttpd_http_request_duration_ms_sum {d:.3}\n", .{self.request_duration_ms.getSum()});
+        try buf.print(allocator, "zhttpd_http_request_duration_ms_count {d}\n\n", .{self.request_duration_ms.getCount()});
 
         // Bytes transferred
-        try writer.print("# HELP zhttpd_bytes_sent_total Total bytes sent to clients\n", .{});
-        try writer.print("# TYPE zhttpd_bytes_sent_total counter\n", .{});
-        try writer.print("zhttpd_bytes_sent_total {d}\n\n", .{self.bytes_sent.get()});
+        try buf.print(allocator, "# HELP zhttpd_bytes_sent_total Total bytes sent to clients\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_bytes_sent_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_bytes_sent_total {d}\n\n", .{self.bytes_sent.get()});
 
-        try writer.print("# HELP zhttpd_bytes_received_total Total bytes received from clients\n", .{});
-        try writer.print("# TYPE zhttpd_bytes_received_total counter\n", .{});
-        try writer.print("zhttpd_bytes_received_total {d}\n\n", .{self.bytes_received.get()});
+        try buf.print(allocator, "# HELP zhttpd_bytes_received_total Total bytes received from clients\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_bytes_received_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_bytes_received_total {d}\n\n", .{self.bytes_received.get()});
 
         // Lua metrics
-        try writer.print("# HELP zhttpd_lua_executions_total Total Lua script executions\n", .{});
-        try writer.print("# TYPE zhttpd_lua_executions_total counter\n", .{});
-        try writer.print("zhttpd_lua_executions_total {d}\n\n", .{self.lua_executions.get()});
+        try buf.print(allocator, "# HELP zhttpd_lua_executions_total Total Lua script executions\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_lua_executions_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_lua_executions_total {d}\n\n", .{self.lua_executions.get()});
 
-        try writer.print("# HELP zhttpd_lua_errors_total Total Lua script errors\n", .{});
-        try writer.print("# TYPE zhttpd_lua_errors_total counter\n", .{});
-        try writer.print("zhttpd_lua_errors_total {d}\n\n", .{self.lua_errors.get()});
+        try buf.print(allocator, "# HELP zhttpd_lua_errors_total Total Lua script errors\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_lua_errors_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_lua_errors_total {d}\n\n", .{self.lua_errors.get()});
 
         // WebSocket metrics
-        try writer.print("# HELP zhttpd_websocket_connections_active Current WebSocket connections\n", .{});
-        try writer.print("# TYPE zhttpd_websocket_connections_active gauge\n", .{});
-        try writer.print("zhttpd_websocket_connections_active {d}\n\n", .{self.websocket_connections.get()});
+        try buf.print(allocator, "# HELP zhttpd_websocket_connections_active Current WebSocket connections\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_websocket_connections_active gauge\n", .{});
+        try buf.print(allocator, "zhttpd_websocket_connections_active {d}\n\n", .{self.websocket_connections.get()});
 
-        try writer.print("# HELP zhttpd_websocket_messages_received_total Total WebSocket messages received\n", .{});
-        try writer.print("# TYPE zhttpd_websocket_messages_received_total counter\n", .{});
-        try writer.print("zhttpd_websocket_messages_received_total {d}\n\n", .{self.websocket_messages_received.get()});
+        try buf.print(allocator, "# HELP zhttpd_websocket_messages_received_total Total WebSocket messages received\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_websocket_messages_received_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_websocket_messages_received_total {d}\n\n", .{self.websocket_messages_received.get()});
 
-        try writer.print("# HELP zhttpd_websocket_messages_sent_total Total WebSocket messages sent\n", .{});
-        try writer.print("# TYPE zhttpd_websocket_messages_sent_total counter\n", .{});
-        try writer.print("zhttpd_websocket_messages_sent_total {d}\n\n", .{self.websocket_messages_sent.get()});
+        try buf.print(allocator, "# HELP zhttpd_websocket_messages_sent_total Total WebSocket messages sent\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_websocket_messages_sent_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_websocket_messages_sent_total {d}\n\n", .{self.websocket_messages_sent.get()});
 
         // Rate limiting
-        try writer.print("# HELP zhttpd_rate_limit_hits_total Total rate limit rejections\n", .{});
-        try writer.print("# TYPE zhttpd_rate_limit_hits_total counter\n", .{});
-        try writer.print("zhttpd_rate_limit_hits_total {d}\n\n", .{self.rate_limit_hits.get()});
+        try buf.print(allocator, "# HELP zhttpd_rate_limit_hits_total Total rate limit rejections\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_rate_limit_hits_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_rate_limit_hits_total {d}\n\n", .{self.rate_limit_hits.get()});
 
         // Cache metrics (Phase 2 optimization tracking)
-        try writer.print("# HELP zhttpd_ip_access_cache_hits_total IP access cache hits\n", .{});
-        try writer.print("# TYPE zhttpd_ip_access_cache_hits_total counter\n", .{});
-        try writer.print("zhttpd_ip_access_cache_hits_total {d}\n\n", .{self.ip_access_cache_hits.get()});
+        try buf.print(allocator, "# HELP zhttpd_ip_access_cache_hits_total IP access cache hits\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_ip_access_cache_hits_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_ip_access_cache_hits_total {d}\n\n", .{self.ip_access_cache_hits.get()});
 
-        try writer.print("# HELP zhttpd_ip_access_cache_misses_total IP access cache misses\n", .{});
-        try writer.print("# TYPE zhttpd_ip_access_cache_misses_total counter\n", .{});
-        try writer.print("zhttpd_ip_access_cache_misses_total {d}\n\n", .{self.ip_access_cache_misses.get()});
+        try buf.print(allocator, "# HELP zhttpd_ip_access_cache_misses_total IP access cache misses\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_ip_access_cache_misses_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_ip_access_cache_misses_total {d}\n\n", .{self.ip_access_cache_misses.get()});
 
-        try writer.print("# HELP zhttpd_cors_cache_hits_total CORS origin cache hits\n", .{});
-        try writer.print("# TYPE zhttpd_cors_cache_hits_total counter\n", .{});
-        try writer.print("zhttpd_cors_cache_hits_total {d}\n\n", .{self.cors_cache_hits.get()});
+        try buf.print(allocator, "# HELP zhttpd_cors_cache_hits_total CORS origin cache hits\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_cors_cache_hits_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_cors_cache_hits_total {d}\n\n", .{self.cors_cache_hits.get()});
 
-        try writer.print("# HELP zhttpd_cors_cache_misses_total CORS origin cache misses\n", .{});
-        try writer.print("# TYPE zhttpd_cors_cache_misses_total counter\n", .{});
-        try writer.print("zhttpd_cors_cache_misses_total {d}\n", .{self.cors_cache_misses.get()});
+        try buf.print(allocator, "# HELP zhttpd_cors_cache_misses_total CORS origin cache misses\n", .{});
+        try buf.print(allocator, "# TYPE zhttpd_cors_cache_misses_total counter\n", .{});
+        try buf.print(allocator, "zhttpd_cors_cache_misses_total {d}\n", .{self.cors_cache_misses.get()});
 
         return try buf.toOwnedSlice(allocator);
     }
@@ -327,7 +329,7 @@ var global_metrics: ?*Metrics = null;
 pub fn initGlobal(allocator: std.mem.Allocator) !void {
     if (global_metrics != null) return;
     global_metrics = try allocator.create(Metrics);
-    global_metrics.?.* = Metrics.init();
+    global_metrics.?.* = Metrics.init(undefined);
 }
 
 /// Get global metrics instance
@@ -387,7 +389,7 @@ test "histogram basic operations" {
 test "metrics prometheus format" {
     const allocator = std.testing.allocator;
 
-    var metrics = Metrics.init();
+    var metrics = Metrics.init(undefined);
     metrics.recordRequest(200, 1000, 1024); // 1ms request
     metrics.recordRequest(404, 500, 128); // 0.5ms request
 

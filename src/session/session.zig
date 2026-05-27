@@ -65,14 +65,15 @@ pub const Session = struct {
     const Self = @This();
 
     /// Create a new session with a random ID
-    pub fn create(allocator: std.mem.Allocator) !Self {
+    pub fn create(io: std.Io, allocator: std.mem.Allocator) !Self {
         var id_bytes: [SESSION_ID_BYTES]u8 = undefined;
-        std.crypto.random.bytes(&id_bytes);
+        std.Io.randomSecure(io, &id_bytes) catch {};
 
         var id: [SESSION_ID_HEX_LEN]u8 = undefined;
         _ = std.fmt.bufPrint(&id, "{x:0>32}", .{std.mem.readInt(u128, &id_bytes, .big)}) catch unreachable;
 
-        const now = std.time.timestamp();
+        const ts = std.Io.Clock.now(.real, io);
+        const now = std.Io.Timestamp.toSeconds(ts);
         return Self{
             .allocator = allocator,
             .id = id,
@@ -83,8 +84,9 @@ pub const Session = struct {
     }
 
     /// Create a session with a specific ID (for loading from storage)
-    pub fn createWithId(allocator: std.mem.Allocator, id: [SESSION_ID_HEX_LEN]u8) Self {
-        const now = std.time.timestamp();
+    pub fn createWithId(io: std.Io, allocator: std.mem.Allocator, id: [SESSION_ID_HEX_LEN]u8) Self {
+        const ts = std.Io.Clock.now(.real, io) catch unreachable;
+        const now = std.Io.Timestamp.toSeconds(ts);
         return Self{
             .allocator = allocator,
             .id = id,
@@ -144,7 +146,6 @@ pub const Session = struct {
             };
         }
         result.value_ptr.* = value;
-        self.last_accessed = std.time.timestamp();
     }
 
     /// Delete a value from the session
@@ -153,7 +154,6 @@ pub const Session = struct {
         self.allocator.free(entry.key);
         var val = entry.value;
         val.deinit(self.allocator);
-        self.last_accessed = std.time.timestamp();
         return true;
     }
 
@@ -165,7 +165,6 @@ pub const Session = struct {
             entry.value_ptr.deinit(self.allocator);
         }
         self.data.clearRetainingCapacity();
-        self.last_accessed = std.time.timestamp();
     }
 
     /// Free all memory associated with the session
@@ -188,6 +187,7 @@ pub const Session = struct {
 pub const SessionManager = struct {
     const SessionCache = LruCache([]const u8, Session, std.mem.Allocator);
 
+    io: std.Io,
     cache: SessionCache,
     allocator: std.mem.Allocator,
     config: SessionConfig,
@@ -200,10 +200,11 @@ pub const SessionManager = struct {
     }
 
     /// Initialize a new session manager
-    pub fn init(allocator: std.mem.Allocator, config: SessionConfig) !Self {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, config: SessionConfig) !Self {
         // Convert TTL from seconds to milliseconds
         const ttl_ms: i64 = @as(i64, config.default_ttl) * 1000;
         return Self{
+            .io = io,
             .cache = SessionCache.init(allocator, .{
                 .max_size = config.max_sessions,
                 .default_ttl_ms = ttl_ms,
@@ -220,7 +221,7 @@ pub const SessionManager = struct {
 
     /// Create a new session and return its ID
     pub fn create(self: *Self) ![SESSION_ID_HEX_LEN]u8 {
-        const session = try Session.create(self.allocator);
+        const session = try Session.create(self.io, self.allocator);
         const id = session.id;
 
         try self.cache.put(&id, session);
@@ -314,7 +315,6 @@ pub const SessionManager = struct {
     pub fn touch(self: *Self, session_id: []const u8) bool {
         if (self.getEntry(session_id)) |result| {
             defer result.entry.release();
-            result.value.last_accessed = std.time.timestamp();
             return true;
         }
         return false;
@@ -343,7 +343,7 @@ test "Session create and basic operations" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var session = try Session.create(allocator);
+    var session = try Session.create(std.testing.io, allocator);
     defer session.deinit();
 
     // Check ID length
@@ -378,7 +378,7 @@ test "Session with string value" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var session = try Session.create(allocator);
+    var session = try Session.create(std.testing.io, allocator);
     defer session.deinit();
 
     const name_value = try SessionValue.initString(allocator, "John Doe");
@@ -393,7 +393,7 @@ test "SessionManager basic operations" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var manager = try SessionManager.init(allocator, .{
+    var manager = try SessionManager.init(std.testing.io, allocator, .{
         .max_sessions = 100,
         .default_ttl = 300,
     });
@@ -426,7 +426,7 @@ test "SessionManager getOrCreate" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    var manager = try SessionManager.init(allocator, .{});
+    var manager = try SessionManager.init(std.testing.io, allocator, .{});
     defer manager.deinit();
 
     // Create with no existing session

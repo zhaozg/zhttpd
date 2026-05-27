@@ -140,7 +140,7 @@ pub fn pushSession(lua: *ziglua.Lua, session_id: [SESSION_ID_HEX_LEN]u8) void {
     // Stack: [table, "_session_id"] - table now at -2
     _ = lua.pushString(&session_id);
     // Stack: [table, "_session_id", session_id] - table now at -3
-    lua.rawSetTable(-3); // table["_session_id"] = session_id, pops key and value
+    lua.setTableRaw(-3); // table["_session_id"] = session_id, pops key and value
     // Stack: [table] at -1
 
     // Set the metatable
@@ -153,7 +153,7 @@ pub fn pushSession(lua: *ziglua.Lua, session_id: [SESSION_ID_HEX_LEN]u8) void {
 fn getSessionIdFromLua(lua: *ziglua.Lua) ?[]const u8 {
     // Optimization: rawGetTable is faster than getField (15-25% faster, no metamethods)
     _ = lua.pushString("_session_id");
-    _ = lua.rawGetTable(1);
+    _ = lua.getTableRaw(1);
     if (lua.typeOf(-1) != .string) {
         lua.pop(1);
         return null;
@@ -189,7 +189,7 @@ fn sessionNewIndex(lua: *ziglua.Lua) i32 {
     // For non-internal fields, allow the assignment to go through
     // by doing a raw set on the table
     // Stack: [table, key, value] at positions 1, 2, 3
-    lua.rawSetTable(1); // table[key] = value, pops key and value from stack
+    lua.setTableRaw(1); // table[key] = value, pops key and value from stack
     return 0;
 }
 
@@ -366,7 +366,7 @@ fn sessionKeys(lua: *ziglua.Lua) i32 {
         while (iter.next()) |kv| {
             _ = lua.pushString(kv.key_ptr.*);
             // Optimization: rawSetIndex with integer keys is faster than string keys
-            lua.rawSetIndex(-2, idx);
+            lua.setIndexRaw(-2, idx);
             idx += 1;
         }
     } else {

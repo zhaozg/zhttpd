@@ -39,13 +39,13 @@ pub fn build(b: *std.Build) void {
     // Configure ziglua with the selected Lua engine
     // We need to use separate dependency calls because .lang requires comptime value
     const ziglua = if (lua_lang == .luajit)
-        b.dependency("ziglua", .{
+        b.dependency("zlua", .{
             .target = target,
             .optimize = optimize,
             .lang = .luajit,
         })
     else
-        b.dependency("ziglua", .{
+        b.dependency("zlua", .{
             .target = target,
             .optimize = optimize,
             .lang = .lua54,
@@ -123,7 +123,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Link libc for C standard library functions
-    lua_cjson.linkLibC();
+    lua_cjson_module.link_libc = true;
 
     // Build lpeg as a static library for pattern matching
     // Source: http://www.inf.puc-rio.br/~roberto/lpeg/ (MIT License)
@@ -171,7 +171,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Link libc for C standard library functions
-    lua_lpeg.linkLibC();
+    lua_lpeg_module.link_libc = true;
 
     // Build configuration options to expose to the runtime
     const build_options = b.addOptions();
@@ -198,10 +198,10 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("zdbc", zdbc.module("zdbc"));
 
     // Link lua-cjson library
-    exe.linkLibrary(lua_cjson);
+    exe.root_module.linkLibrary(lua_cjson);
 
     // Link lua-lpeg library
-    exe.linkLibrary(lua_lpeg);
+    exe.root_module.linkLibrary(lua_lpeg);
 
     b.installArtifact(exe);
 
@@ -230,8 +230,8 @@ pub fn build(b: *std.Build) void {
     exe_tests.root_module.addImport("ziglua", ziglua.module("zlua"));
     exe_tests.root_module.addImport("yaml", yaml.module("yaml"));
     exe_tests.root_module.addImport("zdbc", zdbc.module("zdbc"));
-    exe_tests.linkLibrary(lua_cjson);
-    exe_tests.linkLibrary(lua_lpeg);
+    exe_tests.root_module.linkLibrary(lua_cjson);
+    exe_tests.root_module.linkLibrary(lua_lpeg);
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 

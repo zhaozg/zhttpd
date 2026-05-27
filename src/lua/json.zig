@@ -59,7 +59,7 @@ pub fn appendJsonEscapedString(buf: *std.ArrayListUnmanaged(u8), allocator: std.
 pub fn registerJsonModule(lua: *ziglua.Lua, getAllocator: *const fn () std.mem.Allocator) !void {
     _ = getAllocator;
 
-    _ = try lua.getGlobal("package");
+    _ = lua.getGlobal("package");
     _ = lua.getField(-1, "preload");
     lua.pushFunction(luaopen_cjson);
     _ = lua.setField(-2, "json");
@@ -95,7 +95,7 @@ pub fn pushJsonValue(lua: *ziglua.Lua, value: std.json.Value) !void {
             lua.newTable();
             for (arr.items, 0..) |item, i| {
                 try pushJsonValue(lua, item);
-                lua.rawSetIndex(-2, @intCast(i + 1));
+                lua.setIndexRaw(-2, @intCast(i + 1));
             }
         },
         .object => |obj| {
@@ -134,7 +134,7 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
             const s = lua.toString(index) catch "";
             // Pre-allocate buffer with estimated size (string length + quotes + escape overhead)
             // Use saturating arithmetic to prevent overflow for very large strings
-            var buf = std.ArrayListUnmanaged(u8){};
+            var buf: std.ArrayListUnmanaged(u8) = .empty;
             defer buf.deinit(allocator);
             const escape_overhead = s.len / STRING_ESCAPE_OVERHEAD_RATIO;
             const estimated_size = s.len +| 2 +| escape_overhead;
@@ -151,12 +151,12 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
             // Note: Mixed tables (with both integer and string keys) will serialize
             // only the sequence part when treated as array. For pure objects, use
             // tables with only string keys.
-            const len = lua.rawLen(index);
+            const len = lua.lenRaw(index);
             const is_array = len > 0;
 
             // Pre-allocate buffer with estimated size based on table length
             // Use saturating arithmetic to prevent overflow for very large arrays
-            var buf = std.ArrayListUnmanaged(u8){};
+            var buf: std.ArrayListUnmanaged(u8) = .empty;
             defer buf.deinit(allocator);
             const estimated_size: usize = if (is_array) @as(usize, @intCast(len)) *| ARRAY_ELEMENT_AVG_SIZE +| 2 else OBJECT_DEFAULT_SIZE;
             try buf.ensureTotalCapacity(allocator, estimated_size);
@@ -166,7 +166,7 @@ pub fn luaValueToJson(allocator: std.mem.Allocator, lua: *ziglua.Lua, index: i32
                 var i: i32 = 1;
                 while (i <= len) : (i += 1) {
                     if (i > 1) try buf.append(allocator, ',');
-                    _ = lua.rawGetIndex(index, i);
+                    _ = lua.getIndexRaw(index, i);
                     const value_json = try luaValueToJson(allocator, lua, -1);
                     try buf.appendSlice(allocator, value_json);
                     lua.pop(1);
