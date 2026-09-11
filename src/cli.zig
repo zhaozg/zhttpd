@@ -94,8 +94,15 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: std.process.Args, io: std.I
         }
     }
 
-    // Load configuration with CLI overrides
-    const cfg = try loadConfigWithOverrides(allocator, options, io);
+    // Load configuration with CLI overrides.
+    // A failure to load a user-specified config file is reported as a clean
+    // exit with a non-zero code rather than an unhandled error/stack trace.
+    const cfg = loadConfigWithOverrides(allocator, options, io) catch |err| {
+        if (err == error.ConfigLoadFailed) {
+            return .{ .exit = 1 };
+        }
+        return err;
+    };
     return .{ .run = cfg };
 }
 
@@ -104,8 +111,10 @@ fn loadConfigWithOverrides(allocator: std.mem.Allocator, options: CliOptions, io
     // Load configuration using block expression to avoid undefined state
     var cfg = blk: {
         if (options.config_file) |config_path| {
-            // User specified a config file - verify it exists first
-            std.Io.Dir.accessAbsolute(io, config_path, .{}) catch |err| {
+            // User specified a config file - verify it exists first.
+            // Use cwd().access so both relative and absolute paths are supported
+            // (accessAbsolute asserts the path is absolute and would panic otherwise).
+            std.Io.Dir.cwd().access(io, config_path, .{}) catch |err| {
                 std.debug.print("Error: Config file '{s}' not accessible: {}\n", .{ config_path, err });
                 return error.ConfigLoadFailed;
             };

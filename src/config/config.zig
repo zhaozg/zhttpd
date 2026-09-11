@@ -165,7 +165,13 @@ pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8, io: std.Io) !C
 
     var buf: [1024 * 1024]u8 = undefined;
     var reader = file.reader(io, &buf);
-    const content = try reader.interface.readAlloc(allocator, 1024 * 1024);
+    // Read the entire file (up to 1MB). `readAlloc` would require the file to be
+    // exactly the requested length and fail with error.EndOfStream otherwise.
+    const content = reader.interface.allocRemaining(allocator, .limited(1024 * 1024)) catch |err| {
+        std.debug.print("Failed to read config file '{s}': {}\n", .{ path, err });
+        std.debug.print("Using default configuration\n", .{});
+        return getDefaultConfig(allocator);
+    };
     defer allocator.free(content);
 
     // Only YAML configuration is supported
