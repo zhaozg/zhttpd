@@ -2,21 +2,21 @@
 -- This script demonstrates the new prepare() API for efficient statement caching
 --
 -- The refactored db API provides three ways to execute SQL:
---   1. db.query(sql, ...) - Direct query without caching
---   2. db.exec(sql, ...)  - Direct exec without caching
+--   1. db:query(sql, ...) - Direct query without caching
+--   2. db:exec(sql, ...)  - Direct exec without caching
 --   3. db:prepare(sql)    - Prepare statement with caching (returns statement object)
 --
 -- Prepared statements are automatically cached and reused, improving performance
 -- for frequently executed queries.
 --
 -- Endpoints:
---   POST /api/prepared/init          - Initialize database schema
---   POST /api/prepared/users         - Insert user (using prepared statement)
---   GET  /api/prepared/users/:id     - Get user by ID (using prepared statement)
---   GET  /api/prepared/users         - List all users (direct query)
---   PUT  /api/prepared/users/:id     - Update user (using prepared statement)
---   DELETE /api/prepared/users/:id   - Delete user (using prepared statement)
---   GET  /api/prepared/stats         - Get cache statistics
+--   POST /api/db_prepared_statements/init          - Initialize database schema
+--   POST /api/db_prepared_statements/users         - Insert user (using prepared statement)
+--   GET  /api/db_prepared_statements/users/:id     - Get user by ID (using prepared statement)
+--   GET  /api/db_prepared_statements/users         - List all users (direct query)
+--   PUT  /api/db_prepared_statements/users/:id     - Update user (using prepared statement)
+--   DELETE /api/db_prepared_statements/users/:id   - Delete user (using prepared statement)
+--   GET  /api/db_prepared_statements/stats         - Get cache statistics
 
 -- Initialize database schema
 local function init_schema(db)
@@ -26,7 +26,7 @@ local function init_schema(db)
 
   -- Direct exec for schema creation (not cached, run once)
   local affected, err = db:exec([[
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE IF NOT EXISTS prepared_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
@@ -41,9 +41,9 @@ local function init_schema(db)
   return true, "Schema initialized successfully"
 end
 
--- Parse ID from path like /api/prepared/users/123
+-- Parse ID from path like /api/db_prepared_statements/users/123
 local function parse_id_from_path(path)
-  local id_str = path:match("/api/prepared/users/(%d+)")
+  local id_str = path:match("/api/db_prepared_statements/users/(%d+)")
   if id_str then
     return tonumber(id_str)
   end
@@ -65,8 +65,8 @@ function handle(request, response, context)
     }
   end
 
-  -- POST /api/prepared/init - Initialize schema
-  if method == "POST" and path == "/api/prepared/init" then
+  -- POST /api/db_prepared_statements/init - Initialize schema
+  if method == "POST" and path == "/api/db_prepared_statements/init" then
     local success, message = init_schema(db)
     if success then
       response:status(200)
@@ -83,8 +83,8 @@ function handle(request, response, context)
     end
   end
 
-  -- POST /api/prepared/users - Insert user using prepared statement
-  if method == "POST" and (path == "/api/prepared/users" or path == "/api/prepared/users/") then
+  -- POST /api/db_prepared_statements/users - Insert user using prepared statement
+  if method == "POST" and (path == "/api/db_prepared_statements/users" or path == "/api/db_prepared_statements/users/") then
     local body = request:body()
     if not body or not body.username or not body.email or not body.full_name then
       response:status(400)
@@ -95,7 +95,7 @@ function handle(request, response, context)
     end
 
     -- Use prepared statement for insert (will be cached)
-    local stmt = db:prepare("INSERT INTO users (username, email, full_name) VALUES (?, ?, ?)")
+    local stmt = db:prepare("INSERT INTO prepared_users (username, email, full_name) VALUES (?, ?, ?)")
     if not stmt then
       response:status(500)
       return {
@@ -121,11 +121,11 @@ function handle(request, response, context)
     }
   end
 
-  -- GET /api/prepared/users/:id - Get user by ID using prepared statement
+  -- GET /api/db_prepared_statements/users/:id - Get user by ID using prepared statement
   local user_id = parse_id_from_path(path)
   if method == "GET" and user_id then
     -- Use prepared statement for select (will be cached)
-    local stmt = db:prepare("SELECT id, username, email, full_name, created_at FROM users WHERE id = ?")
+    local stmt = db:prepare("SELECT id, username, email, full_name, created_at FROM prepared_users WHERE id = ?")
     if not stmt then
       response:status(500)
       return {
@@ -157,11 +157,11 @@ function handle(request, response, context)
     }
   end
 
-  -- GET /api/prepared/users - List all users (direct query, not cached)
-  if method == "GET" and (path == "/api/prepared/users" or path == "/api/prepared/users/") then
+  -- GET /api/db_prepared_statements/users - List all users (direct query, not cached)
+  if method == "GET" and (path == "/api/db_prepared_statements/users" or path == "/api/db_prepared_statements/users/") then
     -- Direct query without caching (good for infrequent queries)
     local result, err =
-      db.query("SELECT id, username, email, full_name, created_at FROM users ORDER BY created_at DESC")
+      db:query("SELECT id, username, email, full_name, created_at FROM prepared_users ORDER BY created_at DESC")
     if err then
       response:status(500)
       return {
@@ -177,7 +177,7 @@ function handle(request, response, context)
     }
   end
 
-  -- PUT /api/prepared/users/:id - Update user using prepared statement
+  -- PUT /api/db_prepared_statements/users/:id - Update user using prepared statement
   if method == "PUT" and user_id then
     local body = request:body()
     if not body or (not body.username and not body.email and not body.full_name) then
@@ -207,7 +207,7 @@ function handle(request, response, context)
 
     table.insert(values, user_id)
 
-    local update_sql = "UPDATE users SET " .. table.concat(fields, ", ") .. " WHERE id = ?"
+    local update_sql = "UPDATE prepared_users SET " .. table.concat(fields, ", ") .. " WHERE id = ?"
 
     -- Use prepared statement (will be cached for each unique SQL)
     local stmt = db:prepare(update_sql)
@@ -243,10 +243,10 @@ function handle(request, response, context)
     }
   end
 
-  -- DELETE /api/prepared/users/:id - Delete user using prepared statement
+  -- DELETE /api/db_prepared_statements/users/:id - Delete user using prepared statement
   if method == "DELETE" and user_id then
     -- Use prepared statement for delete (will be cached)
-    local stmt = db:prepare("DELETE FROM users WHERE id = ?")
+    local stmt = db:prepare("DELETE FROM prepared_users WHERE id = ?")
     if not stmt then
       response:status(500)
       return {
@@ -279,8 +279,8 @@ function handle(request, response, context)
     }
   end
 
-  -- GET /api/prepared/stats - Get cache statistics
-  if method == "GET" and path == "/api/prepared/stats" then
+  -- GET /api/db_prepared_statements/stats - Get cache statistics
+  if method == "GET" and path == "/api/db_prepared_statements/stats" then
     local status = db:status()
 
     response:status(200)

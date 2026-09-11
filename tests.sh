@@ -288,21 +288,27 @@ db_avail=$(printf '%s' "$db_check" | jq -r '.db_available // false' 2>/dev/null)
 if [ "$db_avail" = "true" ]; then
     # Initialize the schema required by the database examples. The default
     # configuration uses an in-memory SQLite database, so tables must be
-    # created before the read endpoints are exercised.
+    # created before the read endpoints are exercised. db_test.lua creates
+    # the users/sessions tables and seeds demo users (id 1 = admin).
     curl -s -m "$TIMEOUT_SEC" -X POST "${BASE_URL}/api/db_test/init" \
         -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
 
     run_test "db_test.lua" "GET" "/api/db_test" "" '.status == "success"'
+    run_test "users_db.lua - GET" "GET" "/api/users_db" "" '.status == "success"'
+    run_test "users_db.lua - POST" "POST" "/api/users_db" \
+        '{"name":"DbUser","email":"dbuser@example.com"}' \
+        '.status == "success"'
+    # auth_db.lua validates tokens of the form zhttpd_<user_id>_<role>.
+    # User id 1 (admin) is seeded by db_test.lua's init endpoint.
+    run_test "auth_db.lua" "POST" "/api/auth_db" \
+        '{"token":"zhttpd_1_admin","type":"jwt"}' \
+        '.authenticated == true'
+    run_test "db_prepared_statements.lua - init" "POST" \
+        "/api/db_prepared_statements/init" '{}' '.status == "success"'
+    run_test "db_prepared_statements.lua - list" "GET" \
+        "/api/db_prepared_statements/users" "" '.status == "success"'
     run_test "perf_test_with_db.lua" "GET" "/api/perf_test_with_db" "" \
         '.status == "success"'
-
-    # The following example scripts declare internal routes that do not match
-    # the /api/{script_name} routing scheme (e.g. users_db.lua only handles
-    # /api/users, db_prepared_statements.lua only handles /api/prepared/*),
-    # so they are not reachable through the default Lua handler routing.
-    skip_test "users_db.lua" "internal routes (/api/users) do not match /api/users_db"
-    skip_test "auth_db.lua" "internal routes (/api/protected/resource) do not match /api/auth_db"
-    skip_test "db_prepared_statements.lua" "internal routes (/api/prepared/*) do not match /api/db_prepared_statements"
 else
     skip_test "db_test.lua" "database not configured"
     skip_test "users_db.lua" "database not configured"
@@ -310,7 +316,6 @@ else
     skip_test "db_prepared_statements.lua" "database not configured"
     skip_test "perf_test_with_db.lua" "database not configured"
 fi
-
 # WebSocket
 printf '%b\n' "${CYAN}[WebSocket]${NC}"
 skip_test "websocket.lua" "WebSocket feature is disabled by default"

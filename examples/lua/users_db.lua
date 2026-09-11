@@ -175,8 +175,8 @@ function handle(request, response, context)
   local page = tonumber(request:query("page")) or 1
   local limit = tonumber(request:query("limit")) or 10
 
-  -- GET /api/users/:id - Get specific user
-  local user_id = path:match("/api/users/(%d+)$")
+  -- GET /api/users_db/:id - Get specific user
+  local user_id = path:match("/api/users_db/(%d+)$")
   if method == "GET" and user_id then
     local user = get_user(db, tonumber(user_id))
     if user.error then
@@ -189,8 +189,8 @@ function handle(request, response, context)
     }
   end
 
-  -- GET /api/users - List all users
-  if method == "GET" and path == "/api/users" then
+  -- GET /api/users_db - List all users
+  if method == "GET" and path == "/api/users_db" then
     local users, err = list_users(db, page, limit)
     if err then
       response:status(500)
@@ -204,8 +204,8 @@ function handle(request, response, context)
     }
   end
 
-  -- POST /api/users - Create new user
-  if method == "POST" and path == "/api/users" then
+  -- POST /api/users_db - Create new user
+  if method == "POST" and path == "/api/users_db" then
     local body = request:body()
     if not body or not body.name then
       response:status(400)
@@ -224,7 +224,7 @@ function handle(request, response, context)
     }
   end
 
-  -- PUT /api/users/:id - Update user
+  -- PUT /api/users_db/:id - Update user
   if method == "PUT" and user_id then
     local body = request:body()
     if not body then
@@ -243,7 +243,7 @@ function handle(request, response, context)
     }
   end
 
-  -- DELETE /api/users/:id - Delete user
+  -- DELETE /api/users_db/:id - Delete user
   if method == "DELETE" and user_id then
     local success, err = delete_user(db, tonumber(user_id))
     if not success then
