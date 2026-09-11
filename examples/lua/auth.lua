@@ -1,22 +1,20 @@
 -- Example Authentication Script for zhttpd
 -- This script demonstrates the JWT/OAuth authentication interface
--- that can be used by the auth middleware
+-- that can be used by the auth middleware.
 --
--- The script receives authentication requests in the format:
--- {
---   "token": "the JWT or OAuth token",
---   "method": "GET|POST|PUT|DELETE|...",
---   "path": "/api/protected/resource",
---   "type": "jwt|oauth"
--- }
---
--- It should return a response indicating authentication result:
+-- The auth middleware calls the exported `handle_request` function with the
+-- standard handler signature (request, response, context). The script reads
+-- the token from the Authorization header (Bearer scheme) and returns a
+-- response indicating the authentication result:
 -- {
 --   "authenticated": true/false,
 --   "user_id": "optional user id",
 --   "roles": ["optional", "roles"],
 --   "error": "optional error message"
 -- }
+--
+-- The middleware treats a response with "authenticated": true as success and
+-- lets the request proceed; anything else results in a 403 response.
 
 -- In-memory session store (for demo purposes)
 -- In production, use Redis or database for session storage
@@ -53,16 +51,30 @@ local function validate_oauth(token)
   return { valid = false }
 end
 
--- Main authentication handler
-function handle_request(request)
-  local body = request.body or {}
-  local token = body.token
-  local auth_type = body.type or "jwt"
-  local path = body.path or ""
-  local method = body.method or "GET"
+-- Extract the bearer token from the Authorization header.
+-- Returns nil when the header is missing or malformed.
+local function extract_token(request)
+  local header = request:header("authorization")
+  if not header or header == "" then
+    return nil
+  end
+  -- Accept both "Bearer <token>" and a bare token for convenience.
+  local token = header:match("^[Bb]earer%s+(.+)$")
+  if token then
+    return token
+  end
+  return header
+end
+
+-- Main authentication handler invoked by the auth middleware.
+-- Signature matches the standard Lua handler: (request, response, context).
+function handle_request(request, response, context)
+  local token = extract_token(request)
+  local method = request:method()
+  local path = request:path()
 
   -- Log authentication attempt (optional)
-  print(string.format("[Auth] Validating %s token for %s %s", auth_type, method, path))
+  print(string.format("[Auth] Validating token for %s %s", method, path))
 
   if not token or token == "" then
     return {
@@ -71,16 +83,13 @@ function handle_request(request)
     }
   end
 
+  -- JWT-style tokens are the default; OAuth/session tokens are looked up in
+  -- the in-memory session store.
   local result
-  if auth_type == "jwt" then
+  if token:match("^zhttpd_") then
     result = validate_jwt(token)
-  elseif auth_type == "oauth" then
-    result = validate_oauth(token)
   else
-    return {
-      authenticated = false,
-      error = "Unknown authentication type: " .. auth_type,
-    }
+    result = validate_oauth(token)
   end
 
   if result.valid then
@@ -109,8 +118,8 @@ function create_session(user_id, roles)
   return token
 end
 
--- Export the handler
+-- Export the handler and utility functions
 return {
-  handle = handle_request,
+  handle_request = handle_request,
   create_session = create_session,
 }

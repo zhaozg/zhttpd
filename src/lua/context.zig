@@ -399,11 +399,12 @@ fn contextSession(lua: *ziglua.Lua) i32 {
     // If this is a new session, set the cookie in the response
     if (session_id == null) {
         if (current_response) |res| {
-            // Build Set-Cookie header
-            var cookie_buf: [512]u8 = undefined;
-            const cookie_value = std.fmt.bufPrint(&cookie_buf, "{s}={s}; Path=/; Max-Age={d}{s}{s}", .{
+            // Build Set-Cookie header. Allocate in the response arena because
+            // res.headers.add only stores the slice; a stack buffer would
+            // dangle once this function returns.
+            const cookie_value = std.fmt.allocPrint(res.arena, "{s}={s}; Path=/; Max-Age={d}{s}{s}", .{
                 manager.config.cookie_name,
-                id,
+                id[0..],
                 manager.config.default_ttl,
                 if (manager.config.cookie_http_only) "; HttpOnly" else "",
                 if (manager.config.cookie_secure) "; Secure" else "",
@@ -1004,7 +1005,11 @@ fn resBody(lua: *ziglua.Lua) i32 {
         lua.raiseError();
     };
 
-    res.body = body_str;
+    // Copy the string into the request arena: the Lua string is only valid
+    // while the Lua stack frame is alive, but the response body is sent after
+    // the handler returns.
+    const arena = current_arena orelse std.heap.page_allocator;
+    res.body = arena.dupe(u8, body_str) catch body_str;
     return 0;
 }
 

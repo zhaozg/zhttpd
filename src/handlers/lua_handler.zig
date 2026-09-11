@@ -47,7 +47,12 @@ pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void
             return;
         };
 
-        res.body = result;
+        // Only override the response body when the script returned a value.
+        // Scripts that set the body directly via response:body() (or stream it
+        // with response:chunk()) return nil, and their body must be preserved.
+        if (!std.mem.eql(u8, result, "null")) {
+            res.body = result;
+        }
     } else {
         res.status = 503;
         res.body =

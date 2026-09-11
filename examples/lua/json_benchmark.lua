@@ -5,7 +5,9 @@
 
 function handle(request, response, context)
   -- Benchmark configuration (same as lua-cjson benchmark for fair comparison)
-  local iterations = 100000
+  -- Keep the iteration count modest so the benchmark stays within the Lua
+  -- sandbox instruction limit (lua_max_instructions).
+  local iterations = 5000
   local json = require("json")
 
   -- Test data: Simple object

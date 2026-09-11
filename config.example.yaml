@@ -51,18 +51,18 @@ enable_etag: true
 # ---------------------------------
 
 # WebSocket Support
-enable_websocket: false
+enable_websocket: true
 
 # Server-Sent Events (SSE)
-enable_sse: false
+enable_sse: true
 
 # Rate Limiting
-enable_rate_limit: false
+enable_rate_limit: true
 rate_limit_requests: 100
 rate_limit_window: 60
 
 # CORS (Cross-Origin Resource Sharing)
-enable_cors: false
+enable_cors: true
 cors_origins: "*"
 cors_methods: "GET, POST, PUT, DELETE, OPTIONS"
 cors_headers: "Content-Type, Authorization"
@@ -74,7 +74,7 @@ cors_headers: "Content-Type, Authorization"
 cors_origin_cache_size: 1000
 
 # Authentication (delegated to Lua scripts)
-enable_auth: false
+enable_auth: true
 auth_script: "auth"
 auth_protected_paths: "/api/*"
 auth_public_paths: "/api/login, /api/register"
@@ -94,9 +94,9 @@ enable_request_id: true
 # Structured Logging (text or json)
 log_format: "text"
 
-# Async logging for better performance (default: false)
+# Async logging for better performance (default: true)
 # When enabled, log messages are written asynchronously in a background thread
-log_async: false
+log_async: true
 
 # Console logging output (default: true)
 # When enabled, logs are also written to stderr in addition to log files
@@ -106,7 +106,7 @@ log_console: true
 # ------------------------------
 
 # IP Access Control (blacklist/whitelist)
-enable_ip_blacklist: false
+enable_ip_blacklist: true
 ip_blacklist: ""
 ip_whitelist: ""
 
@@ -120,7 +120,7 @@ ip_access_cache_size: 10000
 # -----------------------------
 # Enable database connectivity through zdbc
 # Supports SQLite, PostgreSQL, and MySQL
-enable_db: false
+enable_db: true
 
 # Default database connection URI (creates a "default" data source)
 # Formats:
@@ -129,9 +129,31 @@ enable_db: false
 #   PostgreSQL: postgresql://user:password@host:port/database
 #   MySQL:      mysql://user:password@host:port/database
 db_uri: ""
-
 # Connection pool size for default data source (1 = no pooling)
 db_pool_size: 5
+
+# Session Management
+# ------------------
+# enable_session: Enable server-side session management
+#   - true: context:session() is available in Lua scripts
+#   - false: session support disabled
+enable_session: true
+session_max_size: 10000
+session_default_ttl: 1800
+session_cookie_name: "ZHTTPD_SESSION"
+session_cookie_secure: true
+session_cookie_http_only: true
+
+# Lua Sandbox
+# -----------
+# lua_sandbox_enabled: Disable dangerous functions (io, os.execute, ...)
+lua_sandbox_enabled: true
+
+# lua_max_instructions: Maximum Lua instructions per script execution
+#   - Prevents infinite loops and runaway scripts
+#   - 0 = unlimited (not recommended for production)
+#   - 200000000 = default, suitable for most scripts including benchmarks
+lua_max_instructions: 200000000
 
 # Named data sources (optional, for multiple database connections)
 # Each data source can be accessed in Lua via context:db("name")
@@ -172,4 +194,3 @@ db_pool_size: 5
 #   /health: Handler.HealthCheckHandler
 #   /api/*: Handler.LuaHandler
 #   /*: Handler.StaticFileHandler
-

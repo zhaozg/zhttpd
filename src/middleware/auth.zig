@@ -13,9 +13,9 @@ pub const AuthConfig = struct {
     protected_paths: []const u8 = "/api/*",
     /// Paths that are always public (comma-separated)
     public_paths: []const u8 = "/api/login, /api/register, /api/health",
-    /// Header name for token (default: Authorization)
-    token_header: []const u8 = "Authorization",
-    /// Token prefix to strip (e.g., "Bearer ")
+    /// Header name for token (default: authorization)
+    /// NOTE: httpz stores header names in lowercase, so this must be lowercase.
+    token_header: []const u8 = "authorization",
     token_prefix: []const u8 = "Bearer ",
     /// Enable JWT support
     jwt_enabled: bool = true,

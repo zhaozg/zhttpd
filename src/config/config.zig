@@ -72,7 +72,7 @@ pub const Config = struct {
     auth_public_paths: []const u8, // Always public paths
     // Lua sandbox configuration (safe defaults)
     lua_sandbox_enabled: bool, // Enable Lua sandbox (default: true)
-    lua_max_instructions: u32, // Max Lua instructions per execution (0 = unlimited, default: 100000)
+    lua_max_instructions: u32, // Max Lua instructions per execution (0 = unlimited, default: 200000000)
     lua_path: []const u8, // LUA_PATH environment variable value (empty string = use Lua defaults)
     lua_cpath: []const u8, // LUA_CPATH environment variable value (empty string = use Lua defaults)
     // Phase 5: Observability configuration
@@ -240,47 +240,47 @@ pub fn getDefaultConfig(allocator: std.mem.Allocator) !Config {
         .log_file = null,
         .access_log_file = null,
         .log_format = try allocator.dupe(u8, "text"),
-        .log_async = false, // Default to sync logging
+        .log_async = true, // Default to async logging
         .log_console = true, // Default to console output
         .reload = .auto, // Default to auto reload mode
         .max_cache_file_size = DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = true, // Default enabled
-        // Phase 3: Advanced httpz features (disabled by default)
-        .enable_websocket = false,
-        .enable_sse = false,
-        .enable_rate_limit = false,
+        // Phase 3: Advanced httpz features (enabled by default)
+        .enable_websocket = true,
+        .enable_sse = true,
+        .enable_rate_limit = true,
         .rate_limit_requests = 100,
         .rate_limit_window = 60,
-        .enable_cors = false,
+        .enable_cors = true,
         .cors_origins = try allocator.dupe(u8, "*"),
         .cors_methods = try allocator.dupe(u8, "GET, POST, PUT, DELETE, OPTIONS"),
         .cors_headers = try allocator.dupe(u8, "Content-Type, Authorization"),
         .cors_origin_cache_size = 1000, // Default cache size for CORS origin decisions
-        .enable_auth = false,
+        .enable_auth = true,
         .auth_script = try allocator.dupe(u8, "auth"),
         .auth_protected_paths = try allocator.dupe(u8, "/api/*"),
         .auth_public_paths = try allocator.dupe(u8, "/api/login, /api/register"),
         // Lua sandbox configuration (safe defaults)
         .lua_sandbox_enabled = true,
-        .lua_max_instructions = 100_000,
+        .lua_max_instructions = 200_000_000,
         .lua_path = try allocator.dupe(u8, ""),
         .lua_cpath = try allocator.dupe(u8, ""),
         // Phase 5: Observability configuration (enabled by default)
         .enable_metrics = true,
         .enable_health_check = true,
         .enable_request_id = true,
-        // Phase 7: Security enhancements (disabled by default)
-        .enable_ip_blacklist = false,
+        // Phase 7: Security enhancements (enabled by default)
+        .enable_ip_blacklist = true,
         .ip_blacklist = try allocator.dupe(u8, ""),
         .ip_whitelist = try allocator.dupe(u8, ""),
         .ip_access_cache_size = 10000, // Default cache size for IP access decisions
-        // Database plugin (disabled by default)
-        .enable_db = false,
+        // Database plugin (enabled by default)
+        .enable_db = true,
         .db_uri = try allocator.dupe(u8, ""),
         .db_pool_size = 5,
         .data_sources = try allocator.alloc(DataSourceConfig, 0),
-        // Session management (disabled by default)
-        .enable_session = false,
+        // Session management (enabled by default)
+        .enable_session = true,
         .session_max_size = 10000,
         .session_default_ttl = 1800, // 30 minutes
         .session_cookie_name = try allocator.dupe(u8, "ZHTTPD_SESSION"),
@@ -395,29 +395,29 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .log_file = if (parsed.log_file) |lf| try allocator.dupe(u8, lf) else null,
         .access_log_file = if (parsed.access_log_file) |alf| try allocator.dupe(u8, alf) else null,
         .log_format = try allocator.dupe(u8, parsed.log_format orelse "text"),
-        .log_async = parsed.log_async orelse false,
+        .log_async = parsed.log_async orelse true,
         .log_console = parsed.log_console orelse true,
         .reload = if (parsed.reload) |r| ReloadMode.fromString(r) else .auto,
         .max_cache_file_size = parsed.max_cache_file_size orelse DEFAULT_MAX_CACHE_FILE_SIZE,
         .enable_etag = parsed.enable_etag orelse true,
         // Phase 3: Advanced httpz features
-        .enable_websocket = parsed.enable_websocket orelse false,
-        .enable_sse = parsed.enable_sse orelse false,
-        .enable_rate_limit = parsed.enable_rate_limit orelse false,
+        .enable_websocket = parsed.enable_websocket orelse true,
+        .enable_sse = parsed.enable_sse orelse true,
+        .enable_rate_limit = parsed.enable_rate_limit orelse true,
         .rate_limit_requests = parsed.rate_limit_requests orelse 100,
         .rate_limit_window = parsed.rate_limit_window orelse 60,
-        .enable_cors = parsed.enable_cors orelse false,
+        .enable_cors = parsed.enable_cors orelse true,
         .cors_origins = try allocator.dupe(u8, parsed.cors_origins orelse "*"),
         .cors_methods = try allocator.dupe(u8, parsed.cors_methods orelse "GET, POST, PUT, DELETE, OPTIONS"),
         .cors_headers = try allocator.dupe(u8, parsed.cors_headers orelse "Content-Type, Authorization"),
         .cors_origin_cache_size = parsed.cors_origin_cache_size orelse 1000,
-        .enable_auth = parsed.enable_auth orelse false,
+        .enable_auth = parsed.enable_auth orelse true,
         .auth_script = try allocator.dupe(u8, parsed.auth_script orelse "auth"),
         .auth_protected_paths = try allocator.dupe(u8, parsed.auth_protected_paths orelse "/api/*"),
         .auth_public_paths = try allocator.dupe(u8, parsed.auth_public_paths orelse "/api/login, /api/register"),
         // Lua sandbox configuration
         .lua_sandbox_enabled = parsed.lua_sandbox_enabled orelse true,
-        .lua_max_instructions = parsed.lua_max_instructions orelse 100_000,
+        .lua_max_instructions = parsed.lua_max_instructions orelse 200_000_000,
         .lua_path = try allocator.dupe(u8, parsed.lua_path orelse ""),
         .lua_cpath = try allocator.dupe(u8, parsed.lua_cpath orelse ""),
         // Phase 5: Observability configuration
@@ -425,17 +425,17 @@ fn parseYaml(allocator: std.mem.Allocator, content: []const u8) !Config {
         .enable_health_check = parsed.enable_health_check orelse true,
         .enable_request_id = parsed.enable_request_id orelse true,
         // Phase 7: Security enhancements
-        .enable_ip_blacklist = parsed.enable_ip_blacklist orelse false,
+        .enable_ip_blacklist = parsed.enable_ip_blacklist orelse true,
         .ip_blacklist = try allocator.dupe(u8, parsed.ip_blacklist orelse ""),
         .ip_whitelist = try allocator.dupe(u8, parsed.ip_whitelist orelse ""),
         .ip_access_cache_size = parsed.ip_access_cache_size orelse 10000,
         // Database plugin configuration
-        .enable_db = parsed.enable_db orelse false,
+        .enable_db = parsed.enable_db orelse true,
         .db_uri = try allocator.dupe(u8, parsed.db_uri orelse ""),
         .db_pool_size = parsed.db_pool_size orelse 5,
         .data_sources = try parseDataSourcesFromYaml(allocator, &y, parsed.db_uri, parsed.db_pool_size orelse 5),
         // Session management configuration
-        .enable_session = parsed.enable_session orelse false,
+        .enable_session = parsed.enable_session orelse true,
         .session_max_size = parsed.session_max_size orelse 10000,
         .session_default_ttl = parsed.session_default_ttl orelse 1800,
         .session_cookie_name = try allocator.dupe(u8, parsed.session_cookie_name orelse "ZHTTPD_SESSION"),

@@ -191,9 +191,9 @@ lua_sandbox_enabled: true
 # lua_max_instructions: Maximum Lua instructions per script execution
 #   - Prevents infinite loops and runaway scripts
 #   - 0 = unlimited (not recommended for production)
-#   - 100000 = default, suitable for most scripts
+#   - 200000000 = default, suitable for most scripts including benchmarks
 #   - Increase for complex scripts, decrease for stricter resource control
-lua_max_instructions: 100000
+lua_max_instructions: 200000000
 
 # Configuration Tips
 # ------------------

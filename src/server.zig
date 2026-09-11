@@ -226,12 +226,12 @@ fn applyMiddleware(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) 
         // Add rate limit headers (skip for whitelisted)
         if (!is_whitelisted) {
             const remaining = rate_limiter.getRemainingTokens(client_ip);
-            var remaining_buf: [16]u8 = undefined;
-            const remaining_str = std.fmt.bufPrint(&remaining_buf, "{d}", .{remaining}) catch "0";
+            // Format into the response arena: res.headers.add only stores the
+            // slice, so a stack buffer would dangle once this function returns.
+            const remaining_str = std.fmt.allocPrint(res.arena, "{d}", .{remaining}) catch "0";
             res.headers.add("X-RateLimit-Remaining", remaining_str);
         }
     }
-
     // CORS handling
     if (ctx.cors_middleware) |*cors| {
         if (req.headers.get("origin")) |origin| {

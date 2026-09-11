@@ -18,6 +18,13 @@ SERVER_PORT="${ZHTTPD_TEST_PORT:-8080}"
 BASE_URL="http://127.0.0.1:${SERVER_PORT}"
 TIMEOUT_SEC="${ZHTTPD_TEST_TIMEOUT:-10}"
 
+# Authentication token used for protected /api/* endpoints.
+# The default configuration enables the auth middleware, which delegates
+# validation to examples/lua/auth.lua. That script accepts demo tokens of the
+# form zhttpd_<user_id>_<role>.
+AUTH_TOKEN="${ZHTTPD_TEST_TOKEN:-zhttpd_1_admin}"
+AUTH_HEADER="Authorization: Bearer ${AUTH_TOKEN}"
+
 # Colors (empty when not writing to a terminal)
 if [ -t 1 ]; then
     RED='\033[0;31m'
@@ -96,12 +103,11 @@ run_test() {
 
     TOTAL=$((TOTAL + 1))
     printf '%b' "  Testing ${CYAN}${name}${NC} ... "
-
     if [ "$method" = "GET" ]; then
-        response=$(curl -s -m "$TIMEOUT_SEC" "${BASE_URL}${path}" 2>&1)
+        response=$(curl -s -m "$TIMEOUT_SEC" -H "$AUTH_HEADER" "${BASE_URL}${path}" 2>&1)
     else
         response=$(curl -s -m "$TIMEOUT_SEC" -X "$method" "${BASE_URL}${path}" \
-            -H "Content-Type: application/json" -d "$body" 2>&1)
+            -H "$AUTH_HEADER" -H "Content-Type: application/json" -d "$body" 2>&1)
     fi
 
     if [ $? -ne 0 ]; then
@@ -148,15 +154,14 @@ run_raw_test() {
     printf '%b' "  Testing ${CYAN}${name}${NC} ... "
 
     if [ "$method" = "GET" ]; then
-        response=$(curl -s -m "$TIMEOUT_SEC" "${BASE_URL}${path}" 2>&1)
+        response=$(curl -s -m "$TIMEOUT_SEC" -H "$AUTH_HEADER" "${BASE_URL}${path}" 2>&1)
     else
         response=$(curl -s -m "$TIMEOUT_SEC" -X "$method" "${BASE_URL}${path}" \
-            -H "Content-Type: application/json" -d "$body" 2>&1)
+            -H "$AUTH_HEADER" -H "Content-Type: application/json" -d "$body" 2>&1)
     fi
 
     if [ $? -ne 0 ]; then
         printf '%b\n' "${RED}FAILED (connection error)${NC}"
-        printf '    Response: %s\n' "$response"
         FAILED=$((FAILED + 1))
         return 1
     fi
@@ -165,7 +170,6 @@ run_raw_test() {
         printf '%s' "$response" | grep -q "$expected_content"
         if [ $? -ne 0 ]; then
             printf '%b\n' "${RED}FAILED (expected content not found)${NC}"
-            printf '    Response: %s\n' "$response"
             FAILED=$((FAILED + 1))
             return 1
         fi
@@ -238,9 +242,10 @@ run_test "json_test.lua - request info" "GET" "/api/json_test" "" \
     '.request_tests.method == "GET" and .request_tests.has_context == true'
 printf '\n'
 
-# JSON benchmark (100k iterations exceeds default 100k instruction limit)
+# JSON benchmark (iteration count tuned to fit the sandbox instruction limit)
 printf '%b\n' "${CYAN}[JSON Benchmark]${NC}"
-skip_test "json_benchmark.lua" "100k iterations exceeds default instruction limit"
+run_test "json_benchmark.lua" "GET" "/api/json_benchmark" "" '.status == "success"'
+printf '\n'
 printf '\n'
 
 # Users API (in-memory, no DB needed)
@@ -270,19 +275,22 @@ printf '%b\n' "${CYAN}[Performance Test (No DB)]${NC}"
 run_test "perf_test_no_db.lua" "GET" "/api/perf_test_no_db" "" '.status == "success"'
 printf '\n'
 
-# Session (requires enable_session=true in config)
+# Session (enable_session is on by default)
 printf '%b\n' "${CYAN}[Session API]${NC}"
-skip_test "session.lua" "requires enable_session=true in config"
+run_raw_test "session.lua - login page" "GET" "/api/session" "" "Login"
+run_raw_test "session.lua - login" "POST" "/api/session" '{"username":"alice"}' "Welcome, alice"
+printf '\n'
 printf '\n'
 
-# Auth (uses request.body instead of request:body(), known issue in example)
+# Auth middleware (enable_auth is on by default; auth.lua validates tokens)
 printf '%b\n' "${CYAN}[Auth API]${NC}"
-skip_test "auth.lua" "uses request.body (should be request:body()), needs example fix"
+run_test "auth.lua - valid token" "GET" "/api/test" "" '.status == "success"'
+printf '\n'
 printf '\n'
 
 # Database tests
 printf '%b\n' "${CYAN}[Database Tests]${NC}"
-db_check=$(curl -s -m 3 "${BASE_URL}/api/db_test" 2>/dev/null || printf '')
+db_check=$(curl -s -m 3 -H "$AUTH_HEADER" "${BASE_URL}/api/db_test" 2>/dev/null || printf '')
 db_avail=$(printf '%s' "$db_check" | jq -r '.db_available // false' 2>/dev/null)
 
 if [ "$db_avail" = "true" ]; then
@@ -291,7 +299,7 @@ if [ "$db_avail" = "true" ]; then
     # created before the read endpoints are exercised. db_test.lua creates
     # the users/sessions tables and seeds demo users (id 1 = admin).
     curl -s -m "$TIMEOUT_SEC" -X POST "${BASE_URL}/api/db_test/init" \
-        -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
+        -H "$AUTH_HEADER" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
 
     run_test "db_test.lua" "GET" "/api/db_test" "" '.status == "success"'
     run_test "users_db.lua - GET" "GET" "/api/users_db" "" '.status == "success"'
@@ -318,7 +326,7 @@ else
 fi
 # WebSocket
 printf '%b\n' "${CYAN}[WebSocket]${NC}"
-skip_test "websocket.lua" "WebSocket feature is disabled by default"
+skip_test "websocket.lua" "upgrade disabled pending httpz Zig 0.16 API migration"
 printf '\n'
 
 # ============================================
