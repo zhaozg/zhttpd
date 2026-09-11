@@ -2,6 +2,16 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const server = @import("server.zig");
 
+/// Global std.log configuration.
+///
+/// zhttpd uses its own logger (see `src/logger/`) for application logging.
+/// This setting only controls the default `std.log` level used by third-party
+/// libraries (e.g. zig-yaml emits verbose `debug` output while parsing).
+/// Defaulting to `.info` keeps startup output clean in all build modes.
+pub const std_options: std.Options = .{
+    .log_level = .info,
+};
+
 pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();

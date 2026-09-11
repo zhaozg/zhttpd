@@ -326,7 +326,21 @@ else
 fi
 # WebSocket
 printf '%b\n' "${CYAN}[WebSocket]${NC}"
-skip_test "websocket.lua" "upgrade disabled pending httpz Zig 0.16 API migration"
+TOTAL=$((TOTAL + 1))
+printf '%b' "  Testing ${CYAN}websocket.lua${NC} ... "
+if command -v python3 >/dev/null 2>&1; then
+    if ws_output=$(python3 "$(dirname "$0")/tests/ws_test.py" 127.0.0.1 "$SERVER_PORT" /ws 2>&1); then
+        printf '%b\n' "${GREEN}PASSED${NC}"
+        PASSED=$((PASSED + 1))
+    else
+        printf '%b\n' "${RED}FAILED${NC}"
+        printf '%s\n' "$ws_output" | sed 's/^/    /'
+        FAILED=$((FAILED + 1))
+    fi
+else
+    printf '%b\n' "${YELLOW}SKIPPED${NC} (python3 not available)"
+    SKIPPED=$((SKIPPED + 1))
+fi
 printf '\n'
 
 # ============================================

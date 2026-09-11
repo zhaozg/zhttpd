@@ -22,7 +22,7 @@ jobs:
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
-        version: 0.15.2
+        version: master
 
     - name: Check code formatting
       run: zig fmt --check src
@@ -48,7 +48,7 @@ jobs:
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
-        version: 0.15.2
+        version: master
 
     - name: Verify Zig installation
       run: zig version
@@ -89,7 +89,7 @@ jobs:
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
-        version: 0.15.2
+        version: master
 
     - name: Install Apache Bench
       run: |
@@ -120,8 +120,11 @@ jobs:
           sleep 1
         done
 
-        # Run benchmark with Apache Bench
+        # Run benchmark with Apache Bench (short connections)
         ab -n 1000 -c 10 http://127.0.0.1:8080/ > benchmark_results.txt || true
+
+        # Run persistent-connection (HTTP/1.1 keep-alive) benchmark
+        python3 tests/bench_keepalive.py http://127.0.0.1:8080/ 50 50000 4 >> benchmark_results.txt || true
 
         # Stop server
         kill $SERVER_PID 2>/dev/null || true

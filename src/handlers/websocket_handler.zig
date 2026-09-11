@@ -12,25 +12,37 @@ const WebSocketContext = ws_mod.WebSocketContext;
 const AppContext = @import("context.zig").AppContext;
 
 /// Handle WebSocket upgrade requests
-pub fn handle(ctx: *AppContext, _req: *httpz.Request, res: *httpz.Response) !void {
-    _ = _req;
+pub fn handle(ctx: *AppContext, req: *httpz.Request, res: *httpz.Response) !void {
     ctx.logger.debug("WebSocket upgrade request received", .{});
 
-    // Get a mutable pointer to lua_handler if it exists
-    const lua_handler_ptr: ?*LuaHandler = if (ctx.lua_handler != null) blk: {
-        // We need to get a pointer to the optional's value
-        // This is safe because ctx.lua_handler is stored in AppContext which outlives the request
-        break :blk @constCast(&ctx.lua_handler.?);
-    } else null;
+    // Get a mutable pointer to lua_handler if it exists.
+    // This is safe because ctx.lua_handler is stored in AppContext which
+    // outlives the request.
+    const lua_handler_ptr: ?*LuaHandler = if (ctx.lua_handler != null)
+        @constCast(&ctx.lua_handler.?)
+    else
+        null;
 
-    // WebSocket upgrade is temporarily disabled due to Zig 0.16 API migration
-    _ = lua_handler_ptr;
+    // Build the context passed to each WebSocket connection handler.
+    const ws_ctx = WebSocketContext.init(req.url.path, lua_handler_ptr);
 
-    // WebSocket upgrade is temporarily disabled due to Zig 0.16 API migration
-    // The httpz.upgradeWebsocket function is commented out in the httpz source
-    // See: https://github.com/karlseguin/http.zig/issues
-    ctx.logger.warn("WebSocket upgrade not available in this build", .{});
-    res.status = 501;
-    res.body = "{\"error\":\"WebSocket not available\"}";
-    res.content_type = httpz.ContentType.JSON;
+    // Attempt the protocol upgrade. Returns false when the request is not a
+    // valid WebSocket handshake (e.g. a plain GET), in which case we respond
+    // with a 400 Bad Request.
+    const upgraded = httpz.upgradeWebsocket(WebSocketHandler, req, res, &ws_ctx) catch |err| {
+        ctx.logger.warn("WebSocket upgrade failed: {}", .{err});
+        res.status = 500;
+        res.body = "{\"error\":\"WebSocket upgrade failed\"}";
+        res.content_type = httpz.ContentType.JSON;
+        return;
+    };
+
+    if (!upgraded) {
+        res.status = 400;
+        res.body = "{\"error\":\"Invalid WebSocket handshake\"}";
+        res.content_type = httpz.ContentType.JSON;
+        return;
+    }
+
+    // On success httpz has taken over the connection; nothing else to do.
 }

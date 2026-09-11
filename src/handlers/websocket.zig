@@ -178,9 +178,9 @@ pub const WebSocketHandler = struct {
         else
             "handle_message";
 
-        // Use rawGetTable for better performance (no metamethod checks, no dupeZ needed)
+        // Use getTableRaw for better performance (no metamethod checks, no dupeZ needed)
         _ = lua.pushString(func_name);
-        _ = lua.rawGetTable(-2); // Get module[func_name]
+        _ = lua.getTableRaw(-2); // Get module[func_name]
         if (lua.typeOf(-1) != .function) {
             lua.pop(2);
             return error.FunctionNotFound;

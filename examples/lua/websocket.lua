@@ -67,7 +67,7 @@ local function handle_message(request)
   local parsed = json.decode(data)
 
   -- Handle ping/pong for keeping connection alive
-  if parsed.type == "ping" then
+  if parsed and parsed.type == "ping" then
     return {
       type = "pong",
       timestamp = os.time(),
@@ -85,25 +85,10 @@ local function handle_message(request)
   }
 end
 
--- Main request handler
-function handle_request(request)
-  local event_type = request.type or request.body and request.body.type or "unknown"
-
-  if event_type == "connect" then
-    return handle_connect(request)
-  elseif event_type == "disconnect" then
-    return handle_disconnect(request)
-  elseif event_type == "message" then
-    return handle_message(request)
-  else
-    return {
-      type = "error",
-      message = "Unknown event type: " .. event_type,
-    }
-  end
-end
-
--- Export the handler
+-- Export the handlers. httpz/zhttpd looks up the function matching the
+-- event type (handle_connect / handle_message / handle_disconnect).
 return {
-  handle = handle_request,
+  handle_connect = handle_connect,
+  handle_message = handle_message,
+  handle_disconnect = handle_disconnect,
 }

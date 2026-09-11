@@ -38,7 +38,7 @@
 
 #### 前置要求
 
-- Zig 0.15.x 或更高版本
+- Zig 0.16.x 或更高版本
 
 #### 从源码构建
 
@@ -316,28 +316,31 @@ ws.onclose = () => {
 在 `lua_scripts_dir` 目录中创建 `websocket.lua` 文件处理 WebSocket 消息：
 
 ```lua
+```lua
 -- examples/lua/websocket.lua
-function handle_request(request)
-    local event_type = request.type  -- "connect", "message", "disconnect"
-    local connection_id = request.connection_id
-    local data = request.data
+-- 导出三个事件处理函数，zhttpd 会根据事件类型自动调用
 
-    if event_type == "connect" then
-        return { type = "connected", message = "Welcome!" }
-    elseif event_type == "message" then
-        -- 处理消息并返回响应
-        return { type = "message", received = data, echo = true }
-    else
-        return { type = "disconnected" }
-    end
+local function handle_connect(request)
+    -- request.type == "connect"
+    return { type = "connected", message = "Welcome!", connection_id = request.connection_id }
 end
 
-return { handle = handle_request }
+local function handle_message(request)
+    -- request.type == "message"，request.data 为客户端发送的文本
+    return { type = "message", received = request.data, echo = true }
+end
+
+local function handle_disconnect(request)
+    -- request.type == "disconnect"
+    return { type = "disconnected", connection_id = request.connection_id }
+end
+
+return {
+    handle_connect = handle_connect,
+    handle_message = handle_message,
+    handle_disconnect = handle_disconnect,
+}
 ```
-
-### 🔒 安全特性
-
-zhttpd 默认启用以下 HTTP 安全头部：
 
 - **Content-Security-Policy** - 防止 XSS 攻击
 - **X-Frame-Options** - 防止点击劫持
@@ -466,37 +469,39 @@ local matched = lpeg.match(email, "user@example.com")
 
 ### 📊 性能基准
 
-使用 Apache Bench (ab) 和 h2load 进行基准测试，构建模式：ReleaseFast
+使用 Apache Bench (ab) 和长连接（HTTP/1.1 keep-alive）压测工具进行基准测试，构建模式：ReleaseFast
 
 **测试环境：**
-- 系统：Linux x86_64 (AMD EPYC 7763 64-Core Processor)
-- CPU：2 vCPU
-- 内存：8 GB
-- Zig 版本：0.15.2
-- HTTP 服务器：httpz (http.zig)
+- 系统：macOS x86_64 (Intel Core i7-1068NG7 @ 2.30GHz)
+- CPU：8 核
+- 内存：16 GB
+- Zig 版本：0.16.0
+- HTTP 服务器：httpz (http.zig, master)
 - 构建模式：ReleaseFast
-- 线程池：2 线程
 
-**Apache Bench 测试结果：**
-
-| 测试场景 | 并发连接 | 总请求数 | RPS (请求/秒) | 传输速率 | 平均延迟 |
-|---------|---------|---------|--------------|---------|----------|
-| 低并发   | 10      | 10,000  | ~10,100      | ~42.9 MB/s | ~1.0 ms |
-| 中并发   | 50      | 50,000  | ~10,600      | ~45.0 MB/s | ~4.7 ms |
-| 高并发   | 100     | 100,000 | ~10,500      | ~44.5 MB/s | ~9.5 ms |
-
-**h2load 性能测试（数据传输成功）：**
+**Apache Bench 测试结果（短连接）：**
 
 | 测试场景 | 并发连接 | 总请求数 | RPS (请求/秒) | 传输速率 | 平均延迟 |
 |---------|---------|---------|--------------|---------|----------|
-| 高并发   | 100     | 100,000 | ~46,000      | ~190 MB/s | ~2.1 ms |
+| 低并发   | 10      | 10,000  | ~17,180      | ~73.6 MB/s | ~0.58 ms |
+| 中并发   | 50      | 50,000  | ~16,870      | ~72.2 MB/s | ~2.96 ms |
+| 高并发   | 100     | 100,000 | ~17,330      | ~74.2 MB/s | ~5.77 ms |
+
+**长连接（HTTP/1.1 keep-alive）测试结果：**
+
+| 测试场景 | 连接数 | 总请求数 | RPS (请求/秒) | 平均延迟 | p99 延迟 |
+|---------|-------|---------|--------------|---------|----------|
+| 低并发   | 10    | 10,000  | ~33,470      | ~0.059 ms | ~0.136 ms |
+| 中并发   | 50    | 50,000  | ~28,670      | ~0.139 ms | ~0.266 ms |
+| 高并发   | 100   | 100,000 | ~26,350      | ~0.150 ms | ~0.356 ms |
+| 超高并发 | 200   | 200,000 | ~25,550      | ~0.311 ms | ~0.682 ms |
 
 **关键性能指标：**
-- 峰值吞吐量：**~10,500 请求/秒** (Apache Bench)
-- 超高吞吐量：**~46,000 请求/秒** (h2load 实际传输)
-- 平均传输速率：**~45 MB/s** (Apache Bench)
-- 超低延迟：< 10ms (100并发)
-- 零失败请求 (Apache Bench)
+- 峰值吞吐量：**~33,470 请求/秒**（长连接，10 连接）
+- 持续吞吐量：**~26,350 请求/秒**（长连接，100 连接）
+- Apache Bench 吞吐量：**~17,330 请求/秒**（100 并发）
+- 超低延迟：**p99 < 0.4 ms**（100 长连接）
+- 所有场景零失败请求
 
 **性能特点：**
 - 使用 httpz.Server 提供高性能 HTTP/1.1 实现
@@ -508,11 +513,11 @@ local matched = lpeg.match(email, "user@example.com")
 运行基准测试：
 
 ```bash
-# Apache Bench
+# Apache Bench（短连接）
 ab -n 100000 -c 100 http://127.0.0.1:8080/
 
-# h2load
-h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
+# 长连接基准测试（HTTP/1.1 keep-alive）
+python3 tests/bench_keepalive.py http://127.0.0.1:8080/ 100 100000 4
 ```
 
 ### 🗺️ 项目规划
@@ -579,7 +584,7 @@ Built on excellent Zig ecosystem projects:
 
 #### Prerequisites
 
-- Zig 0.15.x or higher
+- Zig 0.16.x or higher
 
 #### Build from Source
 
@@ -684,37 +689,39 @@ zig build test
 
 ### 📊 Performance Benchmarks
 
-Benchmarked with Apache Bench (ab) and h2load, Build Mode: ReleaseFast
+Benchmarked with Apache Bench (ab) and a persistent-connection (HTTP/1.1 keep-alive) load generator, Build Mode: ReleaseFast
 
 **Test Environment:**
-- System: Linux x86_64 (AMD EPYC 7763 64-Core Processor)
-- CPU: 2 vCPU
-- Memory: 8 GB
-- Zig Version: 0.15.2
-- HTTP Server: httpz (http.zig)
+- System: macOS x86_64 (Intel Core i7-1068NG7 @ 2.30GHz)
+- CPU: 8 cores
+- Memory: 16 GB
+- Zig Version: 0.16.0
+- HTTP Server: httpz (http.zig, master)
 - Build Mode: ReleaseFast
-- Thread Pool: 2 threads
 
-**Apache Bench Results:**
+**Apache Bench Results (short connections):**
 
-| Test Scenario | Concurrency | Total Requests | RPS     | Transfer Rate | Avg Latency |
-|--------------|-------------|----------------|---------|---------------|-------------|
-| Low          | 10          | 10,000         | ~10,100 | ~42.9 MB/s    | ~1.0 ms     |
-| Medium       | 50          | 50,000         | ~10,600 | ~45.0 MB/s    | ~4.7 ms     |
-| High         | 100         | 100,000        | ~10,500 | ~44.5 MB/s    | ~9.5 ms     |
+| Test Scenario | Concurrency | Total Requests | RPS      | Transfer Rate | Avg Latency |
+|--------------|-------------|----------------|----------|---------------|-------------|
+| Low          | 10          | 10,000         | ~17,180  | ~73.6 MB/s    | ~0.58 ms    |
+| Medium       | 50          | 50,000         | ~16,870  | ~72.2 MB/s    | ~2.96 ms    |
+| High         | 100         | 100,000        | ~17,330  | ~74.2 MB/s    | ~5.77 ms    |
 
-**h2load Performance (actual data transfer successful):**
+**Persistent Connection (HTTP/1.1 keep-alive) Results:**
 
-| Test Scenario | Concurrency | Total Requests | RPS     | Transfer Rate | Avg Latency |
-|--------------|-------------|----------------|---------|---------------|-------------|
-| High         | 100         | 100,000        | ~46,000 | ~190 MB/s     | ~2.1 ms     |
+| Test Scenario | Connections | Total Requests | RPS      | Avg Latency | p99 Latency |
+|--------------|-------------|----------------|----------|-------------|-------------|
+| Low          | 10          | 10,000         | ~33,470  | ~0.059 ms   | ~0.136 ms   |
+| Medium       | 50          | 50,000         | ~28,670  | ~0.139 ms   | ~0.266 ms   |
+| High         | 100         | 100,000        | ~26,350  | ~0.150 ms   | ~0.356 ms   |
+| Very High    | 200         | 200,000        | ~25,550  | ~0.311 ms   | ~0.682 ms   |
 
 **Key Metrics:**
-- Peak Throughput: **~10,500 req/s** (Apache Bench)
-- Ultra-high Throughput: **~46,000 req/s** (h2load actual transfer)
-- Average Transfer Rate: **~45 MB/s** (Apache Bench)
-- Ultra-low Latency: < 10ms (100 concurrent)
-- Zero Failed Requests (Apache Bench)
+- Peak Throughput: **~33,470 req/s** (persistent connections, 10 conns)
+- Sustained Throughput: **~26,350 req/s** (persistent connections, 100 conns)
+- Apache Bench Throughput: **~17,330 req/s** (100 concurrent)
+- Ultra-low Latency: **< 0.4 ms p99** (100 persistent connections)
+- Zero Failed Requests across all scenarios
 
 **Performance Features:**
 - Using httpz.Server for high-performance HTTP/1.1 implementation
@@ -726,14 +733,12 @@ Benchmarked with Apache Bench (ab) and h2load, Build Mode: ReleaseFast
 Run benchmarks:
 
 ```bash
-# Apache Bench
+# Apache Bench (short connections)
 ab -n 100000 -c 100 http://127.0.0.1:8080/
 
-# h2load
-h2load --h1 -c 100 -t 4 -n 100000 http://127.0.0.1:8080/
+# Persistent connection benchmark (HTTP/1.1 keep-alive)
+python3 tests/bench_keepalive.py http://127.0.0.1:8080/ 100 100000 4
 ```
-
-### 🗺️ Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the project's future development plans and enhancement opportunities.
 
