@@ -13,7 +13,7 @@
             .hash = "zig_yaml-0.3.0-C1161gmsAgBMXfMGSbvs1jaocmD2KVCEZRPKBSO0x1Hc",
         },
         .zdbc = .{
-            .url = "https://github.com/zhaozg/zdbc/archive/486e622c34f964ec8fb451f0407cbddb80a4f2e5.zip",
+            .url = "git+https://github.com/zhaozg/zdbc#486e622c34f964ec8fb451f0407cbddb80a4f2e5",
             .hash = "zdbc-0.1.0-_uIxvnKLAgAF0rliuaTP20MNiBG2l8Fh2-ahz8mm8JnU",
         },
         .zlua = .{
