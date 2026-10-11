@@ -159,7 +159,7 @@ pub const Logger = struct {
     /// Log with optional request ID for tracing
     pub fn logWithRequestId(self: *Logger, level: LogLevel, request_id: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         // Skip if log level is below configured level
-        if (@intFromEnum(level) < @intFromEnum(self.config.level)) {
+        if (level.severity() < self.config.level.severity()) {
             return;
         }
 

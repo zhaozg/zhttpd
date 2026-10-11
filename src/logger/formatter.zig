@@ -5,7 +5,20 @@ pub const LogLevel = enum {
     info,
     warn,
     err,
-
+    /// Numeric severity used for level filtering.
+    ///
+    /// Implemented with an explicit `switch` instead of `@intFromEnum` so the
+    /// source stays stable across Zig versions: newer compilers rewrite
+    /// `@intFromEnum` to `@backingInt` during `zig fmt`, which older compilers
+    /// cannot parse.
+    pub fn severity(self: LogLevel) u8 {
+        return switch (self) {
+            .debug => 0,
+            .info => 1,
+            .warn => 2,
+            .err => 3,
+        };
+    }
     pub fn toString(self: LogLevel) []const u8 {
         return switch (self) {
             .debug => "DEBUG",
