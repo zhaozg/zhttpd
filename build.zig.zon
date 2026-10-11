@@ -5,7 +5,7 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .httpz = .{
-            .url = "git+https://github.com/karlseguin/http.zig#master",
+            .url = "git+https://github.com/karlseguin/http.zig#9b14af98fde5e98abb9a8376fe02b42003e835bf",
             .hash = "httpz-0.0.0-PNVzrMgTCQDhzfBLRRebTx9LU056Ph2erdN9-42rFbhj",
         },
         .yaml = .{
@@ -13,12 +13,12 @@
             .hash = "zig_yaml-0.3.0-C1161gmsAgBMXfMGSbvs1jaocmD2KVCEZRPKBSO0x1Hc",
         },
         .zdbc = .{
-            .url = "https://github.com/zhaozg/zdbc/archive/88b7cc603a655a0fa9d8ec4d111c91bba92f9283.zip",
-            .hash = "zdbc-0.1.0-_uIxvi6LAgDLPFzZA7U6AkK-YShJDFlaaXPo-Rf8WsS8",
+            .url = "https://github.com/zhaozg/zdbc/archive/486e622c34f964ec8fb451f0407cbddb80a4f2e5.zip",
+            .hash = "zdbc-0.1.0-_uIxvnKLAgAF0rliuaTP20MNiBG2l8Fh2-ahz8mm8JnU",
         },
         .zlua = .{
-            .url = "git+https://github.com/natecraddock/ziglua#main",
-            .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
+            .url = "git+https://github.com/natecraddock/ziglua#9ae39fa50b1ab8427d35f963216116d7bff1e584",
+            .hash = "zlua-0.1.0-hGRpC1mUBQCNQf4CnmRTM4I7gxE3YpCvZ-p2EarlcyER",
         },
     },
     .paths = .{
